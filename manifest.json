@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "filippaldo.menu",
+  "name": "Supercharged menu",
+  "version": "2.0.0",
+  "author": "filippaldo",
+  "description": "Quickshell-powered Omarchy command menu supercharged with links/web search, unit conversion, time zones, dev utilities (uuid, password, sha256, base64, urlencode, epoch), process killing, a calculator, and currency conversion",
+  "kinds": [
+    "menu"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "menu": "Menu.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.menu"
+  }
+}
