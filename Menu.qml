@@ -100,32 +100,8 @@ Item {
   property int systemCategoryIndex: 0
   readonly property var systemCategories: root.systemTwoPane ? root.systemCategoryRows(root.layoutSerial) : []
 
-  // File search (Files, Folders, and their sections in All). One search is
-  // current at a time; every fd/stat run carries the generation it was started
-  // for, and output from an older one is dropped on arrival.
   readonly property string homeDir: Quickshell.env("HOME")
-  property int fileFilterIndex: 0
-  property int folderFilterIndex: 0
-  property string fileSortMode: "relevance"
-  property int fileDisplayLimit: 60
-  property int fileSearchGen: 0
-  // The generation the running fd pair was launched for. Exits are counted
-  // against it alone, so a cancelled pair that dies after a new one started
-  // cannot eat the new pair's count.
-  property int fileLaunchGen: 0
-  property bool fileSearching: false
-  property bool fileRerunPending: false
-  property int filePending: 0
-  property var filePendingItems: []
-  // The items the current search found, and the key (tab, filter, query) they
-  // answer, so a rebuild can tell results for this query from stale ones.
-  property var fileResults: []
-  property string fileResultsKey: ""
-  property string fileResultsScope: ""
-  property var fileMtimes: ({})
-  // All only asks fd once the query is this long: one letter matches most of
-  // $HOME, and the answer would be noise ranked by path depth.
-  readonly property int allFileMinQuery: 2
+  readonly property bool isAiMode: aiCtl.isAiMode
 
   // Apps as a grid or a list (Ctrl+G), remembered across opens and restarts
   // under the XDG state directory. Not next to this file: the shell watches
@@ -180,12 +156,12 @@ Item {
     deleteConfirmOpen = false
     deleteTarget = null
     utilityAnswers = ({})
-    root.cancelFileSearch()
+    fileCtl.cancelFileSearch()
     aiCtl.aiCancel()
     aiCtl.aiSession = AiBackend.snapshot()
-    root.fileResults = []
-    root.fileResultsKey = ""
-    root.fileResultsScope = ""
+    fileCtl.fileResults = []
+    fileCtl.fileResultsKey = ""
+    fileCtl.fileResultsScope = ""
   }
   // Currency conversion typed into the search: "123 eur to usd". The rates
   // behind it are exchangerate-api's free daily snapshot, which needs no key,
@@ -913,181 +889,17 @@ Item {
 
   // ------------------------------------------------------------ file search
 
-  function fileFilterFor(kind) {
-    return FileSearch.filterAt(kind, kind === "folders" ? root.folderFilterIndex : root.fileFilterIndex)
-  }
 
-  // What the current tab and query ask of fd, or null for nothing: which
-  // types to list and with which filter.
-  function fileSearchSpec() {
-    if (root.dmenuActive || !root.opened || aiCtl.isAiMode) return null
-    var query = root.filterText.trim()
-    if (root.activeTab === "files")
-      return { scope: "files|" + root.fileFilterIndex, key: "files|" + root.fileFilterIndex + "|" + query, query: query, dirs: false, files: true, filter: root.fileFilterFor("files") }
-    if (root.activeTab === "folders")
-      return { scope: "folders|" + root.folderFilterIndex, key: "folders|" + root.folderFilterIndex + "|" + query, query: query, dirs: true, files: false, filter: root.fileFilterFor("folders") }
-    if (root.activeTab === "all") {
-      if (query.length < root.allFileMinQuery) return null
-      // An answer that computed itself (arithmetic, a conversion, a password)
-      // is not also a file name worth walking $HOME for.
-      if (root.queryRows(query).length > 0) return null
-      var dirs = root.tabEnabled("folders")
-      var files = root.tabEnabled("files")
-      if (!dirs && !files) return null
-      var kinds = (dirs ? "d" : "") + (files ? "f" : "")
-      return { scope: "all" + kinds, key: "all" + kinds + "|" + query, query: query, dirs: dirs, files: files, filter: FileSearch.ALL_FILTER }
-    }
-    return null
-  }
 
-  function requestFileSearch() {
-    var spec = root.fileSearchSpec()
-    if (!spec) {
-      fileDebounce.stop()
-      return
-    }
-    if (spec.key === root.fileResultsKey && !root.fileSearching) return
-    fileDebounce.restart()
-  }
 
-  function runFileSearch() {
-    var spec = root.fileSearchSpec()
-    if (!spec) return
-    root.fileSearchGen += 1
-    if (dirSearchProc.running || fileSearchProc.running) {
-      // Let the running search finish into the void; its generation is stale
-      // now. Starting a Process that is still being torn down is not safe.
-      root.fileRerunPending = true
-      return
-    }
-    root.launchFileSearch(spec)
-  }
 
-  function launchFileSearch(spec) {
-    root.fileRerunPending = false
-    root.fileSearching = true
-    root.filePendingItems = []
-    root.filePending = 0
-    var gen = root.fileSearchGen
-    root.fileLaunchGen = gen
 
-    // timeout ends an fd that stalls on a slow mount; --max-results already
-    // bounds how much one can print.
-    if (spec.dirs) {
-      root.filePending += 1
-      dirSearchProc.gen = gen
-      dirSearchProc.key = spec.key
-      dirSearchProc.command = ["timeout", "5"].concat(FileSearch.buildArgv(spec.query, spec.filter, true, root.homeDir))
-      dirSearchProc.running = true
-    }
-    if (spec.files) {
-      root.filePending += 1
-      fileSearchProc.gen = gen
-      fileSearchProc.key = spec.key
-      fileSearchProc.command = ["timeout", "5"].concat(FileSearch.buildArgv(spec.query, spec.filter, false, root.homeDir))
-      fileSearchProc.running = true
-    }
-    if (root.filePending === 0) root.fileSearching = false
-  }
 
-  function fileSearchFinished(proc, text, isDir) {
-    if (proc.gen !== root.fileLaunchGen) return
-    if (proc.gen === root.fileSearchGen)
-      root.filePendingItems = root.filePendingItems.concat(FileSearch.parseLines(text, isDir, root.homeDir))
-    root.filePending -= 1
-    if (root.filePending > 0) return
 
-    root.fileSearching = false
-    if (root.fileRerunPending) {
-      var spec = root.fileSearchSpec()
-      if (spec) root.launchFileSearch(spec)
-      else root.fileRerunPending = false
-      return
-    }
-    if (proc.gen !== root.fileSearchGen) return
 
-    var items = root.filePendingItems
-    for (var i = 0; i < items.length; i++) {
-      var known = root.fileMtimes[items[i].path]
-      if (known !== undefined) items[i].mtimeMs = known
-    }
-    root.fileResults = items
-    root.fileResultsKey = proc.key
-    root.fileResultsScope = proc.key.slice(0, proc.key.lastIndexOf("|"))
-    root.rebuildDisplay(true)
-    root.fetchFileMtimes()
-  }
 
-  // Modification times for the sort modes and the right-hand column, fetched
-  // in one stat call after the list is already on screen.
-  function fetchFileMtimes() {
-    if (statProc.running || root.fileResults.length === 0) return
-    var paths = []
-    for (var i = 0; i < root.fileResults.length && paths.length < 300; i++) {
-      if (root.fileMtimes[root.fileResults[i].path] === undefined) paths.push(root.fileResults[i].path)
-    }
-    if (paths.length === 0) return
-    statProc.gen = root.fileSearchGen
-    statProc.command = ["timeout", "5", "stat", "-c", "%Y\t%n", "--"].concat(paths)
-    statProc.running = true
-  }
 
-  function applyFileMtimes(map) {
-    var next = ({})
-    for (var known in root.fileMtimes) next[known] = root.fileMtimes[known]
-    for (var path in map) next[path] = map[path]
-    root.fileMtimes = next
-    for (var i = 0; i < root.fileResults.length; i++) {
-      var ms = next[root.fileResults[i].path]
-      if (ms !== undefined) root.fileResults[i].mtimeMs = ms
-    }
-    root.rebuildDisplay(true)
-  }
 
-  function cancelFileSearch() {
-    fileDebounce.stop()
-    root.fileSearchGen += 1
-    root.fileRerunPending = false
-    if (dirSearchProc.running) dirSearchProc.running = false
-    if (fileSearchProc.running) fileSearchProc.running = false
-    root.fileSearching = false
-  }
-
-  // Rows for the current results. While fd is still answering a newer query,
-  // the previous results are re-ranked against it instead of vanishing: fd
-  // matches the full path, so typing further only ever narrows them, and the
-  // list settles in place rather than blinking empty on every keystroke.
-  function fileRows(spec, limit) {
-    if (!spec || spec.scope !== root.fileResultsScope) return []
-    var ranked = FileSearch.rankResults(root.fileResults, spec.query, limit, root.homeDir, root.fileSortMode)
-    var now = Date.now()
-    var rows = []
-    for (var i = 0; i < ranked.length; i++) {
-      var item = ranked[i]
-      rows.push(root.queryRow({
-        id: (item.isDir ? "folder:" : "file:") + item.path,
-        kind: item.isDir ? "folder" : "file",
-        icon: item.icon,
-        label: item.name,
-        detail: item.dir,
-        payload: item.path,
-        trail: item.mtimeMs ? FileSearch.formatMtime(item.mtimeMs, now) : ""
-      }))
-    }
-    return rows
-  }
-
-  function filesTabRows() {
-    return root.fileRows(root.fileSearchSpec(), root.fileDisplayLimit)
-  }
-
-  // The kind-split halves All needs from one combined search.
-  function fileSectionRows(isDir) {
-    var rows = root.fileRows(root.fileSearchSpec(), root.fileDisplayLimit)
-    var out = []
-    for (var i = 0; i < rows.length; i++) if ((rows[i].kind === "folder") === isDir) out.push(rows[i])
-    return out
-  }
 
   function selectedFileRow() {
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
@@ -1276,7 +1088,7 @@ Item {
       root.setTab(Tabs.firstEnabledTab(root.tabOrder, root.disabledTabs))
     else if (root.opened) {
       root.rebuildDisplay(true)
-      root.requestFileSearch()
+      fileCtl.requestFileSearch()
     }
 
     if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
@@ -1303,29 +1115,7 @@ Item {
     stateWriteProc.running = true
   }
 
-  function cycleFileFilter() {
-    if (root.activeTab === "files")
-      root.fileFilterIndex = (root.fileFilterIndex + 1) % FileSearch.FILE_FILTERS.length
-    else if (root.activeTab === "folders")
-      root.folderFilterIndex = (root.folderFilterIndex + 1) % FileSearch.FOLDER_FILTERS.length
-    else return
-    root.selectedIndex = 0
-    root.rebuildDisplay()
-    root.requestFileSearch()
-  }
 
-  function setFileFilter(id) {
-    var list = FileSearch.filtersFor(root.activeTab)
-    for (var i = 0; i < list.length; i++) {
-      if (list[i].id !== id) continue
-      if (root.activeTab === "folders") root.folderFilterIndex = i
-      else root.fileFilterIndex = i
-      root.selectedIndex = 0
-      root.rebuildDisplay()
-      root.requestFileSearch()
-      return
-    }
-  }
 
   // ------------------------------------------------------ System two panes
 
@@ -1444,7 +1234,7 @@ Item {
     root.updateSystemMatches()
     root.rebuildDisplay()
     if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
-    root.requestFileSearch()
+    fileCtl.requestFileSearch()
   }
 
   function depthFor(id) {
@@ -2260,8 +2050,8 @@ Item {
       var id = order[i].id
       if (!root.tabEnabled(id)) continue
       var sectionRows = id === "apps" ? root.appTabRows(query)
-        : id === "files" ? root.fileSectionRows(false)
-        : id === "folders" ? root.fileSectionRows(true)
+        : id === "files" ? fileCtl.fileSectionRows(false)
+        : id === "folders" ? fileCtl.fileSectionRows(true)
         : root.systemSearchRows(query, "root", false)
       sections.push({ title: order[i].title, rows: sectionRows })
     }
@@ -2309,7 +2099,7 @@ Item {
     else if (root.activeTab === "system") rows = root.systemTabRows(query, active)
     else if (root.activeTab === "apps") rows = root.appTabRows(query)
     else if (root.activeTab === "all") rows = root.allTabRows(query)
-    else if (root.activeTab === "files" || root.activeTab === "folders") rows = root.filesTabRows()
+    else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
 
     // Sanitized here rather than in each builder: this is the one place
     // every row passes through on its way to the ListView.
@@ -2377,7 +2167,7 @@ Item {
     root.updateSystemMatches()
     root.rebuildDisplay()
     if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
-    root.requestFileSearch()
+    fileCtl.requestFileSearch()
   }
 
   // Menu entries matching the query, best first (ids).
@@ -2683,37 +2473,14 @@ Item {
     menu: root
   }
 
-  Timer {
-    id: fileDebounce
-    interval: 200
-    onTriggered: root.runFileSearch()
+  FileSearchController {
+    id: fileCtl
+    menu: root
   }
 
-  Process {
-    id: dirSearchProc
-    property int gen: 0
-    property string key: ""
-    stdout: StdioCollector { id: dirSearchOut; waitForEnd: true }
-    onExited: root.fileSearchFinished(dirSearchProc, dirSearchOut.text || "", true)
-  }
 
-  Process {
-    id: fileSearchProc
-    property int gen: 0
-    property string key: ""
-    stdout: StdioCollector { id: fileSearchOut; waitForEnd: true }
-    onExited: root.fileSearchFinished(fileSearchProc, fileSearchOut.text || "", false)
-  }
 
-  Process {
-    id: statProc
-    property int gen: 0
-    stdout: StdioCollector { id: statOut; waitForEnd: true }
-    onExited: {
-      if (statProc.gen === root.fileSearchGen) root.applyFileMtimes(FileSearch.parseStatLines(statOut.text || ""))
-      else root.fetchFileMtimes()
-    }
-  }
+
 
   // ----------------------------------------------------------- route surface
   //
@@ -2748,14 +2515,14 @@ Item {
     root.activeTab = place.tab
     // Type filters start over with each open, as in omarchy-find; the sort
     // mode and the result limit are preferences and stay.
-    root.fileFilterIndex = 0
-    root.folderFilterIndex = 0
+    fileCtl.fileFilterIndex = 0
+    fileCtl.folderFilterIndex = 0
     root.pendingInitialMenu = place.menu
     root.openExistingMenu(place.menu)
     root.systemPane = place.menu === "root" ? "left" : "right"
     if (place.tab === "system") Qt.callLater(root.enterSystemPanes)
     if (place.tab === "apps") root.loadProviderForMenu("apps")
-    root.requestFileSearch()
+    fileCtl.requestFileSearch()
     return "ok"
   }
 
@@ -3235,10 +3002,10 @@ Item {
           } else if ((root.activeTab === "files" || root.activeTab === "folders") && root.tabsActive
                      && event.modifiers === Qt.ControlModifier
                      && (event.key === Qt.Key_F || event.key === Qt.Key_S || event.key === Qt.Key_L)) {
-            if (event.key === Qt.Key_F) root.cycleFileFilter()
+            if (event.key === Qt.Key_F) fileCtl.cycleFileFilter()
             else {
-              if (event.key === Qt.Key_S) root.fileSortMode = FileSearch.nextSortMode(root.fileSortMode)
-              else root.fileDisplayLimit = FileSearch.nextDisplayLimit(root.fileDisplayLimit)
+              if (event.key === Qt.Key_S) fileCtl.fileSortMode = FileSearch.nextSortMode(fileCtl.fileSortMode)
+              else fileCtl.fileDisplayLimit = FileSearch.nextDisplayLimit(fileCtl.fileDisplayLimit)
               root.selectedIndex = 0
               root.rebuildDisplay()
             }
@@ -3428,13 +3195,13 @@ Item {
             anchors.left: parent.left
             width: parent.width - fileSortLabel.implicitWidth - Style.space(12)
             tabs: FileSearch.filtersFor(root.activeTab).map(function(f) { return { id: f.id, label: f.label, icon: "" } })
-            activeTab: root.fileFilterFor(root.activeTab).id
+            activeTab: fileCtl.fileFilterFor(root.activeTab).id
             fontFamily: root.fontFamily
             foreground: root.foreground
             accent: Color.accent
             fontSize: root.scaledFont(Style.font.caption)
             onTabClicked: function(id) {
-              root.setFileFilter(id)
+              fileCtl.setFileFilter(id)
               Qt.callLater(function() { keyCatcher.forceActiveFocus() })
             }
           }
@@ -3444,9 +3211,9 @@ Item {
             textFormat: Text.PlainText
             anchors.right: parent.right
             anchors.top: parent.top
-            text: (root.fileSearching ? "searching… · " : "")
-              + FileSearch.sortMode(root.fileSortMode).icon + " " + FileSearch.sortMode(root.fileSortMode).label
-              + " · " + displayModel.count + "/" + root.fileDisplayLimit
+            text: (fileCtl.fileSearching ? "searching… · " : "")
+              + FileSearch.sortMode(fileCtl.fileSortMode).icon + " " + FileSearch.sortMode(fileCtl.fileSortMode).label
+              + " · " + displayModel.count + "/" + fileCtl.fileDisplayLimit
             color: root.foreground
             opacity: 0.5
             font.family: root.fontFamily
@@ -3989,7 +3756,7 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: root.fileSearching ? "Searching…"
+              text: fileCtl.fileSearching ? "Searching…"
                 : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
               color: root.foreground
               opacity: 0.7
