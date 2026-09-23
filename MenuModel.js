@@ -368,6 +368,35 @@ function matchesQuery(entry, query, visible) {
   return true
 }
 
+// Local addition (omarchy-menu-omni): "update omarchy" should land on
+// Update > Omarchy, although no single entry carries both words. An entry
+// matches along its path when every term is found in its own name or
+// description or in one of its ancestors' names, and at least one term is
+// its own -- the parent alone does not make every child a match. Returns
+// the terms the entry matched itself (to rank it by), or null.
+function pathMatchTerms(items, entry, query, visible) {
+  if (!entry || entry.id === "root" || !visible) return null
+  var terms = String(query || "").toLowerCase().trim().split(/\s+/)
+  var own = nameSearchText(entry) + " " + String(entry.description || "").toLowerCase()
+  var ancestors = []
+  var current = item(items, entry.parent)
+  var guard = 0
+  while (current && current.id !== "root" && guard++ < 32) {
+    ancestors.push(nameSearchText(current))
+    current = item(items, current.parent)
+  }
+  var ancestorText = ancestors.join(" ")
+  var ownTerms = []
+  var viaPath = false
+  for (var i = 0; i < terms.length; i++) {
+    if (!terms[i]) continue
+    if (own.indexOf(terms[i]) >= 0) ownTerms.push(terms[i])
+    else if (ancestorText.indexOf(terms[i]) >= 0) viaPath = true
+    else return null
+  }
+  return ownTerms.length > 0 && viaPath ? ownTerms.join(" ") : null
+}
+
 function searchScore(items, entry, query) {
   var needle = String(query || "").toLowerCase().trim()
   var label = entry.label.toLowerCase()
@@ -413,7 +442,8 @@ function displayRow(items, itemOrder, checkedResults, entry, detail, score, sect
     action: entry.action || "",
     provider: entry.provider || "",
     score: score || 0,
-    section: section || ""
+    section: section || "",
+    trailText: ""
   }
 }
 
@@ -1655,6 +1685,7 @@ if (typeof module !== "undefined") {
     descriptionTextMatches: descriptionTextMatches,
     matchesQuery: matchesQuery,
     searchScore: searchScore,
+    pathMatchTerms: pathMatchTerms,
     displayRow: displayRow,
     tokenizeMath: tokenizeMath,
     formatMathResult: formatMathResult,

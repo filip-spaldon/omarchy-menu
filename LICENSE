@@ -1,16 +1,23 @@
 MIT License
 
-This plugin is a derivative work of the Omarchy project
-(https://github.com/basecamp/omarchy), which is MIT licensed.
+Omarchy Menu Omni (omarchy-menu-omni)
+Copyright (c) 2026 filippaldo (Omarchy Menu Omni modifications)
 
-`BarWidget.qml` is adapted from Omarchy's own menu bar widget
-(shell/plugins/menu/BarWidget.qml): the WidgetButton structure, the
-`horizontalMargin` value, and both click actions are upstream's, carried
-over near-verbatim. The changes here are the glyph (U+F011 in place of
-upstream's private-font U+E900), the tooltip, and the plain-Item root the
-third-party plugin loader injects into.
+This plugin includes work from the following MIT-licensed projects:
 
-The original copyright notice is retained below as the license requires.
+- Omarchy: https://github.com/basecamp/omarchy
+  Original menu, shell integration and menu bar widget.
+- omarchy.dzhibas.menu: https://github.com/dzhibas/omarchy.dzhibas.menu
+  Fork providing the extended command menu and built-in answer utilities.
+- omarchy-find: https://github.com/jesseburlamaque/omarchy-find
+  File search and AI components adapted in FileSearch.js, ai/ and
+  tests/ai_unit_test.js.
+
+Omarchy Menu Omni modifications are provided under the MIT terms below.
+The inherited copyright notices and MIT terms are retained below.
+
+Omarchy and omarchy.dzhibas.menu notices
+--------------------------------------
 
 Copyright (c) David Heinemeier Hansson
 Copyright (c) 2026 Austin Karren (modifications)
@@ -33,3 +40,32 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+---------------------------------------------------------------------
+
+FileSearch.js and everything under ai/ and tests/ai_unit_test.js are adapted
+from omarchy-find (https://github.com/jesseburlamaque/omarchy-find). Its
+license follows.
+
+MIT License
+
+Copyright (c) 2026 Jessé Burlamaque
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
