@@ -111,7 +111,6 @@ Item {
   property string appsView: "list"
   readonly property bool gridActive: root.tabsActive && root.activeTab === "apps" && root.appsView === "grid"
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (root.homeDir + "/.local/state")) + "/omarchy-menu-omni"
-  readonly property string statePath: root.stateDir + "/state.json"
 
   // Per-user ordering, also from state.json and hand-editable there:
   //   "tabOrder":    the tabs left to right, e.g. ["all","apps","system","files","folders"]
@@ -130,9 +129,6 @@ Item {
   function tabEnabled(id) {
     return root.disabledTabs.indexOf(id) < 0
   }
-  // Everything the file held when last read, unknown keys included, so a
-  // save writes back what it did not change instead of dropping it.
-  property var stateData: ({})
 
   property string filterText: ""
   property int selectedIndex: 0
@@ -239,8 +235,8 @@ Item {
   // tabs or typing never makes it jump; only the compact All prompt is
   // shorter.
   //
-  // All of them come from style.json next to state.json (see applyStyle),
-  // re-read on every open; the values here are the fallbacks (styleDefaults).
+  // All of them come from style.json next to state.json (SettingsStore.qml),
+  // re-read on every open; the values here are the fallbacks (styleDefaults there).
   property real menuFontScale: 1.0
   property real menuHeightFraction: 0.7
   property int launcherCardWidth: 560
@@ -251,7 +247,6 @@ Item {
   // stock menu does; true: it always takes launcherBodyFraction, so the card
   // never changes size while typing or switching tabs.
   property bool launcherFixedHeight: false
-  readonly property string stylePath: root.stateDir + "/style.json"
 
   // Row height follows the font: the stock minimums (50 and 58) were sized for
   // full-size text and would otherwise hold the rows tall while the labels
@@ -563,8 +558,8 @@ Item {
 
   Component.onCompleted: {
     root.loadMenuSources()
-    root.loadStyle()
-    root.loadState()
+    settingsStore.loadStyle()
+    settingsStore.loadState()
     aiCtl.loadAiConfig()
   }
 
@@ -971,7 +966,7 @@ Item {
 
   function toggleAppsView() {
     root.appsView = root.appsView === "grid" ? "list" : "grid"
-    root.saveState()
+    settingsStore.saveState()
     Qt.callLater(function() { if (displayModel.count > 0) root.revealCursor() })
   }
 
@@ -989,131 +984,13 @@ Item {
     root.revealCursor()
   }
 
-  // style.json: the card's geometry, per user. Missing keys fall back to the
-  // defaults below, out-of-range values are ignored, and a file that does not
-  // exist yet is written with the defaults so the options are there to edit.
-  // The defaults keep the stock menu's full-size text and rows that fit their
-  // content, but are wide enough for the tabs to sit on one line and pinned
-  // near the top, so the card grows downward instead of re-centring as it
-  // fills:
-  //   fontScale     every text and icon size (stock menu: 1.0)
-  //   cardWidth     launcher width in Style.space() units (stock menu: 300)
-  //   bodyHeight    results area, share of the screen height (stock menu: 0.7)
-  //   fixedHeight   true keeps the card one size; false fits the rows
-  //   top           "center" (stock menu) or a share of the screen, e.g. 0.2
-  //   pickerHeight  most of the screen a dmenu picker's list may take
-  readonly property var styleDefaults: ({
-    fontScale: 1.0, cardWidth: 560, bodyHeight: 0.6, fixedHeight: false, top: 0.2, pickerHeight: 0.7
-  })
 
-  function loadStyle() {
-    if (styleReadProc.running) return
-    styleReadProc.command = root.readFileCommand(root.stylePath, 8192)
-    styleReadProc.running = true
-  }
 
-  function applyStyle(text, exists) {
-    var style = null
-    var raw = String(text || "").trim()
-    if (raw) {
-      try { style = JSON.parse(raw) } catch (e) {
-        console.warn("[omarchy-menu-omni] style.json is not valid JSON; using defaults")
-      }
-    }
-    if (!style || typeof style !== "object" || Array.isArray(style)) style = ({})
-    var d = root.styleDefaults
-    function num(key, min, max) {
-      var v = Number(style[key])
-      return (style[key] !== undefined && isFinite(v) && v >= min && v <= max) ? v : d[key]
-    }
-    root.menuFontScale = num("fontScale", 0.5, 2)
-    root.launcherCardWidth = Math.round(num("cardWidth", 200, 2000))
-    root.launcherBodyFraction = num("bodyHeight", 0.1, 0.95)
-    root.menuHeightFraction = num("pickerHeight", 0.1, 0.95)
-    root.launcherFixedHeight = typeof style.fixedHeight === "boolean" ? style.fixedHeight : d.fixedHeight
-    var top = style.top
-    root.launcherTopFraction = (typeof top === "number" && isFinite(top) && top >= 0 && top <= 0.9) ? top : -1
-    if (!exists) root.writeStyleDefaults()
-  }
 
-  function writeStyleDefaults() {
-    if (styleWriteProc.running) return
-    styleWriteProc.command = root.stateFileWriteCommand(root.stylePath,
-      JSON.stringify(root.styleDefaults, null, 2) + "\n", true)
-    styleWriteProc.running = true
-  }
 
-  // Writes a file under stateDir (0600, directory created as needed) via a
-  // temporary file and a rename, so a crash mid-write cannot leave half a
-  // file; the path and the content reach bash as positional arguments,
-  // never as script text. keepExisting: only create, never replace (mv -n).
-  function stateFileWriteCommand(path, content, keepExisting) {
-    var move = keepExisting ? 'mv -n -- "$t" "$2"' : 'mv -f -- "$t" "$2"'
-    return ["bash", "-c",
-      'umask 077; mkdir -p -- "$1" || exit 1; ' + (keepExisting ? '[ -e "$2" ] && exit 0; ' : '')
-        + 't=$(mktemp -- "$2.XXXXXX") || exit 1; printf %s "$3" > "$t" && ' + move + '; rm -f -- "$t"',
-      "bash", root.stateDir, path, content]
-  }
 
-  function loadState() {
-    if (stateReadProc.running) return
-    stateReadProc.command = root.readFileCommand(root.statePath, 4096)
-    stateReadProc.running = true
-  }
 
-  // A missing file, or one without the ordering keys, is written back with
-  // the defaults filled in: the options are then there to be edited.
-  function applyState(text) {
-    var state = null
-    var raw = String(text || "").trim()
-    if (raw) {
-      try { state = JSON.parse(raw) } catch (e) {
-        // Leave a file that does not parse alone rather than overwrite what
-        // may be a half-finished edit.
-        console.warn("[omarchy-menu-omni] state.json is not valid JSON; using defaults")
-        return
-      }
-    }
-    if (!state || typeof state !== "object" || Array.isArray(state)) state = ({})
-    root.stateData = state
 
-    if (state.appsView === "grid" || state.appsView === "list") root.appsView = state.appsView
-    root.tabOrder = Tabs.normalizeOrder(state.tabOrder, Tabs.DEFAULT_TAB_ORDER)
-    root.allSectionOrder = Tabs.normalizeOrder(state.allSections, Tabs.DEFAULT_ALL_SECTIONS)
-    root.disabledTabs = Tabs.normalizeDisabled(state.disabledTabs)
-
-    // Read after the launcher opened (it re-reads on every open): if All was
-    // just switched off, move on to the first tab that is on.
-    if (root.opened && root.tabsActive && root.activeTab === "all" && !root.tabEnabled("all"))
-      root.setTab(Tabs.firstEnabledTab(root.tabOrder, root.disabledTabs))
-    else if (root.opened) {
-      root.rebuildDisplay(true)
-      fileCtl.requestFileSearch()
-    }
-
-    if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
-        || !Array.isArray(state.disabledTabs) || !state.appsView) root.saveState()
-  }
-
-  // Written to a temporary file and renamed over the old one, so a crash
-  // mid-write cannot leave half a file; the path and the JSON reach the
-  // shell as positional arguments, never as script text.
-  function saveState() {
-    if (stateWriteProc.running) {
-      root.stateSavePending = true
-      return
-    }
-    var next = ({})
-    for (var key in root.stateData) next[key] = root.stateData[key]
-    next.appsView = root.appsView
-    next.tabOrder = root.tabOrder
-    next.allSections = root.allSectionOrder
-    next.disabledTabs = root.disabledTabs
-    if (aiCtl.aiAgent) next.aiAgent = aiCtl.aiAgent
-    root.stateData = next
-    stateWriteProc.command = root.stateFileWriteCommand(root.statePath, JSON.stringify(next, null, 2) + "\n", false)
-    stateWriteProc.running = true
-  }
 
 
 
@@ -2441,32 +2318,10 @@ Item {
   // way in.
   ListModel { id: displayModel }
 
-  Process {
-    id: styleReadProc
-    stdout: StdioCollector { id: styleReadOut; waitForEnd: true }
-    onExited: function(exitCode) { root.applyStyle(styleReadOut.text, exitCode === 0) }
-  }
 
-  Process { id: styleWriteProc }
 
-  Process {
-    id: stateReadProc
-    stdout: StdioCollector { id: stateReadOut; waitForEnd: true }
-    onExited: root.applyState(stateReadOut.text)
-  }
 
-  // A save asked for while one is being written is not dropped: it runs as
-  // soon as the first finishes.
-  property bool stateSavePending: false
 
-  Process {
-    id: stateWriteProc
-    onExited: {
-      if (!root.stateSavePending) return
-      root.stateSavePending = false
-      Qt.callLater(root.saveState)
-    }
-  }
 
   AiController {
     id: aiCtl
@@ -2477,6 +2332,17 @@ Item {
     id: fileCtl
     menu: root
   }
+
+  SettingsStore {
+    id: settingsStore
+    menu: root
+  }
+
+  // What the controllers reach for through `menu`.
+  readonly property var stateData: settingsStore.stateData
+  readonly property string aiAgent: aiCtl.aiAgent
+  function saveState() { settingsStore.saveState() }
+  function requestFileSearch() { fileCtl.requestFileSearch() }
 
 
 
@@ -2508,8 +2374,8 @@ Item {
     if (entry && entry.kind === "link" && entry.target) id = entry.target
     var place = Tabs.tabForRoute(id)
     aiCtl.loadAiConfig()
-    root.loadStyle()
-    root.loadState()
+    settingsStore.loadStyle()
+    settingsStore.loadState()
     if (place.tab === "all" && !root.tabEnabled("all"))
       place = { tab: Tabs.firstEnabledTab(root.tabOrder, root.disabledTabs), menu: "root" }
     root.activeTab = place.tab
