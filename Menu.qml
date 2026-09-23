@@ -1556,10 +1556,21 @@ Item {
 
   function writeStyleDefaults() {
     if (styleWriteProc.running) return
-    styleWriteProc.command = ["bash", "-c",
-      'umask 077; mkdir -p -- "$1" && [ ! -e "$2" ] || exit 0; t=$(mktemp -- "$2.XXXXXX") || exit 1; printf %s "$3" > "$t" && mv -n -- "$t" "$2"; rm -f -- "$t"',
-      "bash", root.stateDir, root.stylePath, JSON.stringify(root.styleDefaults, null, 2) + "\n"]
+    styleWriteProc.command = root.stateFileWriteCommand(root.stylePath,
+      JSON.stringify(root.styleDefaults, null, 2) + "\n", true)
     styleWriteProc.running = true
+  }
+
+  // Writes a file under stateDir (0600, directory created as needed) via a
+  // temporary file and a rename, so a crash mid-write cannot leave half a
+  // file; the path and the content reach bash as positional arguments,
+  // never as script text. keepExisting: only create, never replace (mv -n).
+  function stateFileWriteCommand(path, content, keepExisting) {
+    var move = keepExisting ? 'mv -n -- "$t" "$2"' : 'mv -f -- "$t" "$2"'
+    return ["bash", "-c",
+      'umask 077; mkdir -p -- "$1" || exit 1; ' + (keepExisting ? '[ -e "$2" ] && exit 0; ' : '')
+        + 't=$(mktemp -- "$2.XXXXXX") || exit 1; printf %s "$3" > "$t" && ' + move + '; rm -f -- "$t"',
+      "bash", root.stateDir, path, content]
   }
 
   function loadState() {
@@ -1618,10 +1629,7 @@ Item {
     next.disabledTabs = root.disabledTabs
     if (root.aiAgent) next.aiAgent = root.aiAgent
     root.stateData = next
-    var json = JSON.stringify(next, null, 2) + "\n"
-    stateWriteProc.command = ["bash", "-c",
-      'umask 077; mkdir -p -- "$1" && t=$(mktemp -- "$2.XXXXXX") || exit 1; printf %s "$3" > "$t" && mv -f -- "$t" "$2" || rm -f -- "$t"',
-      "bash", root.stateDir, root.statePath, json]
+    stateWriteProc.command = root.stateFileWriteCommand(root.statePath, JSON.stringify(next, null, 2) + "\n", false)
     stateWriteProc.running = true
   }
 
@@ -1672,7 +1680,7 @@ Item {
   // Line the left pane up with whatever the right pane shows: after a route
   // (`capture` highlights Trigger), after Back, after a drill-down.
   function syncSystemCategory() {
-    var categories = root.systemCategoryRows(root.layoutSerial)
+    var categories = root.systemCategories
     var current = root.systemCategoryOf(root.activeMenu)
     for (var i = 0; i < categories.length; i++) {
       if (categories[i].itemId === current) { root.systemCategoryIndex = i; return }
@@ -1681,7 +1689,7 @@ Item {
   }
 
   function syncSystemCategoryTo(categoryId) {
-    var categories = root.systemCategoryRows(root.layoutSerial)
+    var categories = root.systemCategories
     for (var i = 0; i < categories.length; i++)
       if (categories[i].itemId === categoryId) { root.systemCategoryIndex = i; return }
   }
@@ -1689,7 +1697,7 @@ Item {
   // Browsing the left pane previews the category on the right. A category
   // that is an action (About) previews nothing; Enter runs it.
   function selectSystemCategory(index) {
-    var categories = root.systemCategoryRows(root.layoutSerial)
+    var categories = root.systemCategories
     if (categories.length === 0) return
     index = Math.max(0, Math.min(index, categories.length - 1))
     root.systemCategoryIndex = index
@@ -1717,7 +1725,7 @@ Item {
   }
 
   function activateSystemCategory() {
-    var categories = root.systemCategoryRows(root.layoutSerial)
+    var categories = root.systemCategories
     var row = categories[root.systemCategoryIndex]
     if (!row) return
     if (row.kind === "menu" || row.kind === "link") {
@@ -2418,15 +2426,6 @@ Item {
     }
 
     return -1
-  }
-
-  // Park the cursor on a selectable row after the rows underneath it changed.
-  // A menu with nothing selectable in it -- every app in it already installed
-  // -- shows no cursor at all, and grows one the moment a row can take it.
-  function settleCursor() {
-    var target = root.nextSelectable(root.selectedIndex, 1)
-    root.selectedIndex = target >= 0 ? target : 0
-    root.cursorActive = target >= 0
   }
 
   function rebuildDmenuDisplay() {
