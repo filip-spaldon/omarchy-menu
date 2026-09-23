@@ -1,8 +1,8 @@
 # Menu gallery
 
-https://github.com/user-attachments/assets/4e7ee62e-3edc-4654-ad43-d1ea2d626caa
+https://github.com/user-attachments/assets/cc1d0344-c502-4925-899c-86295081a55e
 
-The recording shows tabs, app grid/list, calculator, file search and unit conversion.
+The recording shows tab switching, System search, file search, the calculator and the AI agent selector.
 
 ## Compact launcher
 
@@ -12,14 +12,26 @@ The recording shows tabs, app grid/list, calculator, file search and unit conver
 
 ![Apps in grid view](../../preview.png)
 
+## All search
+
+![Combined System, Files and Folders results](all.png)
+
 ## System actions
 
-![System menu](system.png)
+![Categories and their actions side by side](system.png)
+
+## System search
+
+![Update Omarchy selected in the menu tree](system-search.png)
+
+## File search
+
+![Search result for AnswerEngine.qml](files.png)
 
 ## Calculator
 
 ![Calculator expression and result](calculator.png)
 
-## File search
+## AI agent selector
 
-![Menu.qml file search](files.png)
+![Installed agents and a question waiting for Enter](ai.png)

@@ -10,7 +10,7 @@ instant answers and AI in one keyboard-driven menu.
 
 ![Omni application grid](preview.png)
 
-https://github.com/user-attachments/assets/4e7ee62e-3edc-4654-ad43-d1ea2d626caa
+https://github.com/user-attachments/assets/cc1d0344-c502-4925-899c-86295081a55e
 
 [More screenshots](docs/media/README.md) ·
 [Built-in answer reference](docs/answers.md)
@@ -26,9 +26,17 @@ it. Esc goes back or closes the menu according to the current view.
 | --- | --- |
 | **All** | Answers followed by Apps, System, Files and Folders sections, up to five results per section |
 | **Apps** | Installed applications; Ctrl+G switches between list and grid and saves the choice |
-| **System** | Omarchy actions and submenus in two panes: categories (Learn, Trigger, Style, Setup…) on the left, the highlighted one's items on the right. ↑↓ browse, →/Enter open, ← back. Typing moves the tree to the best matching entry (Ctrl+↑↓ for the next match); words may name the path, so `update omarchy` lands on Update › Omarchy; queries that match no entry show answers such as the calculator |
+| **System** | Omarchy actions in two panes: categories on the left, their items on the right |
 | **Files** | File name search under your home directory, with type, sort and result-limit controls |
 | **Folders** | Folder search, including a separate System folders filter for configuration directories |
+
+The System tab keeps the category list visible while you browse its items.
+Use Up/Down to select, Right or Enter to open, and Left to go back. Typing
+searches the menu tree; a query can name the whole path, so `update omarchy`
+selects Update › Omarchy. Ctrl+Up/Down jumps between matches. If no system
+entry matches, the tab shows instant answers such as the calculator.
+
+![System categories and actions](docs/media/system.png)
 
 `Super+Alt+Space` opens Apps directly. Existing routes such as
 `omarchy menu summon style.theme` open the corresponding System submenu.
@@ -88,6 +96,12 @@ shows that active tab even when disabled. Switching away hides it again.
 Unknown settings are preserved when Ctrl+G saves the view. Invalid JSON is left
 untouched; fix its syntax and reopen the menu.
 
+## Screenshots
+
+[Browse the gallery](docs/media/README.md) for the All search, file results,
+System search, calculator and AI agent selector. The demo above shows tab switching, System search, file search, the
+calculator and the AI agent selector.
+
 ## Instant answers
 
 | Example | Result |
@@ -114,6 +128,8 @@ Type `ai <question>` and press Enter to submit. The answer streams into the
 menu; Ctrl+C copies it, arrow/Page keys scroll, and Esc cancels or closes.
 After an answer is ready, Enter continues the conversation in a terminal.
 Typing alone sends no request.
+
+![AI agent selector](docs/media/ai.png)
 
 In AI mode the tab bar lists the installed agents instead of the tabs
 (Claude, Codex, Pi, Antigravity — whichever CLIs are on `PATH`). One is always
