@@ -1,8 +1,8 @@
 # Menu gallery
 
-https://github.com/user-attachments/assets/cc1d0344-c502-4925-899c-86295081a55e
+[![Demo recording](demo-poster.png)](demo.mp4)
 
-The recording shows tab switching, System search, file search, the calculator and the AI agent selector.
+The recording ([demo.mp4](demo.mp4), 51 s) shows the All search, Apps grid, the System tree and its search, file search, calculator, unit conversion and an AI answer.
 
 ## Compact launcher
 

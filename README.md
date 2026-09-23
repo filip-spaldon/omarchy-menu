@@ -10,7 +10,7 @@ instant answers and AI in one keyboard-driven menu.
 
 ![Omni application grid](preview.png)
 
-https://github.com/user-attachments/assets/cc1d0344-c502-4925-899c-86295081a55e
+[![Demo: tabs, System tree, file search, answers and AI (51 s)](docs/media/demo-poster.png)](docs/media/demo.mp4)
 
 [More screenshots](docs/media/README.md) ·
 [Built-in answer reference](docs/answers.md)
@@ -20,7 +20,8 @@ https://github.com/user-attachments/assets/cc1d0344-c502-4925-899c-86295081a55e
 `Super+Space` opens the compact search prompt. Start typing, click a tab, use
 Tab / Shift+Tab to cycle, or Ctrl+1…5 to select a visible tab by position.
 Switching tabs preserves the query. Arrow keys select a result; Enter activates
-it. Esc goes back or closes the menu according to the current view.
+it. Esc clears the query, then closes the menu; Left or Backspace on an empty
+query goes back a level in System.
 
 | Tab | Contents |
 | --- | --- |
@@ -99,8 +100,9 @@ untouched; fix its syntax and reopen the menu.
 ## Screenshots
 
 [Browse the gallery](docs/media/README.md) for the All search, file results,
-System search, calculator and AI agent selector. The demo above shows tab switching, System search, file search, the
-calculator and the AI agent selector.
+System search, calculator and AI agent selector. The demo above shows the All search, Apps grid, the
+System tree and its search, file search, calculator, unit conversion and an AI
+answer.
 
 ## Instant answers
 
@@ -275,7 +277,7 @@ the top so the card grows downward. The stock menu itself is
 | `top` | `0.2` | `"center"`, or the top edge as a share of the screen |
 | `pickerHeight` | `0.7` | Maximum list height of dmenu pickers |
 
-Missing or out-of-range values fall back to the stock ones. Some combinations
+Missing or out-of-range values fall back to the defaults above. Some combinations
 to try:
 
 | Look | fontScale | cardWidth | bodyHeight | fixedHeight | top |
