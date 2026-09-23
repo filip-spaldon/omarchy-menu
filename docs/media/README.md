@@ -1,6 +1,6 @@
 # Menu gallery
 
-[![Demo recording](demo-poster.png)](demo.mp4)
+https://github.com/user-attachments/assets/51d2cada-dd4d-4596-9a6c-2e71191caf62
 
 The recording ([demo.mp4](demo.mp4), 51 s) shows the All search, Apps grid, the System tree and its search, file search, calculator, unit conversion and an AI answer.
 

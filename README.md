@@ -10,7 +10,7 @@ instant answers and AI in one keyboard-driven menu.
 
 ![Omni application grid](preview.png)
 
-[![Demo: tabs, System tree, file search, answers and AI (51 s)](docs/media/demo-poster.png)](docs/media/demo.mp4)
+https://github.com/user-attachments/assets/51d2cada-dd4d-4596-9a6c-2e71191caf62
 
 [More screenshots](docs/media/README.md) ·
 [Built-in answer reference](docs/answers.md)
