@@ -273,8 +273,23 @@ to try:
 | Dense | 0.75 | 680 | 0.55 | true | 0.12 |
 | Comfortable | 1.0 | 640 | 0.38 | true | 0.20 |
 
-The empty All prompt is always compact. Source edits reload automatically;
-use `omarchy-shell shell rescanPlugins` after a rename.
+The empty All prompt is always compact. Source edits usually reload
+automatically; after adding or renaming a file run `omarchy restart shell`.
+
+### Code layout
+
+| File | Role |
+| --- | --- |
+| `Menu.qml` | Entry point: tabs, routing, row model, keys and the card's layout |
+| `AnswerEngine.qml` | Instant answers (calculator, conversions, time, generators, kill, URL, shell, web search) and the data they fetch |
+| `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes, results and ranking into rows |
+| `AiController.qml` | AI mode: config, agent discovery and switching, generation processes, terminal handoff |
+| `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
+| `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml` | Visual pieces of the card |
+| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `ai/*.js` | Pure logic, tested with Node |
+
+The controllers own no UI and reach the menu only through their `menu`
+property.
 
 ```bash
 node tests/menu_unit_test.js

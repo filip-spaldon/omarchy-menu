@@ -2172,12 +2172,12 @@ Item {
           } else if (aiCtl.isAiMode && (event.key === Qt.Key_Up || event.key === Qt.Key_Down
                      || event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown)) {
             var step = (event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown)
-              ? aiAnswerFlick.height : aiCtl.aiLineHeight * 2
-            var maxY = Math.max(0, aiAnswerFlick.contentHeight - aiAnswerFlick.height)
+              ? aiPanel.answerFlick.height : aiCtl.aiLineHeight * 2
+            var maxY = Math.max(0, aiPanel.answerFlick.contentHeight - aiPanel.answerFlick.height)
             var down = event.key === Qt.Key_Down || event.key === Qt.Key_PageDown
-            aiAnswerFlick.contentY = down ? Math.min(maxY, aiAnswerFlick.contentY + step)
-                                          : Math.max(0, aiAnswerFlick.contentY - step)
-            aiAnswerFlick.pinnedToBottom = aiAnswerFlick.contentY >= maxY - 4
+            aiPanel.answerFlick.contentY = down ? Math.min(maxY, aiPanel.answerFlick.contentY + step)
+                                          : Math.max(0, aiPanel.answerFlick.contentY - step)
+            aiPanel.answerFlick.pinnedToBottom = aiPanel.answerFlick.contentY >= maxY - 4
             event.accepted = true
           } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                      && (event.modifiers & Qt.AltModifier) && root.selectedFileRow()) {
@@ -2416,111 +2416,12 @@ Item {
           height: root.visibleRowsHeight
           visible: height > 0
 
-          Item {
+          AiPanel {
             id: aiPanel
+            menu: root
+            ai: aiCtl
             anchors.fill: parent
             visible: aiCtl.isAiMode
-
-            Rectangle {
-              id: aiChip
-              height: aiChipLabel.implicitHeight + Style.space(10)
-              width: aiChipLabel.implicitWidth + Style.space(18)
-              radius: height / 2
-              color: aiCtl.aiSession && aiCtl.aiSession.state === "error" ? Util.alpha(Color.urgent, 0.18) : Util.alpha(Color.accent, 0.22)
-
-              Text {
-                id: aiChipLabel
-                anchors.centerIn: parent
-                textFormat: Text.PlainText
-                text: aiCtl.aiChipText()
-                color: aiCtl.aiSession && aiCtl.aiSession.state === "error" ? Color.urgent : Color.accent
-                font.family: root.fontFamily
-                font.pixelSize: root.scaledFont(Style.font.body)
-              }
-            }
-
-            Text {
-              visible: aiCtl.aiConfigWarning !== ""
-              anchors.left: aiChip.right
-              anchors.leftMargin: Style.space(8)
-              anchors.right: parent.right
-              anchors.verticalCenter: aiChip.verticalCenter
-              textFormat: Text.PlainText
-              text: aiCtl.aiConfigWarning
-              color: root.foreground
-              opacity: 0.55
-              elide: Text.ElideRight
-              font.family: root.fontFamily
-              font.pixelSize: root.scaledFont(Style.font.caption)
-            }
-
-            Rectangle {
-              id: aiAnswerBox
-              anchors.top: aiChip.bottom
-              anchors.topMargin: root.contentSpacing
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.bottom: aiFooter.top
-              anchors.bottomMargin: root.contentSpacing
-              radius: root.cornerRadius
-              color: Util.alpha(root.foreground, 0.05)
-              visible: !!aiCtl.aiSession && aiCtl.aiSession.state !== "idle"
-
-              Flickable {
-                id: aiAnswerFlick
-                anchors.fill: parent
-                anchors.margins: Style.space(10)
-                clip: true
-                contentWidth: width
-                contentHeight: aiAnswerText.implicitHeight
-                boundsBehavior: Flickable.StopAtBounds
-                property bool pinnedToBottom: true
-
-                onContentHeightChanged: {
-                  if (aiAnswerFlick.pinnedToBottom)
-                    aiAnswerFlick.contentY = Math.max(0, aiAnswerFlick.contentHeight - aiAnswerFlick.height)
-                }
-                onMovementEnded: {
-                  aiAnswerFlick.pinnedToBottom = aiAnswerFlick.contentY >= (aiAnswerFlick.contentHeight - aiAnswerFlick.height - 4)
-                }
-
-                Text {
-                  id: aiAnswerText
-                  width: aiAnswerFlick.width
-                  text: {
-                    var s = aiCtl.aiSession
-                    if (!s) return ""
-                    if (s.state !== "error") return aiCtl.aiRenderable(s.displayedText)
-                    var msg = aiCtl.aiRenderable(s.errorMessage || "")
-                    return s.displayedText && s.displayedText.length > 0
-                      ? aiCtl.aiRenderable(s.displayedText) + "\n\n⚠ " + msg
-                      : msg
-                  }
-                  textFormat: Text.MarkdownText
-                  onLinkActivated: function(link) { aiCtl.aiOpenLink(link) }
-                  wrapMode: Text.Wrap
-                  color: (aiCtl.aiSession && aiCtl.aiSession.state === "error"
-                          && (!aiCtl.aiSession.displayedText || aiCtl.aiSession.displayedText.length === 0))
-                    ? Color.urgent : root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: root.scaledFont(Style.font.body)
-                }
-              }
-            }
-
-            Text {
-              id: aiFooter
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.bottom: parent.bottom
-              textFormat: Text.PlainText
-              text: aiCtl.aiFooterText()
-              color: root.foreground
-              opacity: 0.5
-              wrapMode: Text.Wrap
-              font.family: root.fontFamily
-              font.pixelSize: root.scaledFont(Style.font.caption)
-            }
           }
 
           AppGrid {
@@ -2551,72 +2452,7 @@ Item {
             model: root.systemCategories
             currentIndex: root.systemCategoryIndex
 
-            delegate: BorderSurface {
-              id: category
-              required property var modelData
-              required property int index
-              readonly property bool picked: category.index === root.systemCategoryIndex
-              readonly property bool focusedHere: category.picked && root.systemPane === "left"
-
-              width: ListView.view.width
-              height: root.baseRowHeight
-              radius: root.cornerRadius
-              color: category.focusedHere ? root.selectedBackground
-                : (category.picked ? Util.alpha(root.foreground, 0.08) : "transparent")
-              borderSpec: category.focusedHere ? root.selectedBorderSpec : Border.none()
-
-              Text {
-                id: categoryIcon
-                textFormat: Text.PlainText
-                text: category.modelData.icon
-                color: category.focusedHere ? root.selectedText : (category.picked ? Color.accent : root.foreground)
-                font.family: category.modelData.iconFont || root.fontFamily
-                font.pixelSize: root.scaledFont(Style.font.iconLarge)
-                width: root.iconSlotWidth
-                horizontalAlignment: Text.AlignHCenter
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(6)
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                text: category.modelData.label
-                color: category.focusedHere ? root.selectedText : root.foreground
-                opacity: category.picked ? 1 : 0.8
-                font.family: root.fontFamily
-                font.pixelSize: root.scaledFont(Style.font.heading)
-                font.weight: category.picked ? Font.DemiBold : Font.Normal
-                elide: Text.ElideRight
-                anchors.left: categoryIcon.right
-                anchors.leftMargin: Style.space(6)
-                anchors.right: categoryChevron.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                id: categoryChevron
-                textFormat: Text.PlainText
-                text: category.modelData.kind === "menu" || category.modelData.kind === "link" ? "›" : ""
-                color: root.foreground
-                opacity: category.picked ? 0.6 : 0.3
-                font.family: root.fontFamily
-                font.pixelSize: root.scaledFont(Style.font.heading)
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(10)
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                  if (category.picked) root.activateSystemCategory()
-                  else root.selectSystemCategory(category.index)
-                }
-              }
-            }
+            delegate: SystemCategoryItem { menu: root }
           }
 
           Rectangle {
@@ -2720,176 +2556,7 @@ Item {
               }
             }
 
-            delegate: BorderSurface {
-              id: row
-              required property int index
-              required property string itemId
-              required property string kind
-              required property string icon
-              required property string iconFont
-              required property string appIcon
-              required property string appId
-              required property string label
-              required property string target
-              required property string detail
-              required property string path
-              required property string action
-              required property int childCount
-              required property string trailText
-
-              readonly property bool hasCursor: root.cursorActive && row.index === root.selectedIndex
-                && (!root.systemTwoPane || root.systemPane === "right")
-              readonly property bool isApp: row.kind === "app"
-              readonly property bool hasIcon: row.icon.length > 0 || row.isApp
-
-              width: ListView.view.width
-              height: root.rowHeightForDetail(row.detail)
-              radius: root.cornerRadius
-              color: row.hasCursor ? root.selectedBackground : "transparent"
-              borderSpec: row.hasCursor ? root.selectedBorderSpec : Border.none()
-
-              Rectangle {
-                visible: false
-                width: Style.space(4)
-                height: parent.height - Style.space(18)
-                radius: Math.min(root.cornerRadius, Style.space(4))
-                color: root.selectedBackground
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                id: iconText
-                textFormat: Text.PlainText
-                visible: row.hasIcon && !row.isApp
-                text: row.icon
-                color: row.hasCursor ? root.selectedText : root.foreground
-                font.family: row.iconFont.length > 0 ? row.iconFont : root.fontFamily
-                font.pixelSize: root.scaledFont(Style.font.iconLarge)
-                width: root.iconSlotWidth
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8)
-                y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-              }
-
-              Image {
-                id: appIconImage
-                visible: row.isApp
-                width: root.scaledFont(Style.font.iconLarge)
-                height: root.scaledFont(Style.font.iconLarge)
-                fillMode: Image.PreserveAspectFit
-                // Decode at physical pixels — a logical-size decode leaves
-                // PNG icons upscaled and blurry on HiDPI displays.
-                sourceSize.width: width * Screen.devicePixelRatio
-                sourceSize.height: height * Screen.devicePixelRatio
-                source: row.isApp ? root.appIconSource(row.appIcon) : ""
-                asynchronous: true
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8) + (root.iconSlotWidth - width) / 2
-                y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-              }
-
-              Column {
-                id: contentColumn
-                anchors.left: row.hasIcon ? iconText.right : parent.left
-                anchors.leftMargin: row.hasIcon ? Style.space(6) : root.rowReservedBorderLeft + Style.space(18)
-                anchors.right: trailLabel.visible ? trailLabel.left : trail.left
-                anchors.rightMargin: Style.space(6)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(3)
-
-                Text {
-                  id: labelText
-                  textFormat: Text.PlainText
-                  width: parent.width
-                  text: row.label
-                  color: row.hasCursor ? root.selectedText : root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: root.scaledFont(Style.font.heading)
-                  font.weight: Font.Medium
-                  elide: Text.ElideRight
-                }
-
-                Text {
-                  textFormat: Text.PlainText
-                  width: parent.width
-                  text: row.detail
-                  visible: root.showsDetail(row.kind, row.detail)
-                  color: root.foreground
-                  opacity: 0.52
-                  font.family: root.fontFamily
-                  font.pixelSize: root.scaledFont(Style.font.bodySmall)
-                  elide: Text.ElideRight
-                }
-              }
-
-              Text {
-                id: trailLabel
-                textFormat: Text.PlainText
-                visible: row.trailText.length > 0
-                text: row.trailText
-                color: row.hasCursor ? root.selectedText : root.foreground
-                opacity: 0.45
-                font.family: root.fontFamily
-                font.pixelSize: root.scaledFont(Style.font.bodySmall)
-                anchors.right: trail.left
-                anchors.rightMargin: Style.space(6)
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Row {
-                id: trail
-                width: Style.space(14)
-                anchors.right: parent.right
-                anchors.rightMargin: root.rowReservedBorderRight + Style.space(8)
-                y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-                spacing: 0
-
-                Text {
-                  textFormat: Text.PlainText
-                  visible: false
-                  text: row.childCount
-                  color: root.foreground
-                  opacity: 0.45
-                  font.family: root.fontFamily
-                  font.pixelSize: root.scaledFont(Style.font.body)
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-
-                Text {
-                  textFormat: Text.PlainText
-                  text: row.kind === "menu" || row.kind === "link" ? "›" : ""
-                  color: row.hasCursor ? root.selectedText : root.foreground
-                  opacity: row.kind === "menu" || row.kind === "link" ? 0.36 : 0
-                  font.family: root.fontFamily
-                  font.pixelSize: root.scaledFont(Style.font.heading)
-                  font.weight: Font.Normal
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-              }
-
-              MouseArea {
-                id: mouseArea
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onEntered: root.selectFromPointer(row.index, row, {
-                  x: mouseArea.mouseX,
-                  y: mouseArea.mouseY
-                })
-                onPositionChanged: function(mouse) {
-                  root.selectFromPointer(row.index, row, mouse)
-                }
-                onClicked: {
-                  root.cursorActive = true
-                  root.selectedIndex = row.index
-                  root.activateIndex(row.index, true)
-                }
-              }
-            }
+            delegate: ResultRow { menu: root }
           }
 
           // Scroll scrims. The clipped row already marks the fold at rest;
