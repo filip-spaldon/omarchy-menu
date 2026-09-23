@@ -73,12 +73,11 @@ node tests/menu_unit_test.js
 node tests/ai_unit_test.js
 ```
 
-The standard installer and updater follow the repository default branch. Merge
-`new-ui` into `main` and remove the README release-status note before submitting
-[the repository](https://github.com/filip-spaldon/omarchy-menu) through the
-[marketplace form](https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=submit-plugin.yml).
-Suggested category: **Productivity**; tags: **launcher**, **quickshell**, **ai**.
-Listing requires the marketplace maintainer's approval.
+The standard installer and updater follow the repository default branch.
+Submit [the repository](https://github.com/filip-spaldon/omarchy-menu) through
+the [marketplace form](https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=submit-plugin.yml)
+with category **Productivity** and tags **launcher**, **quickshell**, **ai**.
+The marketplace maintainer reviews and approves listings.
 
 `omarchy.clonedFrom: "omarchy.menu"` is intentional: Omni replaces a built-in
 menu and uses its existing routes and restoration behavior. Removing this field

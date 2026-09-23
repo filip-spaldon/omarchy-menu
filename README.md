@@ -189,10 +189,6 @@ Omarchy Git installer:
 omarchy plugin add https://github.com/filip-spaldon/omarchy-menu.git --enable
 ```
 
-**Release status:** Omni is currently on `new-ui`. The command above installs the
-repository's default branch, so it will install Omni once `new-ui` is merged into
-`main`. The plugin is not yet listed in the marketplace.
-
 The installer validates the plugin, places it in
 `~/.config/omarchy/plugins/omarchy-menu-omni`, and enables it. Enabling Omni
 replaces the stock menu while keeping existing `Super+Space`, `Super+Alt+Space`
