@@ -626,7 +626,7 @@ Item {
     if (!command) return null
     return answers.menu.queryRow({
       kind: "shell",
-      icon: "",
+      icon: "󰆍",
       label: command,
       detail: "Run in a new terminal",
       payload: command

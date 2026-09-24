@@ -343,7 +343,9 @@ Item {
 
   // Menu rows only surface their detail while a search is narrowing them;
   // dmenu rows carry caller-supplied subtext that must always be visible.
-  function rowHeightForDetail(detail) {
+  function rowHeightForDetail(detail, kind) {
+    // Command hints are a compact, smaller-type list.
+    if (kind === "example") return Math.round(root.detailRowHeight * 0.72)
     return root.showsDetail("", detail) ? root.detailRowHeight : root.baseRowHeight
   }
 
@@ -399,7 +401,7 @@ Item {
       var row = displayModel.get(i)
       if (i > 0) total += root.rowSpacing
       if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
-      total += root.rowHeightForDetail(row.detail)
+      total += root.rowHeightForDetail(row.detail, row.kind)
       previousSection = row.section
       totals.push(total)
     }
@@ -1141,7 +1143,7 @@ Item {
     { icon: "󰅴", example: "urlencode a b&c", detail: "URL encode (urldecode to decode)" },
     { icon: "󰚌", example: "kill firefox", detail: "End a process" },
     { icon: "󰖟", example: "github.com", detail: "Open a URL" },
-    { icon: "", example: "shell htop", detail: "Run in a terminal" },
+    { icon: "󰆍", example: "shell htop", detail: "Run in a terminal" },
     { icon: "󰚩", example: "ai what is Omarchy?", detail: "Ask an AI agent" }
   ]
 
