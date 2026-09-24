@@ -4,6 +4,7 @@ import Quickshell.Wayland
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "Settings.js" as Settings
 import "MenuModel.js" as MenuModel
 import "Tabs.js" as Tabs
 import "FileSearch.js" as FileSearch
@@ -131,16 +132,24 @@ Item {
   //   "disabledTabs": tabs switched off, e.g. ["files","folders"]; a disabled
   //                  tab also drops out of All, and if All itself is off,
   //                  SUPER + SPACE opens the first tab that is on
+  //   "allSectionsOff": sections All does not search, e.g. ["files","folders"];
+  //                  the tabs themselves stay
   // Unknown ids are ignored and missing ones appended, so an ordering edit
   // can reorder but never hide a tab -- only disabledTabs does that. The file
   // is re-read on every open.
   property var tabOrder: Tabs.DEFAULT_TAB_ORDER
   property var allSectionOrder: Tabs.DEFAULT_ALL_SECTIONS
   property var disabledTabs: []
+  property var allSectionsOff: []
   readonly property var orderedTabs: Tabs.visibleTabs(root.tabOrder, root.disabledTabs, root.activeTab)
 
   function tabEnabled(id) {
     return root.disabledTabs.indexOf(id) < 0
+  }
+
+  // Whether All searches a section: its tab is on and it is not left out.
+  function inAll(id) {
+    return root.tabEnabled(id) && root.allSectionsOff.indexOf(id) < 0
   }
 
   property string filterText: ""
@@ -458,28 +467,10 @@ Item {
   // present -- no fallback path that would reintroduce a weaker read. Path
   // and byte ceiling arrive as argv, never interpolated into a script, so
   // there is no shell and nothing here to quote.
-  readonly property string fileReaderProgram: [
-    'use Fcntl;',
-    'my ($path, $max) = @ARGV;',
-    'sysopen(my $fh, $path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or exit 1;',
-    'my @st = stat($fh) or exit 1;',
-    'exit 1 unless -f _;',
-    'exit 1 unless $st[4] == $< || $st[4] == 0;',
-    'exit 1 if $st[7] > $max;',
-    'my $out = "";',
-    'while (length($out) < $max) {',
-    '  my $n = sysread($fh, my $chunk, $max - length($out));',
-    '  exit 1 unless defined $n;',
-    '  last if $n == 0;',
-    '  $out .= $chunk;',
-    '}',
-    'print $out;'
-  ].join("\n")
+  readonly property string fileReaderProgram: Settings.FILE_READER_PROGRAM
 
   function readFileCommand(path, maxBytes) {
-    return ["timeout", String(root.fileReadDeadline),
-            "perl", "-e", root.fileReaderProgram,
-            "--", path, String(maxBytes)]
+    return Settings.readFileCommand(path, maxBytes, root.fileReadDeadline)
   }
 
   // ------------------------------------------------------------------
@@ -837,7 +828,7 @@ Item {
     // All and Apps search applications; only System is scoped to the submenu
     // it is showing, and only System searches without them.
     var active = "root"
-    var wantsApps = root.activeTab === "apps" || (root.activeTab === "all" && root.tabEnabled("apps"))
+    var wantsApps = root.activeTab === "apps" || (root.activeTab === "all" && root.inAll("apps"))
 
     for (var i = 0; i < root.itemOrder.length; i++) {
       var entry = root.item(root.itemOrder[i])
@@ -1414,7 +1405,7 @@ Item {
     var order = Tabs.orderSections(root.allSectionOrder)
     for (var i = 0; i < order.length; i++) {
       var id = order[i].id
-      if (!root.tabEnabled(id)) continue
+      if (!root.inAll(id)) continue
       var sectionRows = id === "apps" ? root.appTabRows(query)
         : id === "files" ? fileCtl.fileSectionRows(false)
         : id === "folders" ? fileCtl.fileSectionRows(true)

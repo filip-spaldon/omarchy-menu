@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "Tabs.js" as Tabs
+import "Settings.js" as Settings
 
 // Per-user files under the state directory: style.json (the card's
 // geometry) and state.json (apps view, tab and section order, disabled
@@ -35,9 +36,7 @@ Item {
   //   fixedHeight   true keeps the card one size; false fits the rows
   //   top           "center" (stock menu) or a share of the screen, e.g. 0.2
   //   pickerHeight  most of the screen a dmenu picker's list may take
-  readonly property var styleDefaults: ({
-    fontScale: 1.0, cardWidth: 560, bodyHeight: 0.6, fixedHeight: false, top: 0.2, pickerHeight: 0.7
-  })
+  readonly property var styleDefaults: Settings.STYLE_DEFAULTS
 
   function loadStyle() {
     if (styleReadProc.running) return
@@ -54,18 +53,12 @@ Item {
       }
     }
     if (!style || typeof style !== "object" || Array.isArray(style)) style = ({})
-    var d = store.styleDefaults
-    function num(key, min, max) {
-      var v = Number(style[key])
-      return (style[key] !== undefined && isFinite(v) && v >= min && v <= max) ? v : d[key]
-    }
-    store.menu.menuFontScale = num("fontScale", 0.5, 2)
-    store.menu.launcherCardWidth = Math.round(num("cardWidth", 200, 2000))
-    store.menu.launcherBodyFraction = num("bodyHeight", 0.1, 0.95)
-    store.menu.menuHeightFraction = num("pickerHeight", 0.1, 0.95)
-    store.menu.launcherFixedHeight = typeof style.fixedHeight === "boolean" ? style.fixedHeight : d.fixedHeight
-    var top = style.top
-    store.menu.launcherTopFraction = (typeof top === "number" && isFinite(top) && top >= 0 && top <= 0.9) ? top : -1
+    store.menu.menuFontScale = Settings.styleNumber(style, "fontScale")
+    store.menu.launcherCardWidth = Math.round(Settings.styleNumber(style, "cardWidth"))
+    store.menu.launcherBodyFraction = Settings.styleNumber(style, "bodyHeight")
+    store.menu.menuHeightFraction = Settings.styleNumber(style, "pickerHeight")
+    store.menu.launcherFixedHeight = typeof style.fixedHeight === "boolean" ? style.fixedHeight : store.styleDefaults.fixedHeight
+    store.menu.launcherTopFraction = Settings.styleTop(style)
     if (!exists) store.writeStyleDefaults()
   }
 
@@ -76,16 +69,10 @@ Item {
     styleWriteProc.running = true
   }
 
-  // Writes a file under stateDir (0600, directory created as needed) via a
-  // temporary file and a rename, so a crash mid-write cannot leave half a
-  // file; the path and the content reach bash as positional arguments,
-  // never as script text. keepExisting: only create, never replace (mv -n).
+  // See Settings.writeCommand: temporary file and rename, 0600, the path
+  // and content passed as arguments. keepExisting: only create.
   function stateFileWriteCommand(path, content, keepExisting) {
-    var move = keepExisting ? 'mv -n -- "$t" "$2"' : 'mv -f -- "$t" "$2"'
-    return ["bash", "-c",
-      'umask 077; mkdir -p -- "$1" || exit 1; ' + (keepExisting ? '[ -e "$2" ] && exit 0; ' : '')
-        + 't=$(mktemp -- "$2.XXXXXX") || exit 1; printf %s "$3" > "$t" && ' + move + '; rm -f -- "$t"',
-      "bash", store.menu.stateDir, path, content]
+    return Settings.writeCommand(store.menu.stateDir, path, content, keepExisting)
   }
 
   function loadState() {
@@ -114,10 +101,10 @@ Item {
     store.menu.tabOrder = Tabs.normalizeOrder(state.tabOrder, Tabs.DEFAULT_TAB_ORDER)
     store.menu.allSectionOrder = Tabs.normalizeOrder(state.allSections, Tabs.DEFAULT_ALL_SECTIONS)
     store.menu.disabledTabs = Tabs.normalizeDisabled(state.disabledTabs)
+    store.menu.allSectionsOff = Tabs.normalizeSectionsOff(state.allSectionsOff)
     // Search cursor: "block" (default), "beam", "underline", "outline" or
     // "none"; cursorBlink false keeps it solid.
-    var styles = ["block", "beam", "underline", "outline", "none"]
-    store.menu.cursorStyle = styles.indexOf(state.cursorStyle) >= 0 ? state.cursorStyle : "block"
+    store.menu.cursorStyle = Settings.CURSOR_STYLES.indexOf(state.cursorStyle) >= 0 ? state.cursorStyle : "block"
     store.menu.cursorBlink = typeof state.cursorBlink === "boolean" ? state.cursorBlink : true
     store.menu.commandsWithoutSlash = typeof state.commandsWithoutSlash === "boolean" ? state.commandsWithoutSlash : true
 
@@ -131,7 +118,7 @@ Item {
     }
 
     if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
-        || !Array.isArray(state.disabledTabs) || !state.appsView
+        || !Array.isArray(state.disabledTabs) || !Array.isArray(state.allSectionsOff) || !state.appsView
         || state.cursorStyle === undefined || state.cursorBlink === undefined
         || state.commandsWithoutSlash === undefined) store.saveState()
   }
@@ -150,6 +137,7 @@ Item {
     next.tabOrder = store.menu.tabOrder
     next.allSections = store.menu.allSectionOrder
     next.disabledTabs = store.menu.disabledTabs
+    next.allSectionsOff = store.menu.allSectionsOff
     next.cursorStyle = store.menu.cursorStyle
     next.cursorBlink = store.menu.cursorBlink
     next.commandsWithoutSlash = store.menu.commandsWithoutSlash

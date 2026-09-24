@@ -74,6 +74,19 @@ function normalizeDisabled(list) {
   return out.length >= known.length ? [] : out
 }
 
+// Sections left out of All's search in state.json ("allSectionsOff"):
+// valid section ids only. Unlike disabledTabs every one may be off; All then
+// shows only the answers and the web search.
+function normalizeSectionsOff(list) {
+  var out = []
+  var input = Array.isArray(list) ? list : []
+  for (var i = 0; i < input.length; i++) {
+    var id = String(input[i])
+    if (DEFAULT_ALL_SECTIONS.indexOf(id) >= 0 && out.indexOf(id) < 0) out.push(id)
+  }
+  return out
+}
+
 // The tabs shown, in the user's order. A disabled tab stays visible only
 // while it is the active one: routes other programs open (`capture` lands on
 // System, SUPER + ALT + SPACE on Apps) keep working with their tab off.
@@ -183,6 +196,7 @@ if (typeof module !== "undefined") {
     orderTabs: orderTabs,
     orderSections: orderSections,
     normalizeDisabled: normalizeDisabled,
+    normalizeSectionsOff: normalizeSectionsOff,
     visibleTabs: visibleTabs,
     firstEnabledTab: firstEnabledTab,
     tabIndex: tabIndex,
