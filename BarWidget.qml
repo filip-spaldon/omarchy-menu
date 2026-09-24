@@ -69,6 +69,7 @@ Panel {
   readonly property var sectionsOff: Tabs.normalizeSectionsOff(st.allSectionsOff)
   readonly property string cursorStyle: Settings.CURSOR_STYLES.indexOf(st.cursorStyle) >= 0 ? st.cursorStyle : "block"
   readonly property bool cursorBlink: typeof st.cursorBlink === "boolean" ? st.cursorBlink : true
+  readonly property bool cursorWhenEmpty: typeof st.cursorWhenEmpty === "boolean" ? st.cursorWhenEmpty : true
   readonly property bool commandsWithoutSlash: typeof st.commandsWithoutSlash === "boolean" ? st.commandsWithoutSlash : true
   // Which click opens the popup; the other opens the launcher.
   readonly property string barLeftClick: Settings.BAR_CLICKS.indexOf(st.barLeftClick) >= 0 ? st.barLeftClick : "settings"
@@ -135,6 +136,7 @@ Panel {
     row({ key: "appsView", label: "Apps view", value: capitalize(appsView), adjust: true, enabled: stateValid })
     row({ key: "cursorStyle", label: "Cursor", value: capitalize(cursorStyle), adjust: true, enabled: stateValid })
     row({ key: "cursorBlink", label: "Cursor blink", value: onOff(cursorBlink), toggle: true, enabled: stateValid })
+    row({ key: "cursorWhenEmpty", label: "Cursor in empty field", value: onOff(cursorWhenEmpty), toggle: true, enabled: stateValid })
     row({ key: "commandsWithoutSlash", label: "Answers without “/”", value: onOff(commandsWithoutSlash), toggle: true, enabled: stateValid })
 
     header("TABS", "Enter switches on or off, ← → moves")
@@ -231,6 +233,7 @@ Panel {
       settingsOpen = !settingsOpen
       followRow("settings")
     } else if (key === "cursorBlink") setState("cursorBlink", !cursorBlink)
+    else if (key === "cursorWhenEmpty") setState("cursorWhenEmpty", !cursorWhenEmpty)
     else if (key === "commandsWithoutSlash") setState("commandsWithoutSlash", !commandsWithoutSlash)
     else if (key === "style:fixedHeight") setStyle("fixedHeight", !fixedHeight)
     else if (key.indexOf("section:") === 0) {

@@ -90,6 +90,8 @@ Item {
   // Search cursor look, from state.json (SettingsStore.qml).
   property string cursorStyle: "block"
   property bool cursorBlink: true
+  // "cursorWhenEmpty": false hides the cursor until something is typed.
+  property bool cursorWhenEmpty: true
   // state.json "commandsWithoutSlash": false makes answers (math, units,
   // password, shell, kill, ai...) answer only after "/"; plain text is then
   // purely a search. Default true: plain text also shows any answer on top.
@@ -2424,12 +2426,13 @@ Item {
           // it sits on the first letter of the placeholder, as a terminal's
           // does on the first cell. Style and blinking come from state.json:
           // cursorStyle "block" | "beam" | "underline" | "outline" | "none",
-          // cursorBlink true | false. It holds solid while typing.
+          // cursorBlink true | false, cursorWhenEmpty true | false (false
+          // hides it while nothing is typed). It holds solid while typing.
           Item {
             id: searchCursor
             readonly property real textEnd: searchText.x + (root.filterText ? Math.min(searchText.contentWidth, searchText.width) : 0)
             readonly property int cellWidth: Math.max(2, Math.round(searchText.font.pixelSize * 0.55))
-            visible: root.opened && root.cursorStyle !== "none"
+            visible: root.opened && root.cursorStyle !== "none" && (root.cursorWhenEmpty || root.filterText !== "")
             width: root.cursorStyle === "beam" ? Math.max(2, Math.round(searchText.font.pixelSize / 8)) : cellWidth
             height: Math.round(searchText.font.pixelSize * 1.15)
             x: root.filterText ? textEnd + 1 : searchText.x
