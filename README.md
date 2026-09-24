@@ -122,7 +122,7 @@ answer.
 Start a query with `/` for answers only: `/2+3`, `/100 km to miles`,
 `/password`, `/shell ls` or `/ai …` show just the answer, without apps, files
 or menu entries around it, and the tabs are hidden. A lone `/` lists one
-example per command; Enter on one fills it in, ready to edit. Without the slash
+example per command as a read-only hint. Without the slash
 the same text is a normal search with any answer on top.
 
 Unmatched text offers web search. Chromium-family browsers use their configured

@@ -25,11 +25,13 @@ BorderSurface {
   required property int childCount
   required property string trailText
 
-  readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex
+  readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex && row.kind !== "example"
     && (!row.menu.systemTwoPane || row.menu.systemPane === "right")
   readonly property bool isApp: row.kind === "app"
   readonly property bool hasIcon: row.icon.length > 0 || row.isApp
 
+  // Command examples are a read-only hint.
+  opacity: row.kind === "example" ? 0.7 : 1
   width: ListView.view.width
   height: row.menu.rowHeightForDetail(row.detail)
   radius: row.menu.cornerRadius

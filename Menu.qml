@@ -248,7 +248,7 @@ Item {
   // The key hints under the results, for what the current tab can do.
   function footerHints() {
     if (root.commandMode) return root.answerQuery ? "Answers only · Enter use · Ctrl+R new value · Esc clear"
-                                                  : "Enter fills an example · keep typing your own · Esc clear"
+                                                  : "Type a command after / · Esc clear"
     if (root.activeTab === "apps")
       return "Enter launch · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
@@ -1436,6 +1436,8 @@ Item {
     else if (root.activeTab === "all") rows = root.allTabRows(query)
     else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
 
+    if (root.showingCommandHints) root.cursorActive = false
+
     // Sanitized here rather than in each builder: this is the one place
     // every row passes through on its way to the ListView.
     for (var k = 0; k < rows.length; k++) displayModel.append(MenuModel.sanitizeRow(rows[k]))
@@ -1479,8 +1481,12 @@ Item {
     }
   }
 
+  // The examples under a lone "/" are a read-only hint: no cursor, nothing
+  // to pick.
+  readonly property bool showingCommandHints: root.commandMode && !root.answerQuery
+
   function select(delta) {
-    if (displayModel.count === 0) return
+    if (displayModel.count === 0 || root.showingCommandHints) return
 
     root.disarmPointer()
     if (!cursorActive) {
@@ -1614,8 +1620,7 @@ Item {
       filterText = ""
       root.launchApp(appId, label)
     } else if (row.kind === "example") {
-      // Fill the query with the example, ready to edit.
-      root.setFilter(row.target)
+      return // read-only hint
     } else if (row.kind === "shell") {
       root.runInTerminal(row.target)
     } else if (row.kind === "file" || row.kind === "folder") {
@@ -1864,6 +1869,7 @@ Item {
   }
 
   function selectFromPointer(index, item, mouse) {
+    if (root.showingCommandHints) return
     if (!pointerGate.moved(item, mouse)) return
     root.cursorActive = true
     root.selectedIndex = index
@@ -2298,7 +2304,7 @@ Item {
               if (root.mode === "input") root.applyDmenuSelection(root.filterText)
               else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
             } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
-            else if (displayModel.count > 0) root.cursorActive = true
+            else if (displayModel.count > 0 && !root.showingCommandHints) root.cursorActive = true
             event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
             root.setFilter(root.filterText + event.text)
@@ -2380,10 +2386,39 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
           }
 
+          // Terminal-style block cursor at the end of the query (before the
+          // placeholder when empty); blinks, and holds solid while typing.
+          Rectangle {
+            id: searchCursor
+            readonly property real textEnd: searchText.x + (root.filterText ? Math.min(searchText.contentWidth, searchText.width) : 0)
+            visible: root.opened
+            width: Math.max(2, Math.round(searchText.font.pixelSize * 0.55))
+            height: Math.round(searchText.font.pixelSize * 1.15)
+            x: root.filterText ? textEnd + 1 : searchText.x - width - Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+            color: root.foreground
+            opacity: cursorBlink.on ? 0.85 : 0
+
+            Timer {
+              id: cursorBlink
+              property bool on: true
+              interval: 530
+              repeat: true
+              running: searchCursor.visible
+              onTriggered: on = !on
+            }
+            Connections {
+              target: root
+              function onFilterTextChanged() { cursorBlink.on = true; cursorBlink.restart() }
+            }
+          }
+
           Text {
+            id: searchText
             textFormat: Text.PlainText
             anchors.left: root.tabsActive ? searchGlyph.right : parent.left
-            anchors.leftMargin: root.tabsActive ? Style.space(10) : 0
+            // Empty: the placeholder starts after the cursor block.
+            anchors.leftMargin: (root.tabsActive ? Style.space(10) : 0) + (root.filterText ? 0 : searchCursor.width + Style.space(4))
             anchors.right: viewToggle.visible ? viewToggle.left : parent.right
             anchors.rightMargin: viewToggle.visible ? Style.space(8) : 0
             anchors.verticalCenter: parent.verticalCenter
