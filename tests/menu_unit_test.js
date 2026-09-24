@@ -178,6 +178,11 @@ eq(Settings.moveInOrder(["a", "b", "c"], "c", 1), ["a", "b", "c"], "moveInOrder 
 eq(Settings.toggleDisabled([], "files", ["all", "files"]), ["files"], "a tab switches off")
 eq(Settings.toggleDisabled(["files"], "files", ["all", "files"]), [], "a tab switches back on")
 eq(Settings.toggleDisabled(["files"], "all", ["all", "files"]), ["files"], "the last tab that is on stays on")
+eq(Settings.toggleListed(["files"], "folders"), ["files", "folders"], "a section leaves All")
+eq(Settings.toggleListed(["files", "folders"], "files"), ["folders"], "a section returns to All")
+eq(Tabs.normalizeSectionsOff(["files", "bogus", "files", "apps", "system", "folders"]), ["files", "apps", "system", "folders"],
+   "every section may leave All; unknown and repeated ids are dropped")
+eq(Tabs.normalizeSectionsOff("files"), [], "allSectionsOff must be a list")
 assert(Settings.MODEL_PATTERN.test("openai-codex/gpt-6-luna"), "model names with a provider are accepted")
 assert(!Settings.MODEL_PATTERN.test("x; rm -rf ~"), "model names with shell syntax are refused")
 const write = Settings.writeCommand("/d", "/d/f.json", "$(boom)", false)

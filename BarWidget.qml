@@ -48,6 +48,8 @@ Panel {
   property var installedAgents: []
 
   property int cursor: -1
+  // The options fold away behind one row; the System actions stay open.
+  property bool settingsOpen: false
   property bool modelEditing: false
   signal editModelRequested()
 
@@ -63,6 +65,7 @@ Panel {
   readonly property var tabOrder: Tabs.normalizeOrder(st.tabOrder, Tabs.DEFAULT_TAB_ORDER)
   readonly property var sectionOrder: Tabs.normalizeOrder(st.allSections, Tabs.DEFAULT_ALL_SECTIONS)
   readonly property var disabledTabs: Tabs.normalizeDisabled(st.disabledTabs)
+  readonly property var sectionsOff: Tabs.normalizeSectionsOff(st.allSectionsOff)
   readonly property string cursorStyle: Settings.CURSOR_STYLES.indexOf(st.cursorStyle) >= 0 ? st.cursorStyle : "block"
   readonly property bool cursorBlink: typeof st.cursorBlink === "boolean" ? st.cursorBlink : true
   readonly property bool commandsWithoutSlash: typeof st.commandsWithoutSlash === "boolean" ? st.commandsWithoutSlash : true
@@ -108,6 +111,19 @@ Panel {
     function header(text, note) { out.push({ type: "header", text: text, note: note || "" }) }
     function row(r) { r.type = "row"; if (r.enabled === undefined) r.enabled = true; out.push(r) }
 
+    row({ key: "settings", label: "Settings", icon: "󰒓", value: settingsOpen ? "⌄" : "›" })
+    if (settingsOpen) appendSettings(out, header, row)
+
+    header("SYSTEM")
+    for (var e = 0; e < systemEntries.length; e++) {
+      var entry = systemEntries[e]
+      if (entry.when && whenResults[entry.id] !== true) continue
+      row({ key: "system:" + entry.id, label: entry.label, icon: entry.icon, action: entry.action })
+    }
+    return out
+  }
+
+  function appendSettings(out, header, row) {
     header("LAUNCHER", root.stateValid ? "" : "state.json is not valid JSON")
     row({ key: "appsView", label: "Apps view", value: capitalize(appsView), adjust: true, enabled: stateValid })
     row({ key: "cursorStyle", label: "Cursor", value: capitalize(cursorStyle), adjust: true, enabled: stateValid })
@@ -120,11 +136,14 @@ Panel {
       row({ key: "tab:" + tabs[t].id, label: tabs[t].label, icon: tabs[t].icon,
             value: disabledTabs.indexOf(tabs[t].id) >= 0 ? "Off" : "On", toggle: true, move: true, enabled: stateValid })
 
-    header("SECTIONS IN ALL", "← → moves")
+    header("SEARCH IN ALL", "Enter switches a section on or off, ← → moves")
     var sections = Tabs.orderSections(sectionOrder)
-    for (var s = 0; s < sections.length; s++)
+    for (var s = 0; s < sections.length; s++) {
+      var tabOff = disabledTabs.indexOf(sections[s].id) >= 0
       row({ key: "section:" + sections[s].id, label: sections[s].title, icon: tabIcon(sections[s].id),
-            value: String(s + 1), move: true, enabled: stateValid })
+            value: tabOff ? "Tab off" : (sectionsOff.indexOf(sections[s].id) >= 0 ? "Off" : "On"),
+            toggle: !tabOff, move: true, enabled: stateValid })
+    }
 
     header("LOOK", root.styleValid ? "" : "style.json is not valid JSON")
     row({ key: "style:fontScale", label: "Text size", value: Settings.styleNumber(sty, "fontScale").toFixed(2) + "×", adjust: true, enabled: styleValid })
@@ -144,14 +163,6 @@ Panel {
 
     header("FILES")
     row({ key: "open:folder", label: "Settings folder", icon: "󰉋", value: "Open" })
-
-    header("SYSTEM")
-    for (var e = 0; e < systemEntries.length; e++) {
-      var entry = systemEntries[e]
-      if (entry.when && whenResults[entry.id] !== true) continue
-      row({ key: "system:" + entry.id, label: entry.label, icon: entry.icon, action: entry.action })
-    }
-    return out
   }
 
   function selectable(index) {
@@ -182,6 +193,7 @@ Panel {
   function adjust(r, direction) {
     if (!r || !r.enabled) return
     var key = r.key
+    if (key === "settings") { if (settingsOpen !== direction > 0) activate(r); return }
     if (r.move) {
       var id = key.slice(key.indexOf(":") + 1)
       if (key.indexOf("tab:") === 0) setState("tabOrder", Settings.moveInOrder(tabOrder, id, direction))
@@ -206,10 +218,15 @@ Panel {
   function activate(r) {
     if (!r || !r.enabled) return
     var key = r.key
-    if (key === "cursorBlink") setState("cursorBlink", !cursorBlink)
+    if (key === "settings") {
+      settingsOpen = !settingsOpen
+      followRow("settings")
+    } else if (key === "cursorBlink") setState("cursorBlink", !cursorBlink)
     else if (key === "commandsWithoutSlash") setState("commandsWithoutSlash", !commandsWithoutSlash)
     else if (key === "style:fixedHeight") setStyle("fixedHeight", !fixedHeight)
-    else if (key.indexOf("tab:") === 0)
+    else if (key.indexOf("section:") === 0) {
+      if (r.toggle) setState("allSectionsOff", Settings.toggleListed(sectionsOff, key.slice(8)))
+    } else if (key.indexOf("tab:") === 0)
       setState("disabledTabs", Settings.toggleDisabled(disabledTabs, key.slice(4), Tabs.DEFAULT_TAB_ORDER))
     else if (key === "ai:model") root.editModelRequested()
     else if (key === "open:folder") {
@@ -307,6 +324,7 @@ Panel {
   onOpenedChanged: if (opened) {
     reload()
     modelEditing = false
+    settingsOpen = false
     Qt.callLater(function() {
       root.firstSelectable()
       flick.contentY = 0
@@ -466,7 +484,7 @@ Panel {
           PanelHero {
             width: parent.width
             title: "Omarchy Menu Omni"
-            meta: "Settings · applied on the next open"
+            meta: root.settingsOpen ? "Changes apply on the next open" : "Launcher settings and system actions"
             foreground: root.foreground
             fontFamily: root.fontFamily
             iconComponent: Component {

@@ -79,6 +79,7 @@ Settings are read on every open from
   "tabOrder": ["all", "apps", "system", "files", "folders"],
   "allSections": ["apps", "system", "files", "folders"],
   "disabledTabs": [],
+  "allSectionsOff": [],
   "cursorStyle": "block",
   "cursorBlink": true,
   "commandsWithoutSlash": true
@@ -95,7 +96,9 @@ The initial application view is `list`; the example selects `grid`.
 Unknown or duplicate IDs are ignored; omitted IDs are appended in default order.
 
 To hide file and folder search, set `"disabledTabs": ["files", "folders"]`.
-Their sections also disappear from All and its file searches stop. To open Apps
+Their sections also disappear from All and its file searches stop. To keep the
+tabs but leave sections out of All's search, list them in `allSectionsOff`
+instead, e.g. `["files", "folders"]`; any section may be off. To open Apps
 by default, disable All and put Apps first in `tabOrder`. Disabling every tab
 is ignored so the launcher remains usable.
 
@@ -112,16 +115,19 @@ Add it to the bar with the bar's widget picker, or put
 `~/.config/omarchy/shell.json`.
 
 - **Left click** opens the launcher, the same as `Super+Space`.
-- **Right click** opens a settings popup with every option Omni reads:
+- **Right click** opens a popup with the System actions. Its **Settings** row
+  (Enter or `→`) unfolds every option Omni reads:
   - **Launcher**: apps view, cursor style, cursor blink, answers without `/`.
   - **Tabs**: switch each tab on or off, and change their order.
-  - **Sections in All**: the order of the result sections.
+  - **Search in All**: switch each result section on or off, and change
+    their order. A section that is off leaves All only, its tab stays
+    (`allSectionsOff` in `state.json`).
   - **Look**: the `style.json` geometry.
   - **AI**: agent, plus the model and effort for that agent.
   - **Settings folder**: opens `~/.local/state/omarchy-menu-omni/`.
-  - **System**: every action of the System submenu (screensaver, lock,
-    suspend, hibernate, logout, reboot, shutdown), including your own
-    entries from `omarchy-menu.jsonc`.
+- The **System** actions below it are always shown: every action of the
+  System submenu (screensaver, lock, suspend, hibernate, logout, reboot,
+  shutdown), including your own entries from `omarchy-menu.jsonc`.
 
 Keys in the popup:
 

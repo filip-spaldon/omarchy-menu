@@ -132,16 +132,24 @@ Item {
   //   "disabledTabs": tabs switched off, e.g. ["files","folders"]; a disabled
   //                  tab also drops out of All, and if All itself is off,
   //                  SUPER + SPACE opens the first tab that is on
+  //   "allSectionsOff": sections All does not search, e.g. ["files","folders"];
+  //                  the tabs themselves stay
   // Unknown ids are ignored and missing ones appended, so an ordering edit
   // can reorder but never hide a tab -- only disabledTabs does that. The file
   // is re-read on every open.
   property var tabOrder: Tabs.DEFAULT_TAB_ORDER
   property var allSectionOrder: Tabs.DEFAULT_ALL_SECTIONS
   property var disabledTabs: []
+  property var allSectionsOff: []
   readonly property var orderedTabs: Tabs.visibleTabs(root.tabOrder, root.disabledTabs, root.activeTab)
 
   function tabEnabled(id) {
     return root.disabledTabs.indexOf(id) < 0
+  }
+
+  // Whether All searches a section: its tab is on and it is not left out.
+  function inAll(id) {
+    return root.tabEnabled(id) && root.allSectionsOff.indexOf(id) < 0
   }
 
   property string filterText: ""
@@ -820,7 +828,7 @@ Item {
     // All and Apps search applications; only System is scoped to the submenu
     // it is showing, and only System searches without them.
     var active = "root"
-    var wantsApps = root.activeTab === "apps" || (root.activeTab === "all" && root.tabEnabled("apps"))
+    var wantsApps = root.activeTab === "apps" || (root.activeTab === "all" && root.inAll("apps"))
 
     for (var i = 0; i < root.itemOrder.length; i++) {
       var entry = root.item(root.itemOrder[i])
@@ -1397,7 +1405,7 @@ Item {
     var order = Tabs.orderSections(root.allSectionOrder)
     for (var i = 0; i < order.length; i++) {
       var id = order[i].id
-      if (!root.tabEnabled(id)) continue
+      if (!root.inAll(id)) continue
       var sectionRows = id === "apps" ? root.appTabRows(query)
         : id === "files" ? fileCtl.fileSectionRows(false)
         : id === "folders" ? fileCtl.fileSectionRows(true)

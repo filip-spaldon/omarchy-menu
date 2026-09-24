@@ -58,8 +58,8 @@ Item {
       // An answer that computed itself (arithmetic, a conversion, a password)
       // is not also a file name worth walking $HOME for.
       if (searcher.menu.queryRows(query).length > 0) return null
-      var dirs = searcher.menu.tabEnabled("folders")
-      var files = searcher.menu.tabEnabled("files")
+      var dirs = searcher.menu.inAll("folders")
+      var files = searcher.menu.inAll("files")
       if (!dirs && !files) return null
       var kinds = (dirs ? "d" : "") + (files ? "f" : "")
       return { scope: "all" + kinds, key: "all" + kinds + "|" + query, query: query, dirs: dirs, files: files, filter: FileSearch.ALL_FILTER }

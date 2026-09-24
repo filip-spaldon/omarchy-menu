@@ -145,6 +145,15 @@ function readFileCommand(path, maxBytes, seconds) {
   return ["timeout", String(seconds || 5), "perl", "-e", FILE_READER_PROGRAM, "--", path, String(maxBytes)]
 }
 
+// Adds `id` to a list or takes it out.
+function toggleListed(list, id) {
+  var out = (list || []).slice()
+  var index = out.indexOf(id)
+  if (index >= 0) out.splice(index, 1)
+  else out.push(id)
+  return out
+}
+
 // Writes a file under `dir` (0600, directory created as needed) through a
 // temporary file and a rename, so a crash mid-write cannot leave half a
 // file; the path and the content reach bash as positional arguments, never
@@ -174,6 +183,7 @@ if (typeof module !== "undefined") {
     styleNumber: styleNumber,
     moveInOrder: moveInOrder,
     toggleDisabled: toggleDisabled,
+    toggleListed: toggleListed,
     FILE_READER_PROGRAM: FILE_READER_PROGRAM,
     readFileCommand: readFileCommand,
     writeCommand: writeCommand

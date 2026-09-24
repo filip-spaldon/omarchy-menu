@@ -101,6 +101,7 @@ Item {
     store.menu.tabOrder = Tabs.normalizeOrder(state.tabOrder, Tabs.DEFAULT_TAB_ORDER)
     store.menu.allSectionOrder = Tabs.normalizeOrder(state.allSections, Tabs.DEFAULT_ALL_SECTIONS)
     store.menu.disabledTabs = Tabs.normalizeDisabled(state.disabledTabs)
+    store.menu.allSectionsOff = Tabs.normalizeSectionsOff(state.allSectionsOff)
     // Search cursor: "block" (default), "beam", "underline", "outline" or
     // "none"; cursorBlink false keeps it solid.
     store.menu.cursorStyle = Settings.CURSOR_STYLES.indexOf(state.cursorStyle) >= 0 ? state.cursorStyle : "block"
@@ -117,7 +118,7 @@ Item {
     }
 
     if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
-        || !Array.isArray(state.disabledTabs) || !state.appsView
+        || !Array.isArray(state.disabledTabs) || !Array.isArray(state.allSectionsOff) || !state.appsView
         || state.cursorStyle === undefined || state.cursorBlink === undefined
         || state.commandsWithoutSlash === undefined) store.saveState()
   }
@@ -136,6 +137,7 @@ Item {
     next.tabOrder = store.menu.tabOrder
     next.allSections = store.menu.allSectionOrder
     next.disabledTabs = store.menu.disabledTabs
+    next.allSectionsOff = store.menu.allSectionsOff
     next.cursorStyle = store.menu.cursorStyle
     next.cursorBlink = store.menu.cursorBlink
     next.commandsWithoutSlash = store.menu.commandsWithoutSlash
