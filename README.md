@@ -80,13 +80,16 @@ Settings are read on every open from
   "allSections": ["apps", "system", "files", "folders"],
   "disabledTabs": [],
   "cursorStyle": "block",
-  "cursorBlink": true
+  "cursorBlink": true,
+  "commandsWithoutSlash": true
 }
 ```
 
 The initial application view is `list`; the example selects `grid`.
 `cursorStyle` sets the search cursor: `block` (default), `beam`, `underline`,
 `outline` or `none`; `cursorBlink: false` keeps it solid.
+`commandsWithoutSlash: false` makes answers (math, conversions, generators,
+`shell`, `kill`, `ai`…) work only after `/`; plain text is then purely a search.
 `tabOrder` controls visible tab order and the Ctrl+number shortcuts.
 `allSections` independently controls the order of result sections in All.
 Unknown or duplicate IDs are ignored; omitted IDs are appended in default order.

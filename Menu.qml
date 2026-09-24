@@ -89,6 +89,10 @@ Item {
   // Search cursor look, from state.json (SettingsStore.qml).
   property string cursorStyle: "block"
   property bool cursorBlink: true
+  // state.json "commandsWithoutSlash": false makes answers (math, units,
+  // password, shell, kill, ai...) answer only after "/"; plain text is then
+  // purely a search. Default true: plain text also shows any answer on top.
+  property bool commandsWithoutSlash: true
   // All with nothing typed is just the search field and the tab chips: the
   // card is a prompt, and picking a tab or typing is what opens it up.
   readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim()
@@ -1351,7 +1355,7 @@ Item {
       // chose. (Without tabs -- never the case here -- the stock submenu
       // scope still applies.)
       var scope = root.tabsActive ? "root" : active
-      rows = answerEngine.queryRows(query).concat(root.systemSearchRows(query, scope, true))
+      rows = root.plainAnswerRows(query).concat(root.systemSearchRows(query, scope, true))
       // Nothing in the menu, and nothing that answered itself. Offer to look
       // it up rather than showing the empty state.
       if (rows.length === 0) {
@@ -1409,7 +1413,7 @@ Item {
         : root.systemSearchRows(query, "root", false)
       sections.push({ title: order[i].title, rows: sectionRows })
     }
-    var rows = answerEngine.queryRows(query).concat(Tabs.composeSections(sections, root.allSectionLimit))
+    var rows = root.plainAnswerRows(query).concat(Tabs.composeSections(sections, root.allSectionLimit))
 
     if (rows.length === 0) {
       var fallback = answerEngine.webSearchRow(query)
@@ -1840,7 +1844,12 @@ Item {
   readonly property string aiAgent: aiCtl.aiAgent
   function saveState() { settingsStore.saveState() }
   function requestFileSearch() { fileCtl.requestFileSearch() }
-  function queryRows(query) { return answerEngine.queryRows(query) }
+  function queryRows(query) { return root.plainAnswerRows(query) }
+
+  // Answers for a plain (slash-less) search, or none when those are off.
+  function plainAnswerRows(query) {
+    return root.commandsWithoutSlash ? answerEngine.queryRows(query) : []
+  }
 
 
 

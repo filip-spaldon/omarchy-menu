@@ -119,6 +119,7 @@ Item {
     var styles = ["block", "beam", "underline", "outline", "none"]
     store.menu.cursorStyle = styles.indexOf(state.cursorStyle) >= 0 ? state.cursorStyle : "block"
     store.menu.cursorBlink = typeof state.cursorBlink === "boolean" ? state.cursorBlink : true
+    store.menu.commandsWithoutSlash = typeof state.commandsWithoutSlash === "boolean" ? state.commandsWithoutSlash : true
 
     // Read after the launcher opened (it re-reads on every open): if All was
     // just switched off, move on to the first tab that is on.
@@ -131,7 +132,8 @@ Item {
 
     if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
         || !Array.isArray(state.disabledTabs) || !state.appsView
-        || state.cursorStyle === undefined || state.cursorBlink === undefined) store.saveState()
+        || state.cursorStyle === undefined || state.cursorBlink === undefined
+        || state.commandsWithoutSlash === undefined) store.saveState()
   }
 
   // Written to a temporary file and renamed over the old one, so a crash
@@ -150,6 +152,7 @@ Item {
     next.disabledTabs = store.menu.disabledTabs
     next.cursorStyle = store.menu.cursorStyle
     next.cursorBlink = store.menu.cursorBlink
+    next.commandsWithoutSlash = store.menu.commandsWithoutSlash
     if (store.menu.aiAgent) next.aiAgent = store.menu.aiAgent
     store.stateData = next
     stateWriteProc.command = store.stateFileWriteCommand(store.statePath, JSON.stringify(next, null, 2) + "\n", false)
