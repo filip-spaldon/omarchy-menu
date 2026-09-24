@@ -2429,8 +2429,9 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
           }
 
-          // Terminal-style cursor at the end of the query (before the
-          // placeholder when empty). Style and blinking come from state.json:
+          // Terminal-style cursor at the end of the query; with nothing typed
+          // it sits on the first letter of the placeholder, as a terminal's
+          // does on the first cell. Style and blinking come from state.json:
           // cursorStyle "block" | "beam" | "underline" | "outline" | "none",
           // cursorBlink true | false. It holds solid while typing.
           Item {
@@ -2440,9 +2441,12 @@ Item {
             visible: root.opened && root.cursorStyle !== "none"
             width: root.cursorStyle === "beam" ? Math.max(2, Math.round(searchText.font.pixelSize / 8)) : cellWidth
             height: Math.round(searchText.font.pixelSize * 1.15)
-            x: root.filterText ? textEnd + 1 : searchText.x - width - Style.space(4)
+            x: root.filterText ? textEnd + 1 : searchText.x
             anchors.verticalCenter: parent.verticalCenter
-            opacity: (!root.cursorBlink || cursorBlink.on) ? 0.85 : 0
+            // Over the placeholder a filled block stays see-through enough
+            // to leave its letter readable.
+            opacity: (!root.cursorBlink || cursorBlink.on)
+              ? (!root.filterText && (root.cursorStyle === "block") ? 0.5 : 0.85) : 0
 
             Rectangle {
               anchors.left: parent.left
@@ -2473,7 +2477,7 @@ Item {
             textFormat: Text.PlainText
             anchors.left: root.tabsActive ? searchGlyph.right : parent.left
             // Empty: the placeholder starts after the cursor block.
-            anchors.leftMargin: (root.tabsActive ? Style.space(10) : 0) + (root.filterText || !searchCursor.visible ? 0 : searchCursor.width + Style.space(4))
+            anchors.leftMargin: root.tabsActive ? Style.space(10) : 0
             anchors.right: viewToggle.visible ? viewToggle.left : parent.right
             anchors.rightMargin: viewToggle.visible ? Style.space(8) : 0
             anchors.verticalCenter: parent.verticalCenter
