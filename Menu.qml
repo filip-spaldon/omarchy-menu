@@ -247,7 +247,8 @@ Item {
 
   // The key hints under the results, for what the current tab can do.
   function footerHints() {
-    if (root.commandMode) return "Answers only · Enter use · Ctrl+R new value · Esc clear"
+    if (root.commandMode) return root.answerQuery ? "Answers only · Enter use · Ctrl+R new value · Esc clear"
+                                                  : "Enter fills an example · keep typing your own · Esc clear"
     if (root.activeTab === "apps")
       return "Enter launch · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
@@ -1122,6 +1123,35 @@ Item {
   // Some searches answer themselves. They all end up as one row at the top of
   // the list with the same shape, so only the icon, the two lines of text and
   // what Enter does with it are worth writing out each time.
+  // What a lone "/" lists: one example per answer, each a row that fills the
+  // query when picked, so the commands are discoverable without docs.
+  readonly property var commandExamples: [
+    { icon: "󰃬", example: "2+3*4", detail: "Calculator" },
+    { icon: "󰓡", example: "100 km to miles", detail: "Units" },
+    { icon: "󰄔", example: "123 eur to usd", detail: "Currency" },
+    { icon: "󰅐", example: "time in tokyo", detail: "Time zones" },
+    { icon: "󰅴", example: "password 24", detail: "Password (Ctrl+R for another)" },
+    { icon: "󰅴", example: "uuid", detail: "UUID v4" },
+    { icon: "󰅴", example: "epoch", detail: "Unix time, or `epoch 1700000000`" },
+    { icon: "󰅴", example: "sha256 text", detail: "SHA-256" },
+    { icon: "󰅴", example: "base64 text", detail: "Base64 encode (b64d to decode)" },
+    { icon: "󰅴", example: "urlencode a b&c", detail: "URL encode (urldecode to decode)" },
+    { icon: "󰚌", example: "kill firefox", detail: "End a process" },
+    { icon: "󰖟", example: "github.com", detail: "Open a URL" },
+    { icon: "", example: "shell htop", detail: "Run in a terminal" },
+    { icon: "󰚩", example: "ai what is Omarchy?", detail: "Ask an AI agent" }
+  ]
+
+  function commandExampleRows() {
+    var rows = []
+    for (var i = 0; i < root.commandExamples.length; i++) {
+      var c = root.commandExamples[i]
+      rows.push(root.queryRow({ id: "example." + i, kind: "example", icon: c.icon,
+                                label: "/" + c.example, detail: c.detail, payload: "/" + c.example }))
+    }
+    return rows
+  }
+
   function queryRow(spec) {
     return {
       itemId: spec.id || (spec.kind + ".result"),
@@ -1394,7 +1424,7 @@ Item {
     // A question for the agent is not also a search: the AI panel takes the
     // card's body, and nothing is looked up until Enter.
     if (aiCtl.isAiMode) rows = []
-    else if (root.commandMode) rows = root.answerQuery ? answerEngine.queryRows(root.answerQuery) : []
+    else if (root.commandMode) rows = root.answerQuery ? answerEngine.queryRows(root.answerQuery) : root.commandExampleRows()
     // Two panes show the active menu's own entries, never filtered: a search
     // moves the selection instead. A category that is an action (About) has
     // no entries to show, and "root" would otherwise list the categories
@@ -1583,6 +1613,9 @@ Item {
       opened = false
       filterText = ""
       root.launchApp(appId, label)
+    } else if (row.kind === "example") {
+      // Fill the query with the example, ready to edit.
+      root.setFilter(row.target)
     } else if (row.kind === "shell") {
       root.runInTerminal(row.target)
     } else if (row.kind === "file" || row.kind === "folder") {
@@ -2368,7 +2401,9 @@ Item {
 
         TabBar {
           id: tabBar
-          visible: root.tabsActive
+          // Hidden in command mode: the tabs choose where to search, and a
+          // command does not search.
+          visible: root.tabsActive && !root.commandMode
           height: visible ? implicitHeight : 0
           tabs: aiCtl.isAiMode ? aiCtl.aiAgentTabs : root.orderedTabs
           activeTab: aiCtl.isAiMode ? aiCtl.aiAgent : root.activeTab
@@ -2622,7 +2657,7 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: root.commandMode ? (root.answerQuery ? "No answer for “" + root.answerQuery + "”" : "Type a command: 2+3, 100 km to miles, password, shell ls…")
+              text: root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
                 : fileCtl.fileSearching ? "Searching…"
                 : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
               color: root.foreground
