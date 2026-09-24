@@ -987,10 +987,18 @@ Item {
       root.selectSystemCategory(root.systemCategoryIndex)
     } else {
       root.syncSystemCategory()
-      // A top-level category is shown highlighted on the left; anything
-      // deeper puts the keyboard in its list on the right.
-      var entry = root.item(root.activeMenu)
-      root.systemPane = entry && entry.parent === "root" ? "left" : "right"
+      // A route (SUPER + ESCAPE opens `system`, SUPER + CTRL + C `capture`)
+      // or a submenu picked from All asked for that menu, so the keyboard
+      // goes to its items on the right -- as in the stock menu -- with the
+      // category highlighted on the left. Only a menu with nothing to list
+      // leaves the keyboard on the left.
+      root.systemPane = displayModel.count > 0 ? "right" : "left"
+      if (root.systemPane === "right") {
+        root.cursorActive = true
+        var first = root.nextSelectable(0, 1)
+        root.selectedIndex = first >= 0 ? first : 0
+        root.revealCursor()
+      }
     }
   }
 
