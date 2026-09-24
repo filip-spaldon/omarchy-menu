@@ -78,11 +78,15 @@ Settings are read on every open from
   "appsView": "grid",
   "tabOrder": ["all", "apps", "system", "files", "folders"],
   "allSections": ["apps", "system", "files", "folders"],
-  "disabledTabs": []
+  "disabledTabs": [],
+  "cursorStyle": "block",
+  "cursorBlink": true
 }
 ```
 
 The initial application view is `list`; the example selects `grid`.
+`cursorStyle` sets the search cursor: `block` (default), `beam`, `underline`,
+`outline` or `none`; `cursorBlink: false` keeps it solid.
 `tabOrder` controls visible tab order and the Ctrl+number shortcuts.
 `allSections` independently controls the order of result sections in All.
 Unknown or duplicate IDs are ignored; omitted IDs are appended in default order.
@@ -122,7 +126,9 @@ answer.
 Start a query with `/` for answers only: `/2+3`, `/100 km to miles`,
 `/password`, `/shell ls` or `/ai …` show just the answer, without apps, files
 or menu entries around it, and the tabs are hidden. A lone `/` lists one
-example per command as a read-only hint. Without the slash
+example per command as a read-only hint; typing narrows the hints to the
+commands that still fit (`/pa` → `/password 24`) and they give way to the
+answer once it is unambiguous. Without the slash
 the same text is a normal search with any answer on top.
 
 Unmatched text offers web search. Chromium-family browsers use their configured

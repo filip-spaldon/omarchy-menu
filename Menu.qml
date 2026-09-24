@@ -86,6 +86,9 @@ Item {
   // any answer on top. answerQuery is the text the answer builders read.
   readonly property bool commandMode: root.tabsActive && /^\s*\//.test(root.filterText) && !aiCtl.isAiMode
   readonly property string answerQuery: root.filterText.replace(/^\s*\//, "").trim()
+  // Search cursor look, from state.json (SettingsStore.qml).
+  property string cursorStyle: "block"
+  property bool cursorBlink: true
   // All with nothing typed is just the search field and the tab chips: the
   // card is a prompt, and picking a tab or typing is what opens it up.
   readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim()
@@ -1126,9 +1129,9 @@ Item {
   // What a lone "/" lists: one example per answer, each a row that fills the
   // query when picked, so the commands are discoverable without docs.
   readonly property var commandExamples: [
-    { icon: "󰃬", example: "2+3*4", detail: "Calculator" },
-    { icon: "󰓡", example: "100 km to miles", detail: "Units" },
-    { icon: "󰄔", example: "123 eur to usd", detail: "Currency" },
+    { icon: "󰃬", example: "2+3*4", detail: "Calculator", starts: /^[\d.(+\-]|^(sqrt|abs|log|ln|sin|cos|tan|pi)/ },
+    { icon: "󰓡", example: "100 km to miles", detail: "Units", starts: /^[\d.]/ },
+    { icon: "󰄔", example: "123 eur to usd", detail: "Currency", starts: /^[\d.$€£¥]/ },
     { icon: "󰅐", example: "time in tokyo", detail: "Time zones" },
     { icon: "󰅴", example: "password 24", detail: "Password (Ctrl+R for another)" },
     { icon: "󰅴", example: "uuid", detail: "UUID v4" },
@@ -1142,10 +1145,25 @@ Item {
     { icon: "󰚩", example: "ai what is Omarchy?", detail: "Ask an AI agent" }
   ]
 
-  function commandExampleRows() {
+  // A hint fits what is typed so far when the typed text is a start of its
+  // example ("pa" → "password 24"), its command word starts with the typed
+  // one ("sha" → "sha256"), or it opens the way its answers do (a digit for
+  // math, units and currency).
+  function commandHintMatches(hint, query) {
+    var q = String(query || "").toLowerCase()
+    if (!q) return true
+    var example = hint.example.toLowerCase()
+    if (example.indexOf(q) === 0 || q.indexOf(example.split(" ")[0]) === 0) return true
+    var word = q.split(/\s+/)[0]
+    if (example.split(" ")[0].indexOf(word) === 0) return true
+    return !!hint.starts && hint.starts.test(q)
+  }
+
+  function commandExampleRows(query) {
     var rows = []
     for (var i = 0; i < root.commandExamples.length; i++) {
       var c = root.commandExamples[i]
+      if (!root.commandHintMatches(c, query)) continue
       rows.push(root.queryRow({ id: "example." + i, kind: "example", icon: c.icon,
                                 label: "/" + c.example, detail: c.detail, payload: "/" + c.example }))
     }
@@ -1424,7 +1442,12 @@ Item {
     // A question for the agent is not also a search: the AI panel takes the
     // card's body, and nothing is looked up until Enter.
     if (aiCtl.isAiMode) rows = []
-    else if (root.commandMode) rows = root.answerQuery ? answerEngine.queryRows(root.answerQuery) : root.commandExampleRows()
+    // Command mode: the answer once there is one; until then the hints that
+    // still fit what is typed.
+    else if (root.commandMode) {
+      rows = root.answerQuery ? answerEngine.queryRows(root.answerQuery) : []
+      if (rows.length === 0) rows = root.commandExampleRows(root.answerQuery)
+    }
     // Two panes show the active menu's own entries, never filtered: a search
     // moves the selection instead. A category that is an action (About) has
     // no entries to show, and "root" would otherwise list the categories
@@ -1436,6 +1459,7 @@ Item {
     else if (root.activeTab === "all") rows = root.allTabRows(query)
     else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
 
+    root.showingCommandHints = root.commandMode && rows.length > 0 && rows[0].kind === "example"
     if (root.showingCommandHints) root.cursorActive = false
 
     // Sanitized here rather than in each builder: this is the one place
@@ -1483,7 +1507,7 @@ Item {
 
   // The examples under a lone "/" are a read-only hint: no cursor, nothing
   // to pick.
-  readonly property bool showingCommandHints: root.commandMode && !root.answerQuery
+  property bool showingCommandHints: false // set by rebuildDisplay
 
   function select(delta) {
     if (displayModel.count === 0 || root.showingCommandHints) return
@@ -2386,25 +2410,37 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
           }
 
-          // Terminal-style block cursor at the end of the query (before the
-          // placeholder when empty); blinks, and holds solid while typing.
-          Rectangle {
+          // Terminal-style cursor at the end of the query (before the
+          // placeholder when empty). Style and blinking come from state.json:
+          // cursorStyle "block" | "beam" | "underline" | "outline" | "none",
+          // cursorBlink true | false. It holds solid while typing.
+          Item {
             id: searchCursor
             readonly property real textEnd: searchText.x + (root.filterText ? Math.min(searchText.contentWidth, searchText.width) : 0)
-            visible: root.opened
-            width: Math.max(2, Math.round(searchText.font.pixelSize * 0.55))
+            readonly property int cellWidth: Math.max(2, Math.round(searchText.font.pixelSize * 0.55))
+            visible: root.opened && root.cursorStyle !== "none"
+            width: root.cursorStyle === "beam" ? Math.max(2, Math.round(searchText.font.pixelSize / 8)) : cellWidth
             height: Math.round(searchText.font.pixelSize * 1.15)
             x: root.filterText ? textEnd + 1 : searchText.x - width - Style.space(4)
             anchors.verticalCenter: parent.verticalCenter
-            color: root.foreground
-            opacity: cursorBlink.on ? 0.85 : 0
+            opacity: (!root.cursorBlink || cursorBlink.on) ? 0.85 : 0
+
+            Rectangle {
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              height: root.cursorStyle === "underline" ? Math.max(2, Math.round(parent.height / 8)) : parent.height
+              color: root.cursorStyle === "outline" ? "transparent" : root.foreground
+              border.width: root.cursorStyle === "outline" ? 1 : 0
+              border.color: root.foreground
+            }
 
             Timer {
               id: cursorBlink
               property bool on: true
               interval: 530
               repeat: true
-              running: searchCursor.visible
+              running: searchCursor.visible && root.cursorBlink
               onTriggered: on = !on
             }
             Connections {
@@ -2418,7 +2454,7 @@ Item {
             textFormat: Text.PlainText
             anchors.left: root.tabsActive ? searchGlyph.right : parent.left
             // Empty: the placeholder starts after the cursor block.
-            anchors.leftMargin: (root.tabsActive ? Style.space(10) : 0) + (root.filterText ? 0 : searchCursor.width + Style.space(4))
+            anchors.leftMargin: (root.tabsActive ? Style.space(10) : 0) + (root.filterText || !searchCursor.visible ? 0 : searchCursor.width + Style.space(4))
             anchors.right: viewToggle.visible ? viewToggle.left : parent.right
             anchors.rightMargin: viewToggle.visible ? Style.space(8) : 0
             anchors.verticalCenter: parent.verticalCenter

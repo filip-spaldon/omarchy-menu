@@ -114,6 +114,11 @@ Item {
     store.menu.tabOrder = Tabs.normalizeOrder(state.tabOrder, Tabs.DEFAULT_TAB_ORDER)
     store.menu.allSectionOrder = Tabs.normalizeOrder(state.allSections, Tabs.DEFAULT_ALL_SECTIONS)
     store.menu.disabledTabs = Tabs.normalizeDisabled(state.disabledTabs)
+    // Search cursor: "block" (default), "beam", "underline", "outline" or
+    // "none"; cursorBlink false keeps it solid.
+    var styles = ["block", "beam", "underline", "outline", "none"]
+    store.menu.cursorStyle = styles.indexOf(state.cursorStyle) >= 0 ? state.cursorStyle : "block"
+    store.menu.cursorBlink = typeof state.cursorBlink === "boolean" ? state.cursorBlink : true
 
     // Read after the launcher opened (it re-reads on every open): if All was
     // just switched off, move on to the first tab that is on.
@@ -125,7 +130,8 @@ Item {
     }
 
     if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
-        || !Array.isArray(state.disabledTabs) || !state.appsView) store.saveState()
+        || !Array.isArray(state.disabledTabs) || !state.appsView
+        || state.cursorStyle === undefined || state.cursorBlink === undefined) store.saveState()
   }
 
   // Written to a temporary file and renamed over the old one, so a crash
@@ -142,6 +148,8 @@ Item {
     next.tabOrder = store.menu.tabOrder
     next.allSections = store.menu.allSectionOrder
     next.disabledTabs = store.menu.disabledTabs
+    next.cursorStyle = store.menu.cursorStyle
+    next.cursorBlink = store.menu.cursorBlink
     if (store.menu.aiAgent) next.aiAgent = store.menu.aiAgent
     store.stateData = next
     stateWriteProc.command = store.stateFileWriteCommand(store.statePath, JSON.stringify(next, null, 2) + "\n", false)
