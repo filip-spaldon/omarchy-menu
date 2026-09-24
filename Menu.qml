@@ -79,6 +79,20 @@ Item {
   // somebody else's picker and keeps its plain list.
   property string activeTab: "all"
   readonly property bool tabsActive: !root.dmenuActive
+  // Command mode: a query that starts with "/" asks for an answer only --
+  // `/2+3`, `/100 km to miles`, `/password`, `/shell ls` -- and the list
+  // shows the answers alone, with no apps, files or menu entries mixed in.
+  // Without the slash the same text is an ordinary search that still puts
+  // any answer on top. answerQuery is the text the answer builders read.
+  readonly property bool commandMode: root.tabsActive && /^\s*\//.test(root.filterText) && !aiCtl.isAiMode
+  readonly property string answerQuery: root.filterText.replace(/^\s*\//, "").trim()
+  // Search cursor look, from state.json (SettingsStore.qml).
+  property string cursorStyle: "block"
+  property bool cursorBlink: true
+  // state.json "commandsWithoutSlash": false makes answers (math, units,
+  // password, shell, kill, ai...) answer only after "/"; plain text is then
+  // purely a search. Default true: plain text also shows any answer on top.
+  property bool commandsWithoutSlash: true
   // All with nothing typed is just the search field and the tab chips: the
   // card is a prompt, and picking a tab or typing is what opens it up.
   readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim()
@@ -93,7 +107,7 @@ Item {
   // back to the flat list of answers.
   property var systemMatches: []
   property int systemMatchIndex: 0
-  readonly property bool systemTwoPane: root.tabsActive && root.activeTab === "system" && !aiCtl.isAiMode
+  readonly property bool systemTwoPane: root.tabsActive && root.activeTab === "system" && !aiCtl.isAiMode && !root.commandMode
     && (!root.filterText.trim() || root.systemMatches.length > 0)
   property string systemPane: "left"
   property int systemCategoryIndex: 0
@@ -108,7 +122,7 @@ Item {
   // panels, widgets -- on any write there, so saving a preference into it
   // looked like the whole shell restarting.
   property string appsView: "list"
-  readonly property bool gridActive: root.tabsActive && root.activeTab === "apps" && root.appsView === "grid"
+  readonly property bool gridActive: root.tabsActive && !root.commandMode && root.activeTab === "apps" && root.appsView === "grid"
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (root.homeDir + "/.local/state")) + "/omarchy-menu-omni"
 
   // Per-user ordering, also from state.json and hand-editable there:
@@ -240,6 +254,8 @@ Item {
 
   // The key hints under the results, for what the current tab can do.
   function footerHints() {
+    if (root.commandMode) return root.answerQuery ? "Answers only · Enter use · Ctrl+R new value · Esc clear"
+                                                  : "Type a command after / · Esc clear"
     if (root.activeTab === "apps")
       return "Enter launch · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
@@ -331,7 +347,9 @@ Item {
 
   // Menu rows only surface their detail while a search is narrowing them;
   // dmenu rows carry caller-supplied subtext that must always be visible.
-  function rowHeightForDetail(detail) {
+  function rowHeightForDetail(detail, kind) {
+    // Command hints are a compact, smaller-type list.
+    if (kind === "example") return Math.round(root.detailRowHeight * 0.72)
     return root.showsDetail("", detail) ? root.detailRowHeight : root.baseRowHeight
   }
 
@@ -387,7 +405,7 @@ Item {
       var row = displayModel.get(i)
       if (i > 0) total += root.rowSpacing
       if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
-      total += root.rowHeightForDetail(row.detail)
+      total += root.rowHeightForDetail(row.detail, row.kind)
       previousSection = row.section
       totals.push(total)
     }
@@ -1122,6 +1140,50 @@ Item {
   // Some searches answer themselves. They all end up as one row at the top of
   // the list with the same shape, so only the icon, the two lines of text and
   // what Enter does with it are worth writing out each time.
+  // What a lone "/" lists: one example per answer, each a row that fills the
+  // query when picked, so the commands are discoverable without docs.
+  readonly property var commandExamples: [
+    { icon: "󰃬", example: "2+3*4", detail: "Calculator", starts: /^[\d.(+\-]|^(sqrt|abs|log|ln|sin|cos|tan|pi)/ },
+    { icon: "󰓡", example: "100 km to miles", detail: "Units", starts: /^[\d.]/ },
+    { icon: "󰄔", example: "123 eur to usd", detail: "Currency", starts: /^[\d.$€£¥]/ },
+    { icon: "󰅐", example: "time in tokyo", detail: "Time zones" },
+    { icon: "󰅴", example: "password 24", detail: "Password (Ctrl+R for another)" },
+    { icon: "󰅴", example: "uuid", detail: "UUID v4" },
+    { icon: "󰅴", example: "epoch", detail: "Unix time, or `epoch 1700000000`" },
+    { icon: "󰅴", example: "sha256 text", detail: "SHA-256" },
+    { icon: "󰅴", example: "base64 text", detail: "Base64 encode (b64d to decode)" },
+    { icon: "󰅴", example: "urlencode a b&c", detail: "URL encode (urldecode to decode)" },
+    { icon: "󰚌", example: "kill firefox", detail: "End a process" },
+    { icon: "󰖟", example: "github.com", detail: "Open a URL" },
+    { icon: "󰆍", example: "shell htop", detail: "Run in a terminal" },
+    { icon: "󰚩", example: "ai what is Omarchy?", detail: "Ask an AI agent" }
+  ]
+
+  // A hint fits what is typed so far when the typed text is a start of its
+  // example ("pa" → "password 24"), its command word starts with the typed
+  // one ("sha" → "sha256"), or it opens the way its answers do (a digit for
+  // math, units and currency).
+  function commandHintMatches(hint, query) {
+    var q = String(query || "").toLowerCase()
+    if (!q) return true
+    var example = hint.example.toLowerCase()
+    if (example.indexOf(q) === 0 || q.indexOf(example.split(" ")[0]) === 0) return true
+    var word = q.split(/\s+/)[0]
+    if (example.split(" ")[0].indexOf(word) === 0) return true
+    return !!hint.starts && hint.starts.test(q)
+  }
+
+  function commandExampleRows(query) {
+    var rows = []
+    for (var i = 0; i < root.commandExamples.length; i++) {
+      var c = root.commandExamples[i]
+      if (!root.commandHintMatches(c, query)) continue
+      rows.push(root.queryRow({ id: "example." + i, kind: "example", icon: c.icon,
+                                label: "/" + c.example, detail: c.detail, payload: "/" + c.example }))
+    }
+    return rows
+  }
+
   function queryRow(spec) {
     return {
       itemId: spec.id || (spec.kind + ".result"),
@@ -1301,7 +1363,7 @@ Item {
       // chose. (Without tabs -- never the case here -- the stock submenu
       // scope still applies.)
       var scope = root.tabsActive ? "root" : active
-      rows = answerEngine.queryRows(query).concat(root.systemSearchRows(query, scope, true))
+      rows = root.plainAnswerRows(query).concat(root.systemSearchRows(query, scope, true))
       // Nothing in the menu, and nothing that answered itself. Offer to look
       // it up rather than showing the empty state.
       if (rows.length === 0) {
@@ -1359,7 +1421,7 @@ Item {
         : root.systemSearchRows(query, "root", false)
       sections.push({ title: order[i].title, rows: sectionRows })
     }
-    var rows = answerEngine.queryRows(query).concat(Tabs.composeSections(sections, root.allSectionLimit))
+    var rows = root.plainAnswerRows(query).concat(Tabs.composeSections(sections, root.allSectionLimit))
 
     if (rows.length === 0) {
       var fallback = answerEngine.webSearchRow(query)
@@ -1394,6 +1456,12 @@ Item {
     // A question for the agent is not also a search: the AI panel takes the
     // card's body, and nothing is looked up until Enter.
     if (aiCtl.isAiMode) rows = []
+    // Command mode: the answer once there is one; until then the hints that
+    // still fit what is typed.
+    else if (root.commandMode) {
+      rows = root.answerQuery ? answerEngine.queryRows(root.answerQuery) : []
+      if (rows.length === 0) rows = root.commandExampleRows(root.answerQuery)
+    }
     // Two panes show the active menu's own entries, never filtered: a search
     // moves the selection instead. A category that is an action (About) has
     // no entries to show, and "root" would otherwise list the categories
@@ -1404,6 +1472,9 @@ Item {
     else if (root.activeTab === "apps") rows = root.appTabRows(query)
     else if (root.activeTab === "all") rows = root.allTabRows(query)
     else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
+
+    root.showingCommandHints = root.commandMode && rows.length > 0 && rows[0].kind === "example"
+    if (root.showingCommandHints) root.cursorActive = false
 
     // Sanitized here rather than in each builder: this is the one place
     // every row passes through on its way to the ListView.
@@ -1448,8 +1519,12 @@ Item {
     }
   }
 
+  // The examples under a lone "/" are a read-only hint: no cursor, nothing
+  // to pick.
+  property bool showingCommandHints: false // set by rebuildDisplay
+
   function select(delta) {
-    if (displayModel.count === 0) return
+    if (displayModel.count === 0 || root.showingCommandHints) return
 
     root.disarmPointer()
     if (!cursorActive) {
@@ -1467,7 +1542,7 @@ Item {
     root.selectedIndex = 0
     root.cursorActive = root.mode !== "input"
     root.disarmPointer()
-    if (!root.dmenuActive && root.filterText.trim()) root.loadProvidersForSearch()
+    if (!root.dmenuActive && !root.commandMode && root.filterText.trim()) root.loadProvidersForSearch()
     root.updateSystemMatches()
     root.rebuildDisplay()
     if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
@@ -1477,7 +1552,7 @@ Item {
   // Menu entries matching the query, best first (ids).
   function updateSystemMatches() {
     var query = root.filterText.trim()
-    if (!query || !root.tabsActive || root.activeTab !== "system" || aiCtl.isAiMode) {
+    if (!query || !root.tabsActive || root.activeTab !== "system" || aiCtl.isAiMode || root.commandMode) {
       root.systemMatches = []
       root.systemMatchIndex = 0
       return
@@ -1582,6 +1657,8 @@ Item {
       opened = false
       filterText = ""
       root.launchApp(appId, label)
+    } else if (row.kind === "example") {
+      return // read-only hint
     } else if (row.kind === "shell") {
       root.runInTerminal(row.target)
     } else if (row.kind === "file" || row.kind === "folder") {
@@ -1775,7 +1852,12 @@ Item {
   readonly property string aiAgent: aiCtl.aiAgent
   function saveState() { settingsStore.saveState() }
   function requestFileSearch() { fileCtl.requestFileSearch() }
-  function queryRows(query) { return answerEngine.queryRows(query) }
+  function queryRows(query) { return root.plainAnswerRows(query) }
+
+  // Answers for a plain (slash-less) search, or none when those are off.
+  function plainAnswerRows(query) {
+    return root.commandsWithoutSlash ? answerEngine.queryRows(query) : []
+  }
 
 
 
@@ -1830,6 +1912,7 @@ Item {
   }
 
   function selectFromPointer(index, item, mouse) {
+    if (root.showingCommandHints) return
     if (!pointerGate.moved(item, mouse)) return
     root.cursorActive = true
     root.selectedIndex = index
@@ -2264,7 +2347,7 @@ Item {
               if (root.mode === "input") root.applyDmenuSelection(root.filterText)
               else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
             } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
-            else if (displayModel.count > 0) root.cursorActive = true
+            else if (displayModel.count > 0 && !root.showingCommandHints) root.cursorActive = true
             event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
             root.setFilter(root.filterText + event.text)
@@ -2346,10 +2429,51 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
           }
 
+          // Terminal-style cursor at the end of the query (before the
+          // placeholder when empty). Style and blinking come from state.json:
+          // cursorStyle "block" | "beam" | "underline" | "outline" | "none",
+          // cursorBlink true | false. It holds solid while typing.
+          Item {
+            id: searchCursor
+            readonly property real textEnd: searchText.x + (root.filterText ? Math.min(searchText.contentWidth, searchText.width) : 0)
+            readonly property int cellWidth: Math.max(2, Math.round(searchText.font.pixelSize * 0.55))
+            visible: root.opened && root.cursorStyle !== "none"
+            width: root.cursorStyle === "beam" ? Math.max(2, Math.round(searchText.font.pixelSize / 8)) : cellWidth
+            height: Math.round(searchText.font.pixelSize * 1.15)
+            x: root.filterText ? textEnd + 1 : searchText.x - width - Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+            opacity: (!root.cursorBlink || cursorBlink.on) ? 0.85 : 0
+
+            Rectangle {
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              height: root.cursorStyle === "underline" ? Math.max(2, Math.round(parent.height / 8)) : parent.height
+              color: root.cursorStyle === "outline" ? "transparent" : root.foreground
+              border.width: root.cursorStyle === "outline" ? 1 : 0
+              border.color: root.foreground
+            }
+
+            Timer {
+              id: cursorBlink
+              property bool on: true
+              interval: 530
+              repeat: true
+              running: searchCursor.visible && root.cursorBlink
+              onTriggered: on = !on
+            }
+            Connections {
+              target: root
+              function onFilterTextChanged() { cursorBlink.on = true; cursorBlink.restart() }
+            }
+          }
+
           Text {
+            id: searchText
             textFormat: Text.PlainText
             anchors.left: root.tabsActive ? searchGlyph.right : parent.left
-            anchors.leftMargin: root.tabsActive ? Style.space(10) : 0
+            // Empty: the placeholder starts after the cursor block.
+            anchors.leftMargin: (root.tabsActive ? Style.space(10) : 0) + (root.filterText || !searchCursor.visible ? 0 : searchCursor.width + Style.space(4))
             anchors.right: viewToggle.visible ? viewToggle.left : parent.right
             anchors.rightMargin: viewToggle.visible ? Style.space(8) : 0
             anchors.verticalCenter: parent.verticalCenter
@@ -2367,7 +2491,9 @@ Item {
 
         TabBar {
           id: tabBar
-          visible: root.tabsActive
+          // Hidden in command mode: the tabs choose where to search, and a
+          // command does not search.
+          visible: root.tabsActive && !root.commandMode
           height: visible ? implicitHeight : 0
           tabs: aiCtl.isAiMode ? aiCtl.aiAgentTabs : root.orderedTabs
           activeTab: aiCtl.isAiMode ? aiCtl.aiAgent : root.activeTab
@@ -2384,7 +2510,7 @@ Item {
 
         Item {
           id: fileBar
-          visible: root.tabsActive && !aiCtl.isAiMode && (root.activeTab === "files" || root.activeTab === "folders")
+          visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && (root.activeTab === "files" || root.activeTab === "folders")
           width: parent.width
           height: visible ? fileFilterChips.implicitHeight : 0
 
@@ -2621,7 +2747,8 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: fileCtl.fileSearching ? "Searching…"
+              text: root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
+                : fileCtl.fileSearching ? "Searching…"
                 : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
               color: root.foreground
               opacity: 0.7

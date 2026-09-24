@@ -26,7 +26,13 @@ Item {
   readonly property string aiConfigPath: ai.menu.stateDir + "/ai.json"
   readonly property string omarchyAgentPath: ai.menu.homeDir + "/.config/omarchy/defaults/agent"
   property string aiPrefix: "ai "
-  readonly property var aiPromptOrNull: ai.menu.tabsActive ? AiBackend.matchPrefix(ai.menu.filterText, ai.aiPrefix) : null
+  // "/ai …" always; plain "ai …" only while commands work without the slash.
+  readonly property string aiQueryText: {
+    var text = ai.menu.filterText
+    if (/^\s*\//.test(text)) return text.replace(/^\s*\//, "")
+    return ai.menu.commandsWithoutSlash ? text : ""
+  }
+  readonly property var aiPromptOrNull: ai.menu.tabsActive ? AiBackend.matchPrefix(ai.aiQueryText, ai.aiPrefix) : null
   readonly property bool isAiMode: ai.aiPromptOrNull !== null
   readonly property string aiPromptText: ai.isAiMode ? ai.aiPromptOrNull : ""
   property var aiSession: null

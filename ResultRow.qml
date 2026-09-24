@@ -25,13 +25,15 @@ BorderSurface {
   required property int childCount
   required property string trailText
 
-  readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex
+  readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex && row.kind !== "example"
     && (!row.menu.systemTwoPane || row.menu.systemPane === "right")
   readonly property bool isApp: row.kind === "app"
   readonly property bool hasIcon: row.icon.length > 0 || row.isApp
 
+  // Command examples are a read-only hint.
+  opacity: row.kind === "example" ? 0.7 : 1
   width: ListView.view.width
-  height: row.menu.rowHeightForDetail(row.detail)
+  height: row.menu.rowHeightForDetail(row.detail, row.kind)
   radius: row.menu.cornerRadius
   color: row.hasCursor ? row.menu.selectedBackground : "transparent"
   borderSpec: row.hasCursor ? row.menu.selectedBorderSpec : Border.none()
@@ -54,7 +56,7 @@ BorderSurface {
     text: row.icon
     color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
     font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
-    font.pixelSize: row.menu.scaledFont(Style.font.iconLarge)
+    font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.icon : Style.font.iconLarge)
     width: row.menu.iconSlotWidth
     horizontalAlignment: Text.AlignHCenter
     verticalAlignment: Text.AlignVCenter
@@ -96,7 +98,7 @@ BorderSurface {
       text: row.label
       color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
       font.family: row.menu.fontFamily
-      font.pixelSize: row.menu.scaledFont(Style.font.heading)
+      font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.body : Style.font.heading)
       font.weight: Font.Medium
       elide: Text.ElideRight
     }
@@ -109,7 +111,7 @@ BorderSurface {
       color: row.menu.foreground
       opacity: 0.52
       font.family: row.menu.fontFamily
-      font.pixelSize: row.menu.scaledFont(Style.font.bodySmall)
+      font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.caption : Style.font.bodySmall)
       elide: Text.ElideRight
     }
   }

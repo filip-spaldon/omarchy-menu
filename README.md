@@ -78,11 +78,18 @@ Settings are read on every open from
   "appsView": "grid",
   "tabOrder": ["all", "apps", "system", "files", "folders"],
   "allSections": ["apps", "system", "files", "folders"],
-  "disabledTabs": []
+  "disabledTabs": [],
+  "cursorStyle": "block",
+  "cursorBlink": true,
+  "commandsWithoutSlash": true
 }
 ```
 
 The initial application view is `list`; the example selects `grid`.
+`cursorStyle` sets the search cursor: `block` (default), `beam`, `underline`,
+`outline` or `none`; `cursorBlink: false` keeps it solid.
+`commandsWithoutSlash: false` makes answers (math, conversions, generators,
+`shell`, `kill`, `ai`…) work only after `/`; plain text is then purely a search.
 `tabOrder` controls visible tab order and the Ctrl+number shortcuts.
 `allSections` independently controls the order of result sections in All.
 Unknown or duplicate IDs are ignored; omitted IDs are appended in default order.
@@ -118,6 +125,14 @@ answer.
 | `github.com/basecamp/omarchy` | Open a URL |
 | `kill chromium` | Matching processes; Enter sends SIGTERM |
 | `shell ping sme.sk` | Enter runs the command in a new terminal, which stays open afterwards |
+
+Start a query with `/` for answers only: `/2+3`, `/100 km to miles`,
+`/password`, `/shell ls` or `/ai …` show just the answer, without apps, files
+or menu entries around it, and the tabs are hidden. A lone `/` lists one
+example per command as a read-only hint; typing narrows the hints to the
+commands that still fit (`/pa` → `/password 24`) and they give way to the
+answer once it is unambiguous. Without the slash
+the same text is a normal search with any answer on top.
 
 Unmatched text offers web search. Chromium-family browsers use their configured
 search engine; Firefox uses the fallback template (DuckDuckGo by default).
