@@ -82,13 +82,15 @@ Settings are read on every open from
   "allSectionsOff": [],
   "cursorStyle": "block",
   "cursorBlink": true,
+  "cursorWhenEmpty": true,
   "commandsWithoutSlash": true
 }
 ```
 
 The initial application view is `list`; the example selects `grid`.
 `cursorStyle` sets the search cursor: `block` (default), `beam`, `underline`,
-`outline` or `none`; `cursorBlink: false` keeps it solid.
+`outline` or `none`; `cursorBlink: false` keeps it solid, and
+`cursorWhenEmpty: false` hides it until something is typed.
 `commandsWithoutSlash: false` makes answers (math, conversions, generators,
 `shell`, `kill`, `ai`…) work only after `/`; plain text is then purely a search.
 `tabOrder` controls visible tab order and the Ctrl+number shortcuts.
@@ -119,7 +121,8 @@ Add it to the bar with the bar's widget picker, or put
   saved as `"barLeftClick": "menu"` in `state.json`) with the System actions. Its **Settings** row
   (Enter or `→`) unfolds every option Omni reads:
   - **Bar button**: which click opens the popup and which the launcher.
-  - **Launcher**: apps view, cursor style, cursor blink, answers without `/`.
+  - **Launcher**: apps view, cursor style, cursor blink, cursor in an empty
+    field, answers without `/`.
   - **Tabs**: switch each tab on or off, and change their order.
   - **Search in All**: switch each result section on or off, and change
     their order. A section that is off leaves All only, its tab stays

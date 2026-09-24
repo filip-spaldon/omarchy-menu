@@ -106,6 +106,7 @@ Item {
     // "none"; cursorBlink false keeps it solid.
     store.menu.cursorStyle = Settings.CURSOR_STYLES.indexOf(state.cursorStyle) >= 0 ? state.cursorStyle : "block"
     store.menu.cursorBlink = typeof state.cursorBlink === "boolean" ? state.cursorBlink : true
+    store.menu.cursorWhenEmpty = typeof state.cursorWhenEmpty === "boolean" ? state.cursorWhenEmpty : true
     store.menu.commandsWithoutSlash = typeof state.commandsWithoutSlash === "boolean" ? state.commandsWithoutSlash : true
 
     // Read after the launcher opened (it re-reads on every open): if All was
@@ -119,7 +120,7 @@ Item {
 
     if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
         || !Array.isArray(state.disabledTabs) || !Array.isArray(state.allSectionsOff) || !state.appsView
-        || state.cursorStyle === undefined || state.cursorBlink === undefined
+        || state.cursorStyle === undefined || state.cursorBlink === undefined || state.cursorWhenEmpty === undefined
         || state.commandsWithoutSlash === undefined) store.saveState()
   }
 
@@ -140,6 +141,7 @@ Item {
     next.allSectionsOff = store.menu.allSectionsOff
     next.cursorStyle = store.menu.cursorStyle
     next.cursorBlink = store.menu.cursorBlink
+    next.cursorWhenEmpty = store.menu.cursorWhenEmpty
     next.commandsWithoutSlash = store.menu.commandsWithoutSlash
     if (store.menu.aiAgent) next.aiAgent = store.menu.aiAgent
     store.stateData = next
