@@ -47,7 +47,7 @@ Item {
   // What the current tab and query ask of fd, or null for nothing: which
   // types to list and with which filter.
   function fileSearchSpec() {
-    if (searcher.menu.dmenuActive || !searcher.menu.opened || searcher.menu.isAiMode) return null
+    if (searcher.menu.dmenuActive || !searcher.menu.opened || searcher.menu.isAiMode || searcher.menu.commandMode) return null
     var query = searcher.menu.filterText.trim()
     if (searcher.menu.activeTab === "files")
       return { scope: "files|" + searcher.fileFilterIndex, key: "files|" + searcher.fileFilterIndex + "|" + query, query: query, dirs: false, files: true, filter: searcher.fileFilterFor("files") }

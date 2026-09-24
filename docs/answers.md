@@ -1,5 +1,8 @@
 # Built-in answers
 
+Prefix any of these with `/` (`/2+3`, `/password 24`, `/shell htop`) to
+see the answer alone, without search results mixed in.
+
 Available in All and System. Enter activates the selected answer; generated
 values can be refreshed with Ctrl+R for `password`, `uuid` and bare `epoch`.
 Currency and time examples below are illustrative, not live values.

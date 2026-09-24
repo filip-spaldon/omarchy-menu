@@ -79,6 +79,13 @@ Item {
   // somebody else's picker and keeps its plain list.
   property string activeTab: "all"
   readonly property bool tabsActive: !root.dmenuActive
+  // Command mode: a query that starts with "/" asks for an answer only --
+  // `/2+3`, `/100 km to miles`, `/password`, `/shell ls` -- and the list
+  // shows the answers alone, with no apps, files or menu entries mixed in.
+  // Without the slash the same text is an ordinary search that still puts
+  // any answer on top. answerQuery is the text the answer builders read.
+  readonly property bool commandMode: root.tabsActive && /^\s*\//.test(root.filterText) && !aiCtl.isAiMode
+  readonly property string answerQuery: root.filterText.replace(/^\s*\//, "").trim()
   // All with nothing typed is just the search field and the tab chips: the
   // card is a prompt, and picking a tab or typing is what opens it up.
   readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim()
@@ -93,7 +100,7 @@ Item {
   // back to the flat list of answers.
   property var systemMatches: []
   property int systemMatchIndex: 0
-  readonly property bool systemTwoPane: root.tabsActive && root.activeTab === "system" && !aiCtl.isAiMode
+  readonly property bool systemTwoPane: root.tabsActive && root.activeTab === "system" && !aiCtl.isAiMode && !root.commandMode
     && (!root.filterText.trim() || root.systemMatches.length > 0)
   property string systemPane: "left"
   property int systemCategoryIndex: 0
@@ -108,7 +115,7 @@ Item {
   // panels, widgets -- on any write there, so saving a preference into it
   // looked like the whole shell restarting.
   property string appsView: "list"
-  readonly property bool gridActive: root.tabsActive && root.activeTab === "apps" && root.appsView === "grid"
+  readonly property bool gridActive: root.tabsActive && !root.commandMode && root.activeTab === "apps" && root.appsView === "grid"
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (root.homeDir + "/.local/state")) + "/omarchy-menu-omni"
 
   // Per-user ordering, also from state.json and hand-editable there:
@@ -240,6 +247,7 @@ Item {
 
   // The key hints under the results, for what the current tab can do.
   function footerHints() {
+    if (root.commandMode) return "Answers only · Enter use · Ctrl+R new value · Esc clear"
     if (root.activeTab === "apps")
       return "Enter launch · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
@@ -1386,6 +1394,7 @@ Item {
     // A question for the agent is not also a search: the AI panel takes the
     // card's body, and nothing is looked up until Enter.
     if (aiCtl.isAiMode) rows = []
+    else if (root.commandMode) rows = root.answerQuery ? answerEngine.queryRows(root.answerQuery) : []
     // Two panes show the active menu's own entries, never filtered: a search
     // moves the selection instead. A category that is an action (About) has
     // no entries to show, and "root" would otherwise list the categories
@@ -1459,7 +1468,7 @@ Item {
     root.selectedIndex = 0
     root.cursorActive = root.mode !== "input"
     root.disarmPointer()
-    if (!root.dmenuActive && root.filterText.trim()) root.loadProvidersForSearch()
+    if (!root.dmenuActive && !root.commandMode && root.filterText.trim()) root.loadProvidersForSearch()
     root.updateSystemMatches()
     root.rebuildDisplay()
     if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
@@ -1469,7 +1478,7 @@ Item {
   // Menu entries matching the query, best first (ids).
   function updateSystemMatches() {
     var query = root.filterText.trim()
-    if (!query || !root.tabsActive || root.activeTab !== "system" || aiCtl.isAiMode) {
+    if (!query || !root.tabsActive || root.activeTab !== "system" || aiCtl.isAiMode || root.commandMode) {
       root.systemMatches = []
       root.systemMatchIndex = 0
       return
@@ -2376,7 +2385,7 @@ Item {
 
         Item {
           id: fileBar
-          visible: root.tabsActive && !aiCtl.isAiMode && (root.activeTab === "files" || root.activeTab === "folders")
+          visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && (root.activeTab === "files" || root.activeTab === "folders")
           width: parent.width
           height: visible ? fileFilterChips.implicitHeight : 0
 
@@ -2613,7 +2622,8 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: fileCtl.fileSearching ? "Searching…"
+              text: root.commandMode ? (root.answerQuery ? "No answer for “" + root.answerQuery + "”" : "Type a command: 2+3, 100 km to miles, password, shell ls…")
+                : fileCtl.fileSearching ? "Searching…"
                 : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
               color: root.foreground
               opacity: 0.7

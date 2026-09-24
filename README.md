@@ -119,6 +119,11 @@ answer.
 | `kill chromium` | Matching processes; Enter sends SIGTERM |
 | `shell ping sme.sk` | Enter runs the command in a new terminal, which stays open afterwards |
 
+Start a query with `/` for answers only: `/2+3`, `/100 km to miles`,
+`/password`, `/shell ls` or `/ai …` show just the answer, without apps, files
+or menu entries around it. Without the slash the same text is a normal search
+with any answer on top.
+
 Unmatched text offers web search. Chromium-family browsers use their configured
 search engine; Firefox uses the fallback template (DuckDuckGo by default).
 Calculator and unit conversions work locally. Currency queries fetch and cache

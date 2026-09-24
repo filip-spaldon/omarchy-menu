@@ -198,7 +198,7 @@ Item {
 
   // The current query when it is a draw worth repeating, "" otherwise.
   function regenerableQuery() {
-    var query = answers.menu.filterText.trim()
+    var query = answers.menu.answerQuery
     if (!query) return ""
     var parsed = MenuModel.parseUtilityQuery(query)
     if (!parsed || answers.regenerableUtilities.indexOf(parsed.keyword) < 0) return ""
