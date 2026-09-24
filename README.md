@@ -144,7 +144,7 @@ The mouse works too: the `‹` and `›` arrows change a value, and a click togg
 or runs.
 
 Changes are written to `state.json`, `style.json` and `ai.json`. Other keys in
-those files, `_help` included, are kept. The launcher picks the changes up the
+those files, unknown ones included, are kept. The launcher picks the changes up the
 next time it opens. A file that is not valid JSON is shown as such and left
 untouched.
 

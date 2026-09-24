@@ -49,8 +49,8 @@ function parseObject(text) {
 }
 
 // A shallow copy with `key` set in place (appended when new), or removed
-// when value is undefined; the other keys, _help and anything unknown
-// included, are kept in their order.
+// when value is undefined; the other keys, unknown ones included, are kept
+// in their order.
 function withKey(object, key, value) {
   var next = {}
   for (var k in object) {
