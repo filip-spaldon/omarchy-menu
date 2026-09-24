@@ -115,8 +115,10 @@ Add it to the bar with the bar's widget picker, or put
 `~/.config/omarchy/shell.json`.
 
 - **Right click** opens the launcher, the same as `Super+Space`.
-- **Left click** opens a popup with the System actions. Its **Settings** row
+- **Left click** opens a popup (Settings › Bar button swaps the two clicks,
+  saved as `"barLeftClick": "menu"` in `state.json`) with the System actions. Its **Settings** row
   (Enter or `→`) unfolds every option Omni reads:
+  - **Bar button**: which click opens the popup and which the launcher.
   - **Launcher**: apps view, cursor style, cursor blink, answers without `/`.
   - **Tabs**: switch each tab on or off, and change their order.
   - **Search in All**: switch each result section on or off, and change

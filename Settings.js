@@ -18,6 +18,9 @@ var STYLE_RANGES = {
 }
 
 var APPS_VIEWS = ["list", "grid"]
+// state.json "barLeftClick": what the bar button's left click opens; the
+// right click opens the other.
+var BAR_CLICKS = ["settings", "menu"]
 var CURSOR_STYLES = ["block", "beam", "underline", "outline", "none"]
 
 // Reasoning effort each agent's CLI accepts ("" leaves the CLI's own).
@@ -171,6 +174,7 @@ if (typeof module !== "undefined") {
     STYLE_DEFAULTS: STYLE_DEFAULTS,
     STYLE_RANGES: STYLE_RANGES,
     APPS_VIEWS: APPS_VIEWS,
+    BAR_CLICKS: BAR_CLICKS,
     CURSOR_STYLES: CURSOR_STYLES,
     AGENT_EFFORTS: AGENT_EFFORTS,
     MODEL_PATTERN: MODEL_PATTERN,

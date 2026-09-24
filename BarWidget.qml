@@ -10,10 +10,11 @@ import "MenuModel.js" as MenuModel
 import "ai/AiAdapters.js" as AiAdapters
 import "ai/AiConfig.js" as AiConfig
 
-// Bar button for the launcher. Right click opens the menu; left click opens
-// a popup with every option the launcher reads from its state directory
-// (state.json, style.json and the per-agent entries of ai.json) and, at the
-// bottom, the System submenu's actions (lock, screensaver, suspend, logout,
+// Bar button for the launcher. Left click opens a popup, right click the
+// menu ("barLeftClick": "menu" in state.json swaps them). The popup holds
+// every option the launcher reads from its state directory (state.json,
+// style.json and the per-agent entries of ai.json) and, at the bottom, the
+// System submenu's actions (lock, screensaver, suspend, logout,
 // reboot, shutdown, ...), read from the same JSONC files the menu reads.
 //
 // The popup edits the files directly; the menu re-reads them on every open.
@@ -69,6 +70,8 @@ Panel {
   readonly property string cursorStyle: Settings.CURSOR_STYLES.indexOf(st.cursorStyle) >= 0 ? st.cursorStyle : "block"
   readonly property bool cursorBlink: typeof st.cursorBlink === "boolean" ? st.cursorBlink : true
   readonly property bool commandsWithoutSlash: typeof st.commandsWithoutSlash === "boolean" ? st.commandsWithoutSlash : true
+  // Which click opens the popup; the other opens the launcher.
+  readonly property string barLeftClick: Settings.BAR_CLICKS.indexOf(st.barLeftClick) >= 0 ? st.barLeftClick : "settings"
   readonly property bool fixedHeight: typeof sty.fixedHeight === "boolean" ? sty.fixedHeight : Settings.STYLE_DEFAULTS.fixedHeight
 
   // The agent the launcher starts on: the remembered pick, else ai.json's
@@ -124,7 +127,11 @@ Panel {
   }
 
   function appendSettings(out, header, row) {
-    header("LAUNCHER", root.stateValid ? "" : "state.json is not valid JSON")
+    header("BAR BUTTON", root.stateValid ? "" : "state.json is not valid JSON")
+    row({ key: "barLeftClick", label: "Left click", value: barLeftClick === "menu" ? "Menu" : "Settings", adjust: true, enabled: stateValid })
+    row({ key: "barRightClick", label: "Right click", value: barLeftClick === "menu" ? "Settings" : "Menu", adjust: true, enabled: stateValid })
+
+    header("LAUNCHER")
     row({ key: "appsView", label: "Apps view", value: capitalize(appsView), adjust: true, enabled: stateValid })
     row({ key: "cursorStyle", label: "Cursor", value: capitalize(cursorStyle), adjust: true, enabled: stateValid })
     row({ key: "cursorBlink", label: "Cursor blink", value: onOff(cursorBlink), toggle: true, enabled: stateValid })
@@ -203,7 +210,9 @@ Panel {
     }
     if (r.toggle) { activate(r); return }
     if (!r.adjust) return
-    if (key === "appsView") setState("appsView", Settings.cycle(Settings.APPS_VIEWS, appsView, direction))
+    if (key === "barLeftClick" || key === "barRightClick")
+      setState("barLeftClick", Settings.cycle(Settings.BAR_CLICKS, barLeftClick, direction))
+    else if (key === "appsView") setState("appsView", Settings.cycle(Settings.APPS_VIEWS, appsView, direction))
     else if (key === "cursorStyle") setState("cursorStyle", Settings.cycle(Settings.CURSOR_STYLES, cursorStyle, direction))
     else if (key === "style:top") {
       var top = Settings.stepTop(Settings.styleTop(sty), direction)
@@ -436,10 +445,17 @@ Panel {
     active: root.opened
     text: "\ue900"
     fontFamily: "omarchy"
-    tooltipText: "Left click: settings and system\nRight click: menu"
+    // Each monitor's bar has its own button: re-read the click mapping when
+    // the pointer arrives, so a change made from another bar applies here.
+    onTooltipHoveredChanged: if (tooltipHovered && !root.opened) stateReader.load(root.statePath, 4096)
+    tooltipText: root.barLeftClick === "menu"
+      ? "Left click: menu\nRight click: settings and system"
+      : "Left click: settings and system\nRight click: menu"
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.LeftButton) root.toggle()
-      else if (buttonCode === Qt.RightButton) {
+      if (buttonCode !== Qt.LeftButton && buttonCode !== Qt.RightButton) return
+      var popup = (buttonCode === Qt.LeftButton) === (root.barLeftClick === "settings")
+      if (popup) root.toggle()
+      else {
         root.close()
         Quickshell.execDetached(["omarchy-menu", "toggle", "root"])
       }
