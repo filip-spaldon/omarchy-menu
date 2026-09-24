@@ -10,7 +10,7 @@ import "MenuModel.js" as MenuModel
 import "ai/AiAdapters.js" as AiAdapters
 import "ai/AiConfig.js" as AiConfig
 
-// Bar button for the launcher. Left click opens the menu; right click opens
+// Bar button for the launcher. Right click opens the menu; left click opens
 // a popup with every option the launcher reads from its state directory
 // (state.json, style.json and the per-agent entries of ai.json) and, at the
 // bottom, the System submenu's actions (lock, screensaver, suspend, logout,
@@ -436,10 +436,10 @@ Panel {
     active: root.opened
     text: "\ue900"
     fontFamily: "omarchy"
-    tooltipText: "Left click: menu\nRight click: settings"
+    tooltipText: "Left click: settings and system\nRight click: menu"
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) root.toggle()
-      else if (buttonCode === Qt.LeftButton) {
+      if (buttonCode === Qt.LeftButton) root.toggle()
+      else if (buttonCode === Qt.RightButton) {
         root.close()
         Quickshell.execDetached(["omarchy-menu", "toggle", "root"])
       }

@@ -16,7 +16,7 @@
   },
   "barWidget": {
     "displayName": "Omarchy Menu Omni",
-    "description": "Left click opens the launcher; right click shows its settings and the System actions",
+    "description": "Left click shows the launcher settings and the System actions; right click opens the launcher",
     "category": "Compositor",
     "allowMultiple": false,
     "defaultSection": "left"

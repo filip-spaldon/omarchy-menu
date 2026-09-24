@@ -114,8 +114,8 @@ Add it to the bar with the bar's widget picker, or put
 `{ "id": "omarchy-menu-omni" }` first in `bar.layout.left` of
 `~/.config/omarchy/shell.json`.
 
-- **Left click** opens the launcher, the same as `Super+Space`.
-- **Right click** opens a popup with the System actions. Its **Settings** row
+- **Right click** opens the launcher, the same as `Super+Space`.
+- **Left click** opens a popup with the System actions. Its **Settings** row
   (Enter or `→`) unfolds every option Omni reads:
   - **Launcher**: apps view, cursor style, cursor blink, answers without `/`.
   - **Tabs**: switch each tab on or off, and change their order.
@@ -357,7 +357,7 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes, results and ranking into rows |
 | `AiController.qml` | AI mode: config, agent discovery and switching, generation processes, terminal handoff |
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
-| `BarWidget.qml` | Bar button: opens the launcher, right click shows the settings popup and System actions |
+| `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml` | Visual pieces of the card |
 | `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Settings.js`, `ai/*.js` | Pure logic, tested with Node |
 
