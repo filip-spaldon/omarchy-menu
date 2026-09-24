@@ -4,6 +4,7 @@ import Quickshell.Wayland
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "Settings.js" as Settings
 import "MenuModel.js" as MenuModel
 import "Tabs.js" as Tabs
 import "FileSearch.js" as FileSearch
@@ -458,28 +459,10 @@ Item {
   // present -- no fallback path that would reintroduce a weaker read. Path
   // and byte ceiling arrive as argv, never interpolated into a script, so
   // there is no shell and nothing here to quote.
-  readonly property string fileReaderProgram: [
-    'use Fcntl;',
-    'my ($path, $max) = @ARGV;',
-    'sysopen(my $fh, $path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or exit 1;',
-    'my @st = stat($fh) or exit 1;',
-    'exit 1 unless -f _;',
-    'exit 1 unless $st[4] == $< || $st[4] == 0;',
-    'exit 1 if $st[7] > $max;',
-    'my $out = "";',
-    'while (length($out) < $max) {',
-    '  my $n = sysread($fh, my $chunk, $max - length($out));',
-    '  exit 1 unless defined $n;',
-    '  last if $n == 0;',
-    '  $out .= $chunk;',
-    '}',
-    'print $out;'
-  ].join("\n")
+  readonly property string fileReaderProgram: Settings.FILE_READER_PROGRAM
 
   function readFileCommand(path, maxBytes) {
-    return ["timeout", String(root.fileReadDeadline),
-            "perl", "-e", root.fileReaderProgram,
-            "--", path, String(maxBytes)]
+    return Settings.readFileCommand(path, maxBytes, root.fileReadDeadline)
   }
 
   // ------------------------------------------------------------------

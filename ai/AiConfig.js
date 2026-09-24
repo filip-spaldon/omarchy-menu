@@ -3,10 +3,12 @@
 // AiConfig: built-in defaults + optional ai.json overrides. Ported from
 // omarchy-find (MIT); here the file lives next to the menu plugin, git-ignored.
 //
-// Hard rule (see implementation plan §6): the config file is never created or
-// rewritten by this plugin. Callers only ever hand us the raw text they read
-// (or null/undefined when the file does not exist) and we hand back a
-// complete, valid runtime config plus an optional short warning string.
+// Hard rule (see implementation plan §6): the launcher never creates or
+// rewrites the config file; only the bar widget's settings popup does, and
+// only its per-agent "models"/"efforts", when the user changes one there.
+// Callers only ever hand us the raw text they read (or null/undefined when
+// the file does not exist) and we hand back a complete, valid runtime config
+// plus an optional short warning string.
 
 var SUPPORTED_AGENTS = ["claude", "codex", "agy", "opencode", "pi"]
 

@@ -53,10 +53,12 @@ to check QML rendering, keyboard focus, plugin registration.
 
 ## Plugin lifecycle
 
-The manifest declares only `kinds: ["menu"]`. Enable it in `shell.json`
-under `plugins`; it does not need a bar button. `omarchy.clonedFrom` remains
-`omarchy.menu`, allowing existing Omarchy menu commands to resolve to this plugin.
-`BarWidget.qml` is retained as an optional widget source.
+The manifest declares `kinds: ["menu", "bar-widget"]`. Enable it in
+`shell.json` under `plugins`; the bar button is optional and goes into
+`bar.layout`. `omarchy.clonedFrom` remains `omarchy.menu`, allowing existing
+Omarchy menu commands to resolve to this plugin. `BarWidget.qml` shares
+`Settings.js` with `SettingsStore.qml` for defaults, ranges, and the guarded
+file reader and writer, so the popup and the launcher agree on every value.
 
 Runtime settings live outside the plugin directory because writes beneath the
 plugin directory trigger shell reloads. Keep screenshots and recordings outside

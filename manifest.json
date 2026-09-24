@@ -6,11 +6,20 @@
   "author": "filippaldo",
   "description": "Unified Omarchy launcher with app list/grid, system actions, file and folder search, configurable tabs, AI answers, calculator, conversions and developer utilities",
   "kinds": [
-    "menu"
+    "menu",
+    "bar-widget"
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "menu": "Menu.qml"
+    "menu": "Menu.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omarchy Menu Omni",
+    "description": "Left click opens the launcher; right click shows its settings and the System actions",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "left"
   },
   "omarchy": {
     "clonedFrom": "omarchy.menu"

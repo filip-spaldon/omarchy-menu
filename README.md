@@ -104,6 +104,42 @@ shows that active tab even when disabled. Switching away hides it again.
 Unknown settings are preserved when Ctrl+G saves the view. Invalid JSON is left
 untouched; fix its syntax and reopen the menu.
 
+## Bar button and settings
+
+Omni ships an optional bar widget, **Omarchy Menu Omni** (the Omarchy logo).
+Add it to the bar with the bar's widget picker, or put
+`{ "id": "omarchy-menu-omni" }` first in `bar.layout.left` of
+`~/.config/omarchy/shell.json`.
+
+- **Left click** opens the launcher, the same as `Super+Space`.
+- **Right click** opens a settings popup with every option Omni reads:
+  - **Launcher**: apps view, cursor style, cursor blink, answers without `/`.
+  - **Tabs**: switch each tab on or off, and change their order.
+  - **Sections in All**: the order of the result sections.
+  - **Look**: the `style.json` geometry.
+  - **AI**: agent, plus the model and effort for that agent.
+  - **Settings folder**: opens `~/.local/state/omarchy-menu-omni/`.
+  - **System**: every action of the System submenu (screensaver, lock,
+    suspend, hibernate, logout, reboot, shutdown), including your own
+    entries from `omarchy-menu.jsonc`.
+
+Keys in the popup:
+
+| Keys | Action |
+| --- | --- |
+| `↑`/`↓` | Move |
+| `←`/`→` | Change a value or move a tab or section |
+| `Enter` | Toggle or run |
+| `Esc` | Close |
+
+The mouse works too: the `‹` and `›` arrows change a value, and a click toggles
+or runs.
+
+Changes are written to `state.json`, `style.json` and `ai.json`. Other keys in
+those files, `_help` included, are kept. The launcher picks the changes up the
+next time it opens. A file that is not valid JSON is shown as such and left
+untouched.
+
 ## Screenshots
 
 [Browse the gallery](docs/media/README.md) for the All search, file results,
@@ -209,7 +245,8 @@ omarchy plugin add https://github.com/filip-spaldon/omarchy-menu.git --enable
 The installer validates the plugin, places it in
 `~/.config/omarchy/plugins/omarchy-menu-omni`, and enables it. Enabling Omni
 replaces the stock menu while keeping existing `Super+Space`, `Super+Alt+Space`
-and `omarchy menu` routes. It does not add a bar button. Verify with:
+and `omarchy menu` routes. It also provides an optional bar button, see
+[Bar button and settings](#bar-button-and-settings). Verify with:
 
 ```bash
 omarchy menu ping
@@ -314,8 +351,9 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes, results and ranking into rows |
 | `AiController.qml` | AI mode: config, agent discovery and switching, generation processes, terminal handoff |
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
+| `BarWidget.qml` | Bar button: opens the launcher, right click shows the settings popup and System actions |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `ai/*.js` | Pure logic, tested with Node |
+| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Settings.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.
