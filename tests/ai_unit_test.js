@@ -589,6 +589,11 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
 {
   // Agy-style caller-id continuity + handoff argv, including the
   // conversation_id override gotcha end to end.
+  // agy is disabled for headless runs; its parsing is still exercised here
+  // with the gate lifted, so the adapter keeps working for when it returns.
+  const agyAdapter = AiAdapters.get("agy")
+  const agyReason = agyAdapter.disabledReason
+  delete agyAdapter.disabledReason
   AiBackend.loadConfig(JSON.stringify({ agent: "agy" }))
   AiBackend.cancel()
   const g = AiBackend.beginGeneration("zebra test")
@@ -609,6 +614,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   const resumeArgv = AiBackend.buildHandoffArgv()
   assert(resumeArgv.indexOf("server-assigned-id") !== -1, "handoff argv resumes the server-confirmed id, not the caller guess")
   assert(resumeArgv.indexOf(callerUuid) === -1, "handoff argv never references the stale caller uuid")
+  agyAdapter.disabledReason = agyReason
 }
 
 {
@@ -663,6 +669,9 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   // Antigravity's real observed failure mode: exit code 0, zero stdout
   // lines, permission-wall stderr. Must still land in Error, not silently
   // look like an empty success.
+  const agyAdapter = AiAdapters.get("agy")
+  const agyReason = agyAdapter.disabledReason
+  delete agyAdapter.disabledReason
   AiBackend.loadConfig(JSON.stringify({ agent: "agy" }))
   AiBackend.cancel()
   const g = AiBackend.beginGeneration("zero output test")
@@ -672,6 +681,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   const snap = AiBackend.handleExit(gen, 0)
   eq(snap.state, "error", "zero-stdout + exit-0 is still classified as a failure, never a silent empty success")
   eq(snap.errorKind, "permission", "the real agy permission-wall stderr is classified correctly end to end")
+  agyAdapter.disabledReason = agyReason
 }
 
 {
@@ -1123,9 +1133,19 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   const codex = AiAdapters.get("codex").buildRun("q", null, AiConfig.defaults())
   eq(codex[codex.indexOf("--sandbox") + 1], "read-only", "codex headless run is sandboxed read-only")
   eq(codex[codex.length - 1], "q", "codex prompt stays the final positional")
+  assert(codex.indexOf("--ignore-user-config") !== -1, "codex skips config.toml (its MCP servers, plugins and hooks)")
+  eq(codex[codex.indexOf("-c") + 1], "mcp_servers={}", "codex loads no MCP servers")
+  for (const feature of ["apps", "plugins", "remote_plugin", "browser_use", "computer_use", "hooks", "memories", "image_generation"]) {
+    const at = codex.findIndex((a, i) => a === feature && codex[i - 1] === "--disable")
+    assert(at !== -1, "codex headless run disables " + feature)
+  }
+  assert(codex.indexOf("--dangerously-bypass-approvals-and-sandbox") === -1, "codex never bypasses its sandbox")
+  const codexTuned = AiAdapters.get("codex").buildRun("q", null, { model: "m", effort: "low" })
+  eq(codexTuned[codexTuned.length - 1], "q", "codex model and effort never displace the prompt")
 
   const pi = AiAdapters.get("pi").buildRun("q", null, AiConfig.defaults())
   assert(pi.indexOf("--no-tools") !== -1, "pi headless run has no tools")
+  assert(pi.indexOf("--no-extensions") !== -1 && pi.indexOf("--no-skills") !== -1, "pi headless run loads no extensions or skills")
 
   const agy = AiAdapters.get("agy").buildRun("q", "uuid", { effort: "low" })
   eq(agy[agy.indexOf("--mode") + 1], "plan", "agy headless run is in plan mode (answers, does not act)")
@@ -1135,6 +1155,8 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   assert(agy.indexOf("--dangerously-skip-permissions") === -1, "agy never skips permissions")
 
   assert(!!AiAdapters.get("opencode").disabledReason, "opencode is disabled for headless runs")
+  assert(!!AiAdapters.get("agy").disabledReason, "agy is disabled for headless runs (no way to drop its MCP servers)")
+  eq(AiBackend.selectableAgents().map((a) => a.id), ["claude", "codex", "pi"], "only claude, codex and pi are offered")
   AiBackend.loadConfig(JSON.stringify({ agent: "opencode" }), "")
   const g = AiBackend.beginGeneration("q")
   eq(g.argv, null, "a disabled adapter never produces an argv to spawn")
@@ -1168,7 +1190,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   assert(run.indexOf("--model") === -1 && run.indexOf("--effort") === -1, "claude run pins no model or effort by default")
   AiBackend.setAgent("codex")
   run = AiAdapters.get("codex").buildRun("q", null, AiBackend.getConfig())
-  assert(run.indexOf("--model") === -1 && run.indexOf("-c") === -1, "codex run pins no model or effort by default")
+  assert(run.indexOf("--model") === -1 && !run.some((a) => /^model_reasoning_effort=/.test(a)), "codex run pins no model or effort by default")
 
   AiBackend.loadConfig(JSON.stringify({ models: { claude: "haiku", codex: "gpt-6-luna", pi: "openai-codex/gpt-6-luna" },
                                        efforts: { claude: "low", codex: "low", pi: "low" } }), "")
@@ -1179,7 +1201,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   AiBackend.setAgent("codex")
   run = AiAdapters.get("codex").buildRun("q", null, AiBackend.getConfig())
   eq(run[run.indexOf("--model") + 1], "gpt-6-luna", "ai.json models reach codex")
-  eq(run[run.indexOf("-c") + 1], 'model_reasoning_effort="low"', "ai.json efforts reach codex")
+  eq(run[run.lastIndexOf("-c") + 1], 'model_reasoning_effort="low"', "ai.json efforts reach codex")
   eq(run[run.length - 1], "q", "codex prompt stays last")
   AiBackend.setAgent("pi")
   run = AiAdapters.get("pi").buildRun("q", null, AiBackend.getConfig())

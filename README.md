@@ -196,7 +196,8 @@ Typing alone sends no request.
 ![AI agent selector](docs/media/ai.png)
 
 In AI mode the tab bar lists the installed agents instead of the tabs
-(Claude, Codex, Pi, Antigravity — whichever CLIs are on `PATH`). One is always
+(Claude, Codex, Pi — whichever CLIs are on `PATH`; Pi also runs local
+models). One is always
 preselected, so Enter asks straight away; Tab / Shift+Tab or Ctrl+1…n switches
 agent, handy when one has run out of usage. Switching cancels a running
 answer, and the last pick is remembered in `state.json` as `aiAgent`.
@@ -210,16 +211,17 @@ Per-agent settings live in `~/.local/state/omarchy-menu-omni/ai.json`, next to
 
 ```json
 {
-  "models": {"claude": "haiku", "codex": "gpt-6-luna", "pi": "openai-codex/gpt-6-luna", "agy": "gemini-3.8-flash-low"},
-  "efforts": {"claude": "low", "codex": "low", "pi": "low", "agy": "low"}
+  "models": {"claude": "haiku", "codex": "gpt-6-luna", "pi": "openai-codex/gpt-6-luna"},
+  "efforts": {"claude": "low", "codex": "low", "pi": "low"}
 }
 ```
 
 By default every agent runs on the model and effort its own CLI is configured
 with; the plugin picks nothing. `models` and `efforts` (both optional) set a
 model or reasoning effort per agent for launcher questions — for example a
-cheap, fast model as above. Continuing in the terminal resumes on the CLI's own
-model.
+cheap, fast model as above. Codex launcher questions skip `config.toml` (see
+below), so without an entry here they use Codex's built-in default model.
+Continuing in the terminal resumes on the CLI's own model.
 
 For compatibility with omarchy-find's `ai.json`, two older keys still work: an
 `"agent"` overrides the Omarchy default for the first-run preselection only
@@ -231,10 +233,10 @@ Install and authenticate the chosen CLI separately.
 | Agent | Restrictions during the menu request |
 | --- | --- |
 | Claude | WebSearch and WebFetch only, strict empty MCP configuration, restricted mode |
-| Codex | Read-only sandbox |
-| Pi | No tools |
-| Antigravity (agy) | Plan mode (answers without acting) and `--sandbox` |
-| OpenCode | Headless requests disabled because tool removal cannot be enforced by this adapter |
+| Codex | Read-only sandbox and hosted web search. No MCP servers, account connectors (apps), plugins, browser or computer use, hooks, memories or image generation (`--ignore-user-config`, `mcp_servers={}`, `--disable …`) |
+| Pi | No tools, extensions or skills |
+| Antigravity (agy) | Disabled: its headless run cannot be kept away from its MCP servers and plugins |
+| OpenCode | Disabled: tool removal cannot be enforced by this adapter |
 
 The terminal continuation uses your ordinary interactive permissions. Markdown
 images render as links, raw HTML is escaped, and only clicked HTTP(S) links open.
