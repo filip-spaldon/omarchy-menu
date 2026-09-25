@@ -196,6 +196,12 @@ var claudeAdapter = {
 
 // ----------------------------------------------------------------- Codex ---
 
+// Codex features that add tools beyond the read-only sandbox; see buildRun.
+var CODEX_DISABLED_FEATURES = [
+  "apps", "plugins", "remote_plugin", "browser_use", "browser_use_external",
+  "computer_use", "in_app_browser", "hooks", "memories", "image_generation"
+]
+
 var codexAdapter = {
   id: "codex",
   label: "Codex",
@@ -212,7 +218,21 @@ var codexAdapter = {
   buildRun: function(prompt, sessionRef, config) {
     // Read-only sandbox: codex may still look things up, but cannot write or
     // run anything with side effects.
-    var argv = ["codex", "exec", "--skip-git-repo-check", "--json", "--sandbox", "read-only"]
+    //
+    // The sandbox covers local files and commands only, not MCP: a page the
+    // answer read could steer the model into the user's MCP servers, ChatGPT
+    // connectors (apps) or plugins, which act on accounts outside it. So this
+    // run loads none of them. --ignore-user-config skips config.toml (its
+    // mcp_servers, plugins, hooks and features) and mcp_servers={} keeps any
+    // other layer from adding one; the --disable list switches off the
+    // features that bring tools of their own even without a config: account
+    // connectors, plugins, browser and computer use, hooks, memories and
+    // image generation. Hosted web search stays: it is how codex looks
+    // things up. The terminal continuation (codex resume) is the user's own
+    // session with their normal configuration.
+    var argv = ["codex", "exec", "--skip-git-repo-check", "--json", "--sandbox", "read-only",
+                "--ignore-user-config", "--ignore-rules", "-c", "mcp_servers={}"]
+    for (var i = 0; i < CODEX_DISABLED_FEATURES.length; i++) argv.push("--disable", CODEX_DISABLED_FEATURES[i])
     if (config && config.model) argv.push("--model", config.model)
     if (config && config.effort) argv.push("-c", "model_reasoning_effort=\"" + config.effort + "\"")
     argv.push(prompt)
@@ -303,6 +323,12 @@ var agyAdapter = {
   id: "agy",
   label: "Antigravity",
   binary: "agy",
+  // agy has no switch that takes its MCP servers and plugins away for one
+  // run (--mode plan --sandbox limits edits and the terminal, not MCP), so it
+  // is not started headless from here, like opencode. The adapter stays so
+  // it can come back once agy gains such a switch.
+  disabledReason: "Antigravity is disabled for AI search: its headless run cannot be kept away from MCP servers and plugins. " +
+    "Use claude, codex or pi (set \"agent\" in ~/.local/state/omarchy-menu-omni/ai.json).",
   capabilities: {
     continuity: "caller-id",
     modelOverride: true,
@@ -547,8 +573,10 @@ var piAdapter = {
   // ambiguity). Options are grouped BEFORE -p so --model can never be
   // mistaken for the prompt value.
   buildRun: function(prompt, sessionRef, config) {
-    // --no-tools: pi answers from the model alone.
-    var argv = ["pi", "--mode", "json", "--no-tools"]
+    // --no-tools: pi answers from the model alone. It already covers
+    // extension tools; --no-extensions and --no-skills keep extension code
+    // and skills from loading into the run at all.
+    var argv = ["pi", "--mode", "json", "--no-tools", "--no-extensions", "--no-skills"]
     if (config && config.model) argv.push("--model", config.model)
     if (config && config.effort) argv.push("--thinking", config.effort)
     argv.push("-p", prompt)
