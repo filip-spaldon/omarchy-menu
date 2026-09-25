@@ -420,8 +420,10 @@ Item {
     }
   }
 
-  // The agent runs in its own process group (setsid, AiBackend.wrapForGroup);
-  // anything in it still alive half a second after SIGTERM gets SIGKILL.
+  // The agent runs in its own process group behind the output guard
+  // (setsid + OUTPUT_GUARD_PROGRAM, AiBackend.wrapForGroup), so every line
+  // the SplitParsers above receive is already bounded. Anything in the group
+  // still alive half a second after SIGTERM gets SIGKILL.
   Timer {
     id: aiKillFallbackTimerA
     property var targetPid: null

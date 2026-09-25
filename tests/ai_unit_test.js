@@ -1218,6 +1218,62 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   AiBackend.loadConfig(null, "")
 }
 
+// ---------------------------------------------------- output bounds ----
+// The agent's stdout/stderr go through OUTPUT_GUARD_PROGRAM before the
+// shell's newline-split parsers see them; run it for real with small limits.
+{
+  const { spawnSync } = require("child_process")
+  const guard = (limits, script) => spawnSync("perl",
+    ["-e", AiBackend.OUTPUT_GUARD_PROGRAM, "--"].concat(limits.map(String), ["--", "sh", "-c", script]),
+    { encoding: "utf8", timeout: 10000 })
+
+  const wrapped = AiBackend.wrapForGroup(["codex", "exec", "q"])
+  eq(wrapped.slice(0, 4), ["setsid", "perl", "-e", AiBackend.OUTPUT_GUARD_PROGRAM], "every run goes through the output guard, group-isolated")
+  eq(wrapped.slice(4, 10), ["--", String(AiBackend.OUTPUT_LINE_MAX), String(AiBackend.OUTPUT_MAX),
+    String(AiBackend.STDERR_LINE_MAX), String(AiBackend.STDERR_MAX), "--"], "the guard gets its limits as arguments")
+  eq(wrapped.slice(10), ["codex", "exec", "q"], "the agent argv follows unchanged")
+  assert(AiBackend.OUTPUT_LINE_MAX <= 1048576 && AiBackend.OUTPUT_MAX <= 16777216, "stdout bounds stay small enough for the shell")
+
+  let r = guard([20, 1000, 50, 1000], "echo one; echo two; echo oops >&2; exit 3")
+  eq([r.stdout, r.stderr, r.status], ["one\ntwo\n", "oops\n", 3], "short lines pass through and the exit status is kept")
+
+  r = guard([20, 100000, 200, 1000], "printf '%050d\\n' 0; echo after")
+  eq(r.stdout, "after\n", "an overlong terminated line is dropped, the next one passes")
+  assert(/dropped an output line/.test(r.stderr), "a dropped line is reported on stderr")
+
+  r = guard([20, 1000000, 200, 1000], "head -c 200000 /dev/zero | tr '\\0' x; echo; echo tail")
+  eq(r.stdout, "tail\n", "an unterminated 200 KB line is never buffered whole, the stream recovers after it")
+
+  r = guard([20, 1000000, 200, 1000], "head -c 100 /dev/zero | tr '\\0' y")
+  eq(r.stdout, "", "an overlong line cut off by EOF is dropped too")
+
+  r = guard([20, 200, 200, 1000], "while :; do echo 0123456789; done")
+  assert(r.stdout.length <= 200, "stdout never passes its total cap")
+  assert(/stopping the agent/.test(r.stderr) && r.status !== 0, "an agent past the stdout cap is stopped")
+
+  r = guard([100, 100000, 100, 60], "for i in $(seq 200); do echo err$i >&2; done; echo done")
+  eq(r.stdout, "done\n", "stderr past its cap is discarded without stopping the agent")
+  assert(r.stderr.length <= 60, "stderr never passes its total cap")
+
+  r = spawnSync("perl", ["-e", AiBackend.OUTPUT_GUARD_PROGRAM, "--", "10", "100", "200", "1000", "--", "/nonexistent/agent"], { encoding: "utf8" })
+  eq(r.status, 127, "a missing agent binary exits 127")
+  assert(/cannot run/.test(r.stderr), "a missing agent binary is reported")
+
+  // What the session keeps is capped as well, whatever arrives.
+  AiBackend.loadConfig(JSON.stringify({ agent: "claude" }), "")
+  AiBackend.cancel()
+  const g = AiBackend.beginGeneration("caps")
+  const big = "x".repeat(AiBackend.ANSWER_TEXT_MAX)
+  for (let i = 0; i < 3; i++) AiBackend.handleStderrChunk(g.generation, big)
+  AiBackend.handleLine(g.generation, JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: big } } }))
+  AiBackend.handleLine(g.generation, JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "more" } } }))
+  assert(AiBackend.session.rawText.length > 0, "the claude delta reached the session (the cap test is live)")
+  eq(AiBackend.session.rawText.length, AiBackend.ANSWER_TEXT_MAX, "the answer text is capped")
+  eq(AiBackend.session.stderrText.length, AiBackend.STDERR_TEXT_MAX, "the kept stderr is capped to its tail")
+  AiBackend.cancel()
+  AiBackend.loadConfig(null, "")
+}
+
 // ------------------------------------------------------------- summary ----
 
 console.log("")

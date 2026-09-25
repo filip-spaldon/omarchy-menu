@@ -160,7 +160,8 @@ function agentDisplay() {
 
 // Starts a brand-new generation, tearing down whatever was active first (at
 // most one AiSession is ever alive). Returns { generation, argv } where argv
-// is already wrapped for process-group isolation (see wrapForGroup) and
+// is already wrapped for process-group isolation and bounded output (see
+// wrapForGroup) and
 // ready to assign directly to Process.command — or argv: null if the
 // configured agent isn't a known adapter (unsupported-agent config error).
 function beginGeneration(promptText) {
@@ -336,6 +337,10 @@ function applyEvent(ev) {
 
 function appendText(delta) {
   if (!delta || !session) return
+  // An answer is capped at ANSWER_TEXT_MAX; what would go past it is dropped.
+  var room = ANSWER_TEXT_MAX - session.rawText.length
+  if (room <= 0) return
+  if (delta.length > room) delta = delta.slice(0, room)
   // EVERY character goes through the paced typewriter in tick() — there is
   // deliberately no first-chunk immediate-render fast path anymore (live
   // feedback: even an 80-char "first sentence" flash reads as a burst, and
@@ -367,9 +372,11 @@ function setError(message, kind) {
   session.activity = null
 }
 
+// Only the tail is kept: it is what names the failure.
 function handleStderrChunk(gen, chunk) {
   if (isStale(gen)) return
-  session.stderrText += String(chunk || "")
+  var text = session.stderrText + String(chunk || "")
+  session.stderrText = text.length > STDERR_TEXT_MAX ? text.slice(text.length - STDERR_TEXT_MAX) : text
 }
 
 // exitCode: the OS exit code of the (setsid-wrapped) agent process.
@@ -564,8 +571,97 @@ function cancelHandoff() {
 // about — verified empirically against this machine's util-linux setsid).
 // That lets killArgv() below signal the whole group with one negative-PID
 // kill instead of only the direct child.
+// Output bounds. The agent's stdout and stderr reach the shell through
+// newline-split parsers in the long-lived shell process, and what they carry
+// is shaped by the model and by web pages it read, so nothing may arrive
+// unbounded: OUTPUT_GUARD_PROGRAM sits between the agent and the shell and
+// enforces these on the producer side, before a byte is buffered here.
+//   OUTPUT_LINE_MAX  longest stdout line passed on; a longer one (JSON event
+//                    or not) is dropped whole, terminated or not, and the
+//                    lines after it still pass
+//   OUTPUT_MAX       stdout bytes per run; past it the agent is stopped
+//   STDERR_LINE_MAX, STDERR_MAX  the same for stderr, which only feeds error
+//                    classification: past its cap it is read and discarded
+var OUTPUT_LINE_MAX = 1048576
+var OUTPUT_MAX = 16777216
+var STDERR_LINE_MAX = 16384
+var STDERR_MAX = 262144
+// What the session keeps in memory, whatever arrives: the answer text and
+// the stderr tail used to classify a failure.
+var ANSWER_TEXT_MAX = 524288
+var STDERR_TEXT_MAX = 65536
+
+// Runs argv as a child with both streams on pipes and relays them line by
+// line within the bounds above (see the constants). Perl is a dependency of
+// the omarchy package itself. Limits and argv arrive as arguments; there is
+// no shell and nothing to quote. The program is the process-group leader
+// (setsid), so the group kill in killArgv still reaches the agent and
+// anything it started. Exits with the agent's status (128 + signal).
+var OUTPUT_GUARD_PROGRAM = [
+  'use strict; use warnings; use POSIX ();',
+  'my ($line_max, $out_max, $err_line_max, $err_max) = splice(@ARGV, 0, 4);',
+  'shift @ARGV if @ARGV && $ARGV[0] eq "--";',
+  '@ARGV or exit 2;',
+  'pipe(my $or, my $ow) or exit 2;',
+  'pipe(my $er, my $ew) or exit 2;',
+  'my $pid = fork() // exit 2;',
+  'if ($pid == 0) {',
+  '  close $or; close $er;',
+  '  open(STDOUT, ">&", $ow) or POSIX::_exit(127);',
+  '  open(STDERR, ">&", $ew) or POSIX::_exit(127);',
+  '  close $ow; close $ew;',
+  '  { no warnings "exec"; exec { $ARGV[0] } @ARGV; }',
+  '  print STDERR "omarchy-menu-omni: cannot run $ARGV[0]: $!\\n";',
+  '  POSIX::_exit(127);',
+  '}',
+  'close $ow; close $ew;',
+  'binmode $_ for ($or, $er, *STDOUT, *STDERR);',
+  'sub emit { my ($fh, $d) = @_; my $o = 0; while ($o < length $d) {',
+  '  my $n = syswrite($fh, $d, length($d) - $o, $o); return unless defined $n; $o += $n } }',
+  'my $noted = 0;',
+  'sub note { emit(*STDERR, "omarchy-menu-omni: $_[0]\\n") }',
+  'my @s = (',
+  '  { fh => $or, to => *STDOUT, line => $line_max, max => $out_max, stop => 1 },',
+  '  { fh => $er, to => *STDERR, line => $err_line_max, max => $err_max, stop => 0 });',
+  '$_->{buf} = "", $_->{drop} = 0, $_->{total} = 0, $_->{open} = 1 for @s;',
+  'sub feed { my ($st, $chunk) = @_;',
+  '  $st->{buf} .= $chunk;',
+  '  while ((my $i = index($st->{buf}, "\\n")) >= 0) {',
+  '    my $l = substr($st->{buf}, 0, $i + 1, "");',
+  '    if ($st->{drop}) { $st->{drop} = 0; next }',
+  '    if (length($l) > $st->{line} + 1) { note("dropped an output line over $st->{line} bytes") unless $noted++; next }',
+  '    emit($st->{to}, $l) }',
+  '  if (length($st->{buf}) > $st->{line}) {',
+  '    $st->{buf} = "";',
+  '    note("dropped an output line over $st->{line} bytes") unless $st->{drop} || $noted++;',
+  '    $st->{drop} = 1 } }',
+  'while (grep { $_->{open} } @s) {',
+  '  my $rin = ""; vec($rin, fileno($_->{fh}), 1) = 1 for grep { $_->{open} } @s;',
+  '  my $n = select(my $rout = $rin, undef, undef, undef);',
+  '  if ($n < 0) { next if $!{EINTR}; last }',
+  '  for my $st (grep { $_->{open} && vec($rout, fileno($_->{fh}), 1) } @s) {',
+  '    my $r = sysread($st->{fh}, my $chunk, 65536);',
+  '    if (!defined $r) { next if $!{EINTR} || $!{EAGAIN}; $r = 0 }',
+  '    if ($r == 0) { $st->{open} = 0; close $st->{fh}; next }',
+  '    next if $st->{total} >= $st->{max};',
+  '    $st->{total} += $r;',
+  '    if ($st->{total} > $st->{max}) {',
+  '      feed($st, substr($chunk, 0, $r - ($st->{total} - $st->{max})));',
+  '      $st->{buf} = ""; $st->{drop} = 1;',
+  '      next unless $st->{stop};',
+  '      note("output passed $st->{max} bytes; stopping the agent");',
+  '      kill "TERM", $pid; $_->{open} = 0, close $_->{fh} for grep { $_->{open} } @s;',
+  '      last }',
+  '    feed($st, $chunk) } }',
+  'for my $st (@s) { emit($st->{to}, $st->{buf}) if !$st->{drop} && length $st->{buf} }',
+  '$SIG{ALRM} = sub { kill "KILL", $pid }; alarm 5;',
+  'waitpid($pid, 0); my $status = $?;',
+  'exit(($status & 127) ? 128 + ($status & 127) : $status >> 8);'
+].join("\n")
+
 function wrapForGroup(argv) {
-  return ["setsid"].concat(argv)
+  return ["setsid", "perl", "-e", OUTPUT_GUARD_PROGRAM, "--",
+          String(OUTPUT_LINE_MAX), String(OUTPUT_MAX), String(STDERR_LINE_MAX), String(STDERR_MAX), "--"].concat(argv)
 }
 
 function killArgv(pid, signalName) {

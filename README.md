@@ -238,6 +238,11 @@ Install and authenticate the chosen CLI separately.
 | Antigravity (agy) | Disabled: its headless run cannot be kept away from its MCP servers and plugins |
 | OpenCode | Disabled: tool removal cannot be enforced by this adapter |
 
+The agent's output is bounded before it reaches the shell: a small Perl relay
+between the CLI and the menu drops any output line over 1 MiB (terminated or
+not), stops the agent after 16 MiB of output, and caps stderr at 16 KiB per line
+and 256 KiB in total. The menu keeps at most 512 KiB of answer text.
+
 The terminal continuation uses your ordinary interactive permissions. Markdown
 images render as links, raw HTML is escaped, and only clicked HTTP(S) links open.
 The adapter implementation and tests are in `ai/` and `tests/ai_unit_test.js`.
