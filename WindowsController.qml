@@ -16,9 +16,13 @@ Item {
   required property var menu
 
   property var list: []
-  // class -> { name, icon } or null, looked up in the desktop entries once
-  // per class and kept for the life of the shell.
+  // class -> { id, name, icon } or null, looked up in the desktop entries
+  // once per class; dropped whenever the installed entries change, so a
+  // lookup made before they finished loading is not kept as a miss.
   property var appCache: ({})
+  // desktop entry id -> addresses, most recent first (Windows.runningByEntry).
+  // Replaced, never mutated, so the rows' bindings on it re-evaluate.
+  property var running: ({})
 
   readonly property bool wanted: windows.menu.opened && !windows.menu.dmenuActive
     && (windows.menu.activeTab === "windows"
@@ -37,7 +41,7 @@ Item {
     var info = null
     try {
       var entry = DesktopEntries.heuristicLookup(key) || windows.webappEntry(key)
-      if (entry) info = { name: String(entry.name || ""), icon: String(entry.icon || "") }
+      if (entry) info = { id: String(entry.id || ""), name: String(entry.name || ""), icon: String(entry.icon || "") }
     } catch (e) {
       info = null
     }
@@ -55,6 +59,25 @@ Item {
       for (var i = 0; i < values.length; i++)
         if (values[i] && Windows.normalizeName(values[i].name) === keys[k]) return values[i]
     return null
+  }
+
+  function updateRunning() {
+    windows.running = Windows.runningByEntry(windows.list, function(cls) {
+      var info = windows.appInfo(cls)
+      return info ? info.id : ""
+    })
+  }
+
+  function windowCount(appId) {
+    var addresses = windows.running[String(appId || "")]
+    return addresses ? addresses.length : 0
+  }
+
+  // The most recently focused window of an application, or "" when it has
+  // none open.
+  function windowFor(appId) {
+    var addresses = windows.running[String(appId || "")]
+    return addresses && addresses.length > 0 ? addresses[0] : ""
   }
 
   function rows(query) {
@@ -92,6 +115,14 @@ Item {
     }
   }
 
+  Connections {
+    target: DesktopEntries.applications
+    function onValuesChanged() {
+      windows.appCache = ({})
+      windows.updateRunning()
+    }
+  }
+
   Process {
     id: clientsProc
     stdout: StdioCollector {
@@ -99,6 +130,7 @@ Item {
       onStreamFinished: {
         if (!windows.menu.opened) return
         windows.list = Windows.parseClients(text)
+        windows.updateRunning()
         if (windows.wanted) windows.menu.rebuildDisplay(true)
       }
     }

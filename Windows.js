@@ -196,6 +196,31 @@ function windowRows(windows, query, appInfo) {
   return rows
 }
 
+// Which installed applications have windows open: desktop entry id ->
+// addresses, most recently focused first, so the first one is the window to
+// switch to. entryIdFor(cls) is the desktop entry id for a window class, or
+// "" when no entry matches (that window marks nothing).
+function runningByEntry(windows, entryIdFor) {
+  var sorted = (windows || []).slice().sort(function(a, b) {
+    if (a.focus !== b.focus) return a.focus - b.focus
+    return a.address < b.address ? -1 : 1
+  })
+  var out = {}
+  for (var i = 0; i < sorted.length; i++) {
+    var id = entryIdFor ? String(entryIdFor(sorted[i].cls) || "") : ""
+    if (!id) continue
+    if (!out.hasOwnProperty(id)) out[id] = []
+    out[id].push(sorted[i].address)
+  }
+  return out
+}
+
+// The right-hand text of a running application's row.
+function runningLabel(count) {
+  if (!(count > 0)) return ""
+  return count === 1 ? "running" : count + " windows"
+}
+
 // Focusing a window on a hidden workspace (or the scratchpad) brings that
 // workspace up. Lua-config Hyprland takes hl.dsp.focus; older builds only
 // know focuswindow, so fall back to it as omarchy-launch-or-focus does. The
@@ -218,6 +243,8 @@ if (typeof module !== "undefined") {
     compareWindows: compareWindows,
     matchScore: matchScore,
     windowRows: windowRows,
+    runningByEntry: runningByEntry,
+    runningLabel: runningLabel,
     webappHost: webappHost,
     webappKeys: webappKeys,
     normalizeName: normalizeName,

@@ -477,6 +477,14 @@ eq(Windows.focusCommand("0xa2"), ["bash", "-c", Windows.focusCommand("0xa2")[2],
 eq(Windows.focusCommand("0xa2; rm -rf ~"), null, "anything but an address is refused")
 eq(Windows.focusCommand(""), null, "an empty address is refused")
 
+const entryIds = { foot: "foot", zen: "zen-browser" }
+const running = Windows.runningByEntry(wins, cls => entryIds[cls] || "")
+eq(Object.keys(running).sort(), ["foot", "zen-browser"], "only windows with a desktop entry mark an app")
+eq(running.foot, ["0xa3", "0xa1"], "an app's windows are most recently focused first")
+eq(running["zen-browser"], ["0xa2"], "each app keeps its own windows")
+eq(Windows.runningByEntry(null, null), {}, "no windows, nothing running")
+eq([Windows.runningLabel(0), Windows.runningLabel(1), Windows.runningLabel(3)], ["", "running", "3 windows"], "running labels")
+
 // A controller method named like a built-in Item property (focus, visible,
 // enabled, ...) is shadowed by the property, and calling it throws.
 {

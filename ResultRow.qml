@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "Windows.js" as Windows
 
 // One row of the result list: icon or app icon, label, detail line,
 // right-hand text (a file's mtime) and a chevron for submenus. Roles come
@@ -31,6 +32,9 @@ BorderSurface {
   // matches the window class, and fall back to a glyph when none does.
   readonly property bool isApp: row.kind === "app" || (row.kind === "window" && row.appIcon.length > 0)
   readonly property bool hasIcon: row.icon.length > 0 || row.isApp
+  // Open windows of an application row, for the running marker.
+  readonly property int windowCount: row.kind === "app" ? row.menu.appWindowCount(row.appId) : 0
+  readonly property string trailShown: row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
 
   // Command examples are a read-only hint.
   opacity: row.kind === "example" ? 0.7 : 1
@@ -84,6 +88,14 @@ BorderSurface {
     y: contentColumn.y + labelText.y + (labelText.height - height) / 2
   }
 
+  RunningBadge {
+    count: row.windowCount
+    sizeScale: row.menu.menuFontScale
+    ring: row.hasCursor ? row.menu.selectedBackground : row.menu.background
+    x: appIconImage.x + appIconImage.width - width * 0.6
+    y: appIconImage.y + appIconImage.height - height * 0.6
+  }
+
   Column {
     id: contentColumn
     anchors.left: row.hasIcon ? iconText.right : parent.left
@@ -121,8 +133,8 @@ BorderSurface {
   Text {
     id: trailLabel
     textFormat: Text.PlainText
-    visible: row.trailText.length > 0
-    text: row.trailText
+    visible: row.trailShown.length > 0
+    text: row.trailShown
     color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
     opacity: 0.45
     font.family: row.menu.fontFamily

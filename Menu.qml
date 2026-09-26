@@ -277,7 +277,7 @@ Item {
     if (root.commandMode) return root.answerQuery ? "Answers only · Enter use · Ctrl+R new value · Esc clear"
                                                   : "Type a command after / · Esc clear"
     if (root.activeTab === "apps")
-      return "Enter launch · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
+      return "Enter open/switch · Shift+Enter new · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
     if (root.activeTab === "windows")
       return "Enter go to window · type to filter by title, app or workspace · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
@@ -1704,7 +1704,9 @@ Item {
     return true
   }
 
-  function activateIndex(index, fromPointer) {
+  // launchNew: Shift+Enter on an application starts another instance even
+  // when it already has a window open.
+  function activateIndex(index, fromPointer, launchNew) {
     if (root.deleteConfirmOpen) return
     if (root.dmenuActive) {
       if (root.mode === "input") {
@@ -1731,6 +1733,13 @@ Item {
     } else if (row.kind === "app") {
       var appId = row.appId
       var label = row.label
+      // A running application is switched to, the way a dock does; Shift
+      // opens another one.
+      var openWindow = launchNew ? "" : windowCtl.windowFor(appId)
+      if (openWindow) {
+        root.focusWindow(openWindow)
+        return
+      }
       applySerial = requestSerial
       opened = false
       filterText = ""
@@ -1789,6 +1798,13 @@ Item {
     opened = false
     filterText = ""
     root.finishRequest(value)
+  }
+
+  // How many windows an application has open, for the running marker on its
+  // row or tile. Reads windowCtl.running, so bindings on it update as
+  // windows open and close.
+  function appWindowCount(appId) {
+    return windowCtl.windowCount(appId)
   }
 
   // Closes the menu first: the dispatch switches workspace (or raises the
@@ -2502,7 +2518,7 @@ Item {
             if (root.dmenuActive) {
               if (root.mode === "input") root.applyDmenuSelection(root.filterText)
               else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
-            } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
+            } else if (root.cursorActive) root.activateIndex(root.selectedIndex, false, (event.modifiers & Qt.ShiftModifier) !== 0)
             else if (displayModel.count > 0 && !root.showingCommandHints) root.cursorActive = true
             event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
