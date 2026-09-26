@@ -1493,9 +1493,22 @@ function parseKillQuery(query) {
   return match ? match[1].trim() : null
 }
 
-// One entry per line of `ps -eo pid,comm,pcpu,rss --no-headers`, narrowed to
-// the names containing what was typed. ps was asked to sort by CPU, so the
-// order it gave is kept and the busiest match comes first.
+// The process list the kill answer offers, one line per process:
+//   pid starttime pcpu rss comm
+// starttime is field 22 of /proc/<pid>/stat, the clock tick the process
+// started at. A pid can be reused once its process is gone; the pair of pid
+// and start time cannot, so it is what a kill row carries and what
+// KILL_PROGRAM checks before it signals anything. comm goes last because it
+// may contain spaces. ps sorts by CPU, so the busiest match comes first.
+// The script runs under Menu.boundedCommand (time and byte limits).
+var PROCESS_LIST_SCRIPT = "ps -eo pid=,pcpu=,rss=,comm= --sort=-pcpu | perl -ne '"
+  + "my ($pid, $rest) = /^\\s*(\\d+)\\s+(.*)$/ or next; "
+  + "open(my $f, \"<\", \"/proc/$pid/stat\") or next; my $s = <$f>; close $f; "
+  + "$s =~ s/^.*\\)\\s//s or next; my @x = split / /, $s; "
+  + "print \"$pid $x[19] $rest\\n\" if defined $x[19]'"
+
+// Entries of PROCESS_LIST_SCRIPT's output whose name contains `filter`,
+// in the order listed, at most `limit` of them.
 function parseProcessList(text, filter, limit) {
   var needle = String(filter || "").toLowerCase()
   var lines = String(text || "").split("\n")
@@ -1503,27 +1516,55 @@ function parseProcessList(text, filter, limit) {
   var ceiling = limit > 0 ? limit : 8
 
   for (var i = 0; i < lines.length && found.length < ceiling; i++) {
-    var line = lines[i].trim()
-    if (!line) continue
+    var m = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(.+?)\s*$/.exec(lines[i])
+    if (!m) continue
 
-    var parts = line.split(/\s+/)
-    if (parts.length < 4) continue
-
-    var pid = parseInt(parts[0], 10)
-    var name = parts[1]
+    var pid = parseInt(m[1], 10)
+    var name = m[5]
     if (!(pid > 0) || !name) continue
     if (needle && name.toLowerCase().indexOf(needle) < 0) continue
 
     found.push({
       pid: pid,
+      start: m[2],
       name: name,
-      cpu: parseFloat(parts[2]) || 0,
-      rss: parseInt(parts[3], 10) || 0
+      cpu: parseFloat(m[3]) || 0,
+      rss: parseInt(m[4], 10) || 0
     })
   }
 
   return found
 }
+
+// What a kill row carries: "<pid>:<starttime>".
+function killTarget(pid, start) {
+  return String(pid) + ":" + String(start)
+}
+
+// Sends SIGTERM to the process a kill row named, and only to it. The row
+// may be seconds old, and by the click its pid may belong to something
+// else, so the pid alone is never signalled: the program opens a pidfd on
+// it (pidfd_open, 434), which stays bound to whichever process held the pid
+// at that moment, then checks that process's start time in /proc against
+// the one listed, and signals through the pidfd (pidfd_send_signal, 424).
+// A process that started before the listing and is still alive is the one
+// the pidfd was opened on; a mismatch, an exited process or a kernel
+// without pidfds means nothing is sent. The syscall numbers are shared by
+// every architecture. Arguments arrive as argv; there is no shell.
+var KILL_PROGRAM = [
+  'use strict; use warnings;',
+  'my ($target) = @ARGV;',
+  'my ($pid, $start) = ($target // "") =~ /^(\\d+):(\\d+)$/ or exit 2;',
+  'my $fd = syscall(434, $pid + 0, 0);',
+  'exit 3 if $fd < 0;',
+  'open(my $f, "<", "/proc/$pid/stat") or exit 3;',
+  'my $s = <$f>; close $f;',
+  '$s =~ s/^.*\\)\\s//s or exit 3;',
+  'my @x = split / /, $s;',
+  'exit 4 unless defined $x[19] && $x[19] eq $start;',
+  'syscall(424, $fd, 15, 0, 0) == 0 or exit 5;',
+  'exit 0;'
+].join("\n")
 
 // Resident size as ps reports it, in kilobytes, shown in whatever unit keeps
 // the number readable.
@@ -1712,7 +1753,10 @@ if (typeof module !== "undefined") {
     parseUtilityQuery: parseUtilityQuery,
     epochMilliseconds: epochMilliseconds,
     parseKillQuery: parseKillQuery,
+    PROCESS_LIST_SCRIPT: PROCESS_LIST_SCRIPT,
     parseProcessList: parseProcessList,
+    killTarget: killTarget,
+    KILL_PROGRAM: KILL_PROGRAM,
     formatMemory: formatMemory,
     parseTimeQuery: parseTimeQuery,
     resolveZone: resolveZone,

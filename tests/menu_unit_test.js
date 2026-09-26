@@ -190,6 +190,39 @@ eq(write.slice(-3), ["/d", "/d/f.json", "$(boom)"], "written content reaches bas
 assert(write[2].indexOf("boom") === -1, "written content never enters the script text")
 eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read path reaches perl as an argument")
 
+// ------------------------------------------------------------ kill rows --
+
+{
+  const list = "  42 1234 12.5 2048 Web Content\n7 99 0.0 10 bash\nbad line\n"
+  eq(MenuModel.parseProcessList(list, "web", 8),
+     [{ pid: 42, start: "1234", name: "Web Content", cpu: 12.5, rss: 2048 }], "a listed process keeps its start time and a name with spaces")
+  eq(MenuModel.parseProcessList(list, "", 8).length, 2, "malformed lines are skipped")
+  eq(MenuModel.killTarget(42, "1234"), "42:1234", "a kill row carries pid and start time")
+
+  const { spawn, spawnSync, execFileSync } = require("child_process")
+  const fs = require("fs")
+  const startOf = (pid) => fs.readFileSync("/proc/" + pid + "/stat", "utf8").replace(/^.*\)\s/s, "").split(" ")[19]
+  const alive = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return false } }
+  const kill = (target) => spawnSync("perl", ["-e", MenuModel.KILL_PROGRAM, "--", target]).status
+
+  const listed = execFileSync("bash", ["-c", MenuModel.PROCESS_LIST_SCRIPT], { encoding: "utf8" })
+  const self = MenuModel.parseProcessList(listed, "", 100000).find((p) => p.pid === process.pid)
+  assert(self && self.start === startOf(process.pid), "the listing reports each process's /proc start time")
+
+  const child = spawn("sleep", ["30"], { stdio: "ignore" })
+  const start = startOf(child.pid)
+  eq(kill(child.pid + ":" + (Number(start) + 1)), 4, "a start time that does not match sends nothing")
+  assert(alive(child.pid), "the process whose pid only matched is left alone")
+  eq(kill("not-a-target"), 2, "a malformed target is refused")
+  eq(kill(child.pid + ":" + start), 0, "the listed process is signalled")
+  spawnSync("sleep", ["0.2"])
+  assert(!alive(child.pid) || fs.readFileSync("/proc/" + child.pid + "/stat", "utf8").includes(") Z "), "the listed process is gone")
+  child.kill("SIGKILL")
+
+  const gone = spawnSync("sh", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim()
+  eq(kill(gone + ":1"), 3, "a pid with no process sends nothing")
+}
+
 console.log("")
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

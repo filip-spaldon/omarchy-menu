@@ -1704,12 +1704,15 @@ Item {
   // SIGTERM rather than SIGKILL: the point is to close something that has
   // stopped behaving, and letting it clean up after itself is the better
   // default. Anything that ignores it is a job for a terminal.
-  function killProcess(pid) {
-    if (!pid) return
+  // `target` is "<pid>:<starttime>" from the listing, which may be seconds
+  // old: MenuModel.KILL_PROGRAM signals through a pidfd and only if that pid
+  // still is the process listed, never a process that reused the pid.
+  function killProcess(target) {
+    if (!/^\d+:\d+$/.test(String(target || ""))) return
     applySerial = requestSerial
     opened = false
     filterText = ""
-    Util.execDetached("kill " + Util.shellQuote(pid))
+    Quickshell.execDetached(["perl", "-e", MenuModel.KILL_PROGRAM, "--", String(target)])
   }
 
   // Read at the moment it is asked for rather than watched in the background:

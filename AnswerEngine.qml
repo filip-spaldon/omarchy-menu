@@ -368,13 +368,14 @@ Item {
     var rows = []
     for (var i = 0; i < found.length; i++) {
       rows.push(answers.menu.queryRow({
-        id: "kill." + found[i].pid,
+        id: "kill." + found[i].pid + "." + found[i].start,
         kind: "kill",
         icon: "󰚌",
         label: found[i].name,
         detail: "pid " + found[i].pid + " · " + found[i].cpu.toFixed(1)
               + "% cpu · " + MenuModel.formatMemory(found[i].rss),
-        payload: String(found[i].pid)
+        // pid and start time: Menu.killProcess signals only that process.
+        payload: MenuModel.killTarget(found[i].pid, found[i].start)
       }))
     }
 
@@ -391,7 +392,7 @@ Item {
     if (answers.processList && now - answers.processListedAt < 5) return
     answers.processListedAt = now
 
-    processProc.command = answers.menu.boundedCommand("ps -eo pid,comm,pcpu,rss --sort=-pcpu --no-headers", 5, 262144)
+    processProc.command = answers.menu.boundedCommand(MenuModel.PROCESS_LIST_SCRIPT, 5, 262144)
     processProc.running = true
   }
 
