@@ -393,9 +393,7 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
     ["a.jpg", "NAS › Photos/2024", false, "r1"], ["Photos", "NAS", true, "r1"], ["x", "NAS › .cfg", false, "r1"], ["b.txt", "~", false, ""]
   ], "root items carry their label, kind from the trailing slash")
   eq(items.map(i => i.isSystem), [false, false, true, false], "dotted paths inside a root rank as system, the rest as the user's")
-  eq(FileSearch.filtersFor("files", false).map(f => f.id).indexOf("remotes"), -1, "no Remotes filter without roots")
-  eq(FileSearch.filtersFor("files", true).slice(-1)[0].id, "remotes", "Remotes is the last Files filter with roots")
-  eq(FileSearch.filtersFor("folders", true).slice(-1)[0].id, "remoteFolders", "and the last Folders filter")
+  eq(FileSearch.filtersFor("files").map(f => f.id).indexOf("remotes"), -1, "roots are a scope, not a type filter")
   const live = FileSearch.buildRootArgv("foto", FileSearch.ALL_FILTER, true, true, ["/mnt/a", "/mnt/b"])
   assert(live.indexOf("--follow") < 0, "live roots are walked without following links")
   eq(live.slice(-4), ["--", "f[oóòõôö]t[oóòõôö]", "/mnt/a", "/mnt/b"], "live roots are the search paths")

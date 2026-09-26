@@ -154,7 +154,46 @@ Item {
   // ----------------------------------------------------------- search --
 
   function fileFilterFor(kind) {
-    return FileSearch.filterAt(kind, kind === "folders" ? searcher.folderFilterIndex : searcher.fileFilterIndex, searcher.hasRoots)
+    return FileSearch.filterAt(kind, kind === "folders" ? searcher.folderFilterIndex : searcher.fileFilterIndex)
+  }
+
+  // Where Files and Folders look (the third chip row, Ctrl+R): everywhere,
+  // only $HOME, or one root. All always searches everywhere.
+  property string rootScope: "all"
+
+  readonly property var scopeChoices: {
+    var out = [{ id: "all", label: "Everywhere", icon: "" }, { id: "home", label: "Home", icon: "" }]
+    for (var i = 0; i < searcher.roots.length; i++) out.push({ id: searcher.roots[i].id, label: searcher.roots[i].label, icon: "" })
+    return out
+  }
+
+  // The scope in effect: a root that was switched off or removed falls back
+  // to everywhere.
+  function currentScope() {
+    for (var i = 0; i < searcher.scopeChoices.length; i++) if (searcher.scopeChoices[i].id === searcher.rootScope) return searcher.rootScope
+    return "all"
+  }
+
+  function setRootScope(id) {
+    searcher.rootScope = id
+    searcher.menu.selectedIndex = 0
+    searcher.menu.rebuildDisplay()
+    searcher.requestFileSearch()
+  }
+
+  function cycleRootScope() {
+    if (!searcher.hasRoots) return false
+    var current = searcher.currentScope()
+    var ids = searcher.scopeChoices.map(function(c) { return c.id })
+    searcher.setRootScope(ids[(ids.indexOf(current) + 1) % ids.length])
+    return true
+  }
+
+  // The roots a search spec covers.
+  function rootsFor(spec) {
+    if (spec.filter.systemFolders || spec.rootScope === "home") return []
+    if (spec.rootScope === "all") return searcher.roots
+    return searcher.roots.filter(function(r) { return r.id === spec.rootScope })
   }
 
   // What the current tab and query ask of fd, or null for nothing: which
@@ -163,10 +202,13 @@ Item {
     if (searcher.menu.dmenuActive || !searcher.menu.opened || searcher.menu.isAiMode || searcher.menu.commandMode) return null
     var query = searcher.menu.filterText.trim()
     var sig = "|" + searcher.rootsSignature() + "|"
-    if (searcher.menu.activeTab === "files")
-      return { scope: "files|" + searcher.fileFilterIndex, key: "files|" + searcher.fileFilterIndex + sig + query, query: query, dirs: false, files: true, filter: searcher.fileFilterFor("files") }
-    if (searcher.menu.activeTab === "folders")
-      return { scope: "folders|" + searcher.folderFilterIndex, key: "folders|" + searcher.folderFilterIndex + sig + query, query: query, dirs: true, files: false, filter: searcher.fileFilterFor("folders") }
+    var where = searcher.currentScope()
+    if (searcher.menu.activeTab === "files" || searcher.menu.activeTab === "folders") {
+      var folders = searcher.menu.activeTab === "folders"
+      var scope = searcher.menu.activeTab + "|" + (folders ? searcher.folderFilterIndex : searcher.fileFilterIndex) + "|" + where
+      return { scope: scope, key: scope + sig + query, query: query, dirs: folders, files: !folders,
+               rootScope: where, filter: searcher.fileFilterFor(searcher.menu.activeTab) }
+    }
     if (searcher.menu.activeTab === "all") {
       if (query.length < searcher.allFileMinQuery) return null
       // An answer that computed itself (arithmetic, a conversion, a password)
@@ -176,7 +218,8 @@ Item {
       var files = searcher.menu.inAll("files")
       if (!dirs && !files) return null
       var kinds = (dirs ? "d" : "") + (files ? "f" : "")
-      return { scope: "all" + kinds, key: "all" + kinds + sig + query, query: query, dirs: dirs, files: files, filter: FileSearch.ALL_FILTER }
+      return { scope: "all" + kinds, key: "all" + kinds + sig + query, query: query, dirs: dirs, files: files,
+               rootScope: "all", filter: FileSearch.ALL_FILTER }
     }
     return null
   }
@@ -211,8 +254,8 @@ Item {
     searcher.filePending = 0
     var gen = searcher.fileSearchGen
     searcher.fileLaunchGen = gen
-    var home = !spec.filter.remotesOnly
-    var rootsToo = !spec.filter.systemFolders
+    var home = spec.rootScope === "all" || spec.rootScope === "home"
+    var inScope = searcher.rootsFor(spec)
     var excludes = Roots.homeExcludes(searcher.roots, searcher.menu.homeDir)
 
     // timeout ends an fd that stalls on a slow mount; --max-results already
@@ -234,7 +277,7 @@ Item {
       fileSearchProc.running = true
     }
 
-    var indexed = rootsToo ? searcher.indexedRoots() : []
+    var indexed = searcher.indexedRoots().filter(function(r) { return inScope.indexOf(r) >= 0 })
     if (indexed.length > 0) {
       var pairs = indexed.map(function(r) { return { root: r.path, index: Roots.indexPath(searcher.menu.cacheHome, r.id) } })
       searcher.filePending += 1
@@ -246,7 +289,7 @@ Item {
       indexSearchProc.running = true
     }
 
-    var live = rootsToo ? searcher.liveRoots() : []
+    var live = searcher.liveRoots().filter(function(r) { return inScope.indexOf(r) >= 0 })
     searcher.livePending = live.length > 0
     if (live.length > 0) {
       var next = {
@@ -381,7 +424,8 @@ Item {
     // "results": the folders zoxide knows join the candidates.
     if (spec.dirs && searcher.menu.zoxideMode === "results" && !spec.filter.systemFolders) {
       var known = FileSearch.zoxideItems(searcher.frecency, spec.query, searcher.menu.homeDir, searcher.roots, 200)
-      if (spec.filter.remotesOnly) known = known.filter(function(it) { return it.rootId !== "" })
+      if (spec.rootScope === "home") known = known.filter(function(it) { return it.rootId === "" })
+      else if (spec.rootScope !== "all") known = known.filter(function(it) { return it.rootId === spec.rootScope })
       items = items.concat(known)
     }
     var ranked = FileSearch.rankResults(items, spec.query, limit, searcher.menu.homeDir, searcher.fileSortMode,
@@ -418,9 +462,9 @@ Item {
 
   function cycleFileFilter() {
     if (searcher.menu.activeTab === "files")
-      searcher.fileFilterIndex = (searcher.fileFilterIndex + 1) % FileSearch.filtersFor("files", searcher.hasRoots).length
+      searcher.fileFilterIndex = (searcher.fileFilterIndex + 1) % FileSearch.FILE_FILTERS.length
     else if (searcher.menu.activeTab === "folders")
-      searcher.folderFilterIndex = (searcher.folderFilterIndex + 1) % FileSearch.filtersFor("folders", searcher.hasRoots).length
+      searcher.folderFilterIndex = (searcher.folderFilterIndex + 1) % FileSearch.FOLDER_FILTERS.length
     else return
     searcher.menu.selectedIndex = 0
     searcher.menu.rebuildDisplay()
@@ -428,7 +472,7 @@ Item {
   }
 
   function setFileFilter(id) {
-    var list = FileSearch.filtersFor(searcher.menu.activeTab, searcher.hasRoots)
+    var list = FileSearch.filtersFor(searcher.menu.activeTab)
     for (var i = 0; i < list.length; i++) {
       if (list[i].id !== id) continue
       if (searcher.menu.activeTab === "folders") searcher.folderFilterIndex = i

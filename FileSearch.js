@@ -125,25 +125,16 @@ var FILE_FILTERS = [
   { id: "images", label: "Images", exts: IMAGES_EXTS, hidden: false },
   { id: "videos", label: "Videos", exts: VIDEOS_EXTS, hidden: false },
   { id: "audio", label: "Audio", exts: AUDIO_EXTS, hidden: false },
-  { id: "code", label: "Code", exts: CODE_EXTS, hidden: false },
-  // Only the search roots (Roots.js): a share or drive the user added.
-  { id: "remotes", label: "Remotes", exts: [], hidden: true, remotesOnly: true }
+  { id: "code", label: "Code", exts: CODE_EXTS, hidden: false }
 ]
 
 var FOLDER_FILTERS = [
   { id: "folders", label: "Folders", exts: [], hidden: false },
-  { id: "systemFolders", label: "System folders", exts: [], hidden: true, systemFolders: true },
-  { id: "remoteFolders", label: "Remotes", exts: [], hidden: true, remotesOnly: true }
+  { id: "systemFolders", label: "System folders", exts: [], hidden: true, systemFolders: true }
 ]
 
-// Each tab's filters; the Remotes one only while there is a root to search.
-// It is last in both lists, so the other filters keep their positions.
-function filtersFor(kind, hasRoots) {
-  var list = kind === "folders" ? FOLDER_FILTERS : FILE_FILTERS
-  if (hasRoots) return list
-  var out = []
-  for (var i = 0; i < list.length; i++) if (!list[i].remotesOnly) out.push(list[i])
-  return out
+function filtersFor(kind) {
+  return kind === "folders" ? FOLDER_FILTERS : FILE_FILTERS
 }
 
 // What All searches with: hidden paths included, because the folder most
@@ -151,8 +142,8 @@ function filtersFor(kind, hasRoots) {
 // under a dot-directory. Ranking still puts the user's own files first.
 var ALL_FILTER = { id: "all", label: "All", exts: [], hidden: true }
 
-function filterAt(kind, index, hasRoots) {
-  var list = filtersFor(kind, hasRoots)
+function filterAt(kind, index) {
+  var list = filtersFor(kind)
   return list[index] || list[0]
 }
 

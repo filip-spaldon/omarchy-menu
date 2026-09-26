@@ -53,12 +53,12 @@ consumers) retain their plain prompt without launcher tabs.
 | Ctrl+C | Copy the path |
 | Ctrl+T | Open a terminal in the folder |
 | Ctrl+F | Cycle the type filter |
+| Ctrl+R | Cycle where to look: everywhere, home, or one search root (with search roots) |
 | Ctrl+S | Cycle the sort order |
 | Ctrl+L | Cycle the displayed result limit |
 
-Files filters: All files, Documents, Images, Videos, Audio, Code and, when
-you added search roots, Remotes. Folders filters: Folders, System folders and
-Remotes. Sort by relevance, newest, oldest,
+Files filters: All files, Documents, Images, Videos, Audio and Code.
+Folders filters: Folders and System folders. Sort by relevance, newest, oldest,
 name A–Z or name Z–A; display limits are 15, 30, 60, 100 and 200.
 
 Search uses `fd`, excludes package caches, virtual environments, Git internals
@@ -97,8 +97,9 @@ and index state, and takes these keys:
 - A root that does not answer within two seconds counts as offline: live
   search skips it, and an indexed root still shows results, marked
   *offline*.
-- Results carry the root's label, e.g. `NAS › Photos/2024`. The **Remotes**
-  filter (Ctrl+F) shows only the roots.
+- Results carry the root's label, e.g. `NAS › Photos/2024`. In Files and
+  Folders a third chip row picks where to look: **Everywhere**, **Home** or
+  one root (click it, or Ctrl+R to cycle). All always searches everywhere.
 
 Roots are stored in `state.json`, so they can also be edited by hand:
 
@@ -176,7 +177,8 @@ Add it to the bar with the bar's widget picker, or put
 - **Right click** opens the launcher, the same as `Super+Space`.
 - **Left click** opens a popup (Settings › Bar button swaps the two clicks,
   saved as `"barLeftClick": "menu"` in `state.json`) with the System actions. Its **Settings** row
-  (Enter or `→`) unfolds every option Omni reads:
+  (Enter or `→`) unfolds the option groups below; each group opens on its own
+(Enter or `→`, `←` closes), one at a time:
   - **Bar button**: which click opens the popup and which the launcher.
   - **Launcher**: apps view, cursor style, cursor blink, cursor in an empty
     field, answers without `/`.

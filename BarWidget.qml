@@ -123,13 +123,38 @@ Panel {
   // actions. `adjust` rows take Left/Right (and the ‹ › arrows), `toggle`
   // rows flip on Enter or click, `move` rows reorder with Left/Right.
 
+  // The groups under Settings, in order. One is open at a time.
+  readonly property var groups: [
+    { id: "bar", label: "Bar button", icon: "󰕮" },
+    { id: "launcher", label: "Launcher", icon: "󰍉" },
+    { id: "tabs", label: "Tabs", icon: "󰓩" },
+    { id: "all", label: "Search in All", icon: "󰈞" },
+    { id: "look", label: "Look", icon: "󰏘" },
+    { id: "ai", label: "AI", icon: "󰚩" },
+    { id: "roots", label: "Search roots", icon: "󰒍" },
+    { id: "zoxide", label: "Zoxide", icon: "󰋚" }
+  ]
+  property string openGroup: ""
+
   readonly property var rows: {
     var out = []
-    function header(text, note) { out.push({ type: "header", text: text, note: note || "" }) }
+    function header(text) { out.push({ type: "header", text: text }) }
+    function note(text) { out.push({ type: "note", text: text }) }
     function row(r) { r.type = "row"; if (r.enabled === undefined) r.enabled = true; out.push(r) }
+    function item(r) { r.indent = true; row(r) }
 
     row({ key: "settings", label: "Settings", icon: "󰒓", value: settingsOpen ? "⌄" : "›" })
-    if (settingsOpen) appendSettings(out, header, row)
+    if (settingsOpen) {
+      for (var g = 0; g < groups.length; g++) {
+        var group = groups[g]
+        var open = openGroup === group.id
+        var count = group.id === "roots" && roots.length > 0 ? roots.length + "  " : ""
+        row({ key: "group:" + group.id, label: group.label, icon: group.icon, group: true,
+              value: count + (open ? "⌄" : "›") })
+        if (open) appendGroup(group.id, note, item)
+      }
+      row({ key: "open:folder", label: "Settings folder", icon: "󰉋", value: "Open" })
+    }
 
     header("SYSTEM")
     for (var e = 0; e < systemEntries.length; e++) {
@@ -140,74 +165,72 @@ Panel {
     return out
   }
 
-  function appendSettings(out, header, row) {
-    header("BAR BUTTON", root.stateValid ? "" : "state.json is not valid JSON")
-    row({ key: "barLeftClick", label: "Left click", value: barLeftClick === "menu" ? "Menu" : "Settings", adjust: true, enabled: stateValid })
-    row({ key: "barRightClick", label: "Right click", value: barLeftClick === "menu" ? "Settings" : "Menu", adjust: true, enabled: stateValid })
-
-    header("LAUNCHER")
-    row({ key: "appsView", label: "Apps view", value: capitalize(appsView), adjust: true, enabled: stateValid })
-    row({ key: "cursorStyle", label: "Cursor", value: capitalize(cursorStyle), adjust: true, enabled: stateValid })
-    row({ key: "cursorBlink", label: "Cursor blink", value: onOff(cursorBlink), toggle: true, enabled: stateValid })
-    row({ key: "cursorWhenEmpty", label: "Cursor in empty field", value: onOff(cursorWhenEmpty), toggle: true, enabled: stateValid })
-    row({ key: "commandsWithoutSlash", label: "Answers without “/”", value: onOff(commandsWithoutSlash), toggle: true, enabled: stateValid })
-
-    header("TABS", "Enter switches on or off, ← → moves")
-    var tabs = Tabs.orderTabs(tabOrder)
-    for (var t = 0; t < tabs.length; t++)
-      row({ key: "tab:" + tabs[t].id, label: tabs[t].label, icon: tabs[t].icon,
-            value: disabledTabs.indexOf(tabs[t].id) >= 0 ? "Off" : "On", toggle: true, move: true, enabled: stateValid })
-
-    header("SEARCH IN ALL", "Enter switches a section on or off, ← → moves")
-    var sections = Tabs.orderSections(sectionOrder)
-    for (var s = 0; s < sections.length; s++) {
-      var tabOff = disabledTabs.indexOf(sections[s].id) >= 0
-      row({ key: "section:" + sections[s].id, label: sections[s].title, icon: tabIcon(sections[s].id),
-            value: tabOff ? "Tab off" : (sectionsOff.indexOf(sections[s].id) >= 0 ? "Off" : "On"),
-            toggle: !tabOff, move: true, enabled: stateValid })
+  function appendGroup(id, note, row) {
+    if (id === "bar") {
+      if (!stateValid) note("state.json is not valid JSON")
+      row({ key: "barLeftClick", label: "Left click", value: barLeftClick === "menu" ? "Menu" : "Settings", adjust: true, enabled: stateValid })
+      row({ key: "barRightClick", label: "Right click", value: barLeftClick === "menu" ? "Settings" : "Menu", adjust: true, enabled: stateValid })
+    } else if (id === "launcher") {
+      if (!stateValid) note("state.json is not valid JSON")
+      row({ key: "appsView", label: "Apps view", value: capitalize(appsView), adjust: true, enabled: stateValid })
+      row({ key: "cursorStyle", label: "Cursor", value: capitalize(cursorStyle), adjust: true, enabled: stateValid })
+      row({ key: "cursorBlink", label: "Cursor blink", value: onOff(cursorBlink), toggle: true, enabled: stateValid })
+      row({ key: "cursorWhenEmpty", label: "Cursor in empty field", value: onOff(cursorWhenEmpty), toggle: true, enabled: stateValid })
+      row({ key: "commandsWithoutSlash", label: "Answers without “/”", value: onOff(commandsWithoutSlash), toggle: true, enabled: stateValid })
+    } else if (id === "tabs") {
+      note("Enter switches on or off, ← → moves")
+      var tabs = Tabs.orderTabs(tabOrder)
+      for (var t = 0; t < tabs.length; t++)
+        row({ key: "tab:" + tabs[t].id, label: tabs[t].label, icon: tabs[t].icon,
+              value: disabledTabs.indexOf(tabs[t].id) >= 0 ? "Off" : "On", toggle: true, move: true, enabled: stateValid })
+    } else if (id === "all") {
+      note("Enter switches a section on or off, ← → moves")
+      var sections = Tabs.orderSections(sectionOrder)
+      for (var s = 0; s < sections.length; s++) {
+        var tabOff = disabledTabs.indexOf(sections[s].id) >= 0
+        row({ key: "section:" + sections[s].id, label: sections[s].title, icon: tabIcon(sections[s].id),
+              value: tabOff ? "Tab off" : (sectionsOff.indexOf(sections[s].id) >= 0 ? "Off" : "On"),
+              toggle: !tabOff, move: true, enabled: stateValid })
+      }
+    } else if (id === "look") {
+      if (!styleValid) note("style.json is not valid JSON")
+      row({ key: "style:fontScale", label: "Text size", value: Settings.styleNumber(sty, "fontScale").toFixed(2) + "×", adjust: true, enabled: styleValid })
+      row({ key: "style:cardWidth", label: "Width", value: String(Math.round(Settings.styleNumber(sty, "cardWidth"))), adjust: true, enabled: styleValid })
+      row({ key: "style:bodyHeight", label: "Results height", value: percent(Settings.styleNumber(sty, "bodyHeight")), adjust: true, enabled: styleValid })
+      row({ key: "style:fixedHeight", label: "Fixed height", value: onOff(fixedHeight), toggle: true, enabled: styleValid })
+      var top = Settings.styleTop(sty)
+      row({ key: "style:top", label: "Distance from top", value: top < 0 ? "Centred" : percent(top), adjust: true, enabled: styleValid })
+      row({ key: "style:pickerHeight", label: "Picker height", value: percent(Settings.styleNumber(sty, "pickerHeight")), adjust: true, enabled: styleValid })
+    } else if (id === "ai") {
+      if (!aiValid) note("ai.json is not valid JSON")
+      row({ key: "ai:agent", label: "Agent", value: aiAgent ? agentLabel(aiAgent) : "None installed", adjust: true,
+            enabled: stateValid && installedAgents.length > 1 })
+      row({ key: "ai:model", label: "Model", field: true, enabled: aiValid && aiAgent !== "" })
+      row({ key: "ai:effort", label: "Effort", value: aiEffort || "CLI default", adjust: true,
+            enabled: aiValid && aiAgent !== "" && (Settings.AGENT_EFFORTS[aiAgent] || [""]).length > 1 })
+    } else if (id === "roots") {
+      note("Mounted folders searched besides your home. Enter on/off · ← → live or index · r reindex · x remove")
+      var now = Date.now()
+      for (var r = 0; r < roots.length; r++) {
+        var rt = roots[r]
+        var status = rootStatus[rt.id]
+        var value = !rt.enabled ? "Off"
+          : indexingRoot === rt.id ? "Indexing…"
+          : Roots.cacheLabel(rt.cacheMinutes)
+        if (removeArmed === rt.id) value = "x again removes"
+        row({ key: "root:" + rt.id, rootId: rt.id, label: rt.label,
+              icon: status && Roots.isNetworkFs(status.fsType) ? "󰒍" : "󰉋",
+              detail: Roots.describe(rt, status, now), value: value, adjust: true, enabled: stateValid })
+      }
+      row({ key: "root:add", label: "Add folder…", icon: "󰐕", value: pickProc.running ? "Choosing…" : "Browse", enabled: stateValid })
+    } else if (id === "zoxide") {
+      note(zoxideInstalled ? "Folders you visit often rank higher" : "zoxide is not installed")
+      row({ key: "zoxide:mode", label: "Ranking",
+            value: zoxideMode === "off" ? "Off" : zoxideMode === "rank" ? "Boost" : "Boost + results",
+            adjust: true, enabled: stateValid && zoxideInstalled })
+      row({ key: "zoxide:add", label: "Learn folders opened here", value: onOff(zoxideAdd), toggle: true,
+            enabled: stateValid && zoxideInstalled && zoxideMode !== "off" })
     }
-
-    header("LOOK", root.styleValid ? "" : "style.json is not valid JSON")
-    row({ key: "style:fontScale", label: "Text size", value: Settings.styleNumber(sty, "fontScale").toFixed(2) + "×", adjust: true, enabled: styleValid })
-    row({ key: "style:cardWidth", label: "Width", value: String(Math.round(Settings.styleNumber(sty, "cardWidth"))), adjust: true, enabled: styleValid })
-    row({ key: "style:bodyHeight", label: "Results height", value: percent(Settings.styleNumber(sty, "bodyHeight")), adjust: true, enabled: styleValid })
-    row({ key: "style:fixedHeight", label: "Fixed height", value: onOff(fixedHeight), toggle: true, enabled: styleValid })
-    var top = Settings.styleTop(sty)
-    row({ key: "style:top", label: "Distance from top", value: top < 0 ? "Centred" : percent(top), adjust: true, enabled: styleValid })
-    row({ key: "style:pickerHeight", label: "Picker height", value: percent(Settings.styleNumber(sty, "pickerHeight")), adjust: true, enabled: styleValid })
-
-    header("AI", root.aiValid ? "" : "ai.json is not valid JSON")
-    row({ key: "ai:agent", label: "Agent", value: aiAgent ? agentLabel(aiAgent) : "None installed", adjust: true,
-          enabled: stateValid && installedAgents.length > 1 })
-    row({ key: "ai:model", label: "Model", field: true, enabled: aiValid && aiAgent !== "" })
-    row({ key: "ai:effort", label: "Effort", value: aiEffort || "CLI default", adjust: true,
-          enabled: aiValid && aiAgent !== "" && (Settings.AGENT_EFFORTS[aiAgent] || [""]).length > 1 })
-
-    header("SEARCH ROOTS", "Folders searched besides your home: a mounted share, drive or disk. "
-      + "Enter on/off · ← → live or index · r reindex · x remove")
-    var now = Date.now()
-    for (var r = 0; r < roots.length; r++) {
-      var rt = roots[r]
-      var status = rootStatus[rt.id]
-      var value = !rt.enabled ? "Off"
-        : indexingRoot === rt.id ? "Indexing…"
-        : Roots.cacheLabel(rt.cacheMinutes)
-      if (removeArmed === rt.id) value = "x again removes"
-      row({ key: "root:" + rt.id, rootId: rt.id, label: rt.label,
-            icon: status && Roots.isNetworkFs(status.fsType) ? "󰒍" : "󰉋",
-            detail: Roots.describe(rt, status, now), value: value, adjust: true, enabled: stateValid })
-    }
-    row({ key: "root:add", label: "Add folder…", icon: "󰐕", value: pickProc.running ? "Choosing…" : "Browse", enabled: stateValid })
-
-    header("ZOXIDE", zoxideInstalled ? "Folders you visit often rank higher" : "zoxide is not installed")
-    row({ key: "zoxide:mode", label: "Ranking",
-          value: zoxideMode === "off" ? "Off" : zoxideMode === "rank" ? "Boost" : "Boost + results",
-          adjust: true, enabled: stateValid && zoxideInstalled })
-    row({ key: "zoxide:add", label: "Learn folders opened here", value: onOff(zoxideAdd), toggle: true,
-          enabled: stateValid && zoxideInstalled && zoxideMode !== "off" })
-
-    header("FILES")
-    row({ key: "open:folder", label: "Settings folder", icon: "󰉋", value: "Open" })
   }
 
   function selectable(index) {
@@ -215,21 +238,21 @@ Panel {
     return !!r && r.type === "row" && r.enabled
   }
 
+  // Up and Down stop at the ends instead of wrapping around.
   function moveCursor(dy) {
-    var n = rows.length
-    if (n === 0) return
     var i = cursor
-    for (var step = 0; step < n; step++) {
-      i = (i + dy + n) % n
-      if (i < 0) i = dy > 0 ? 0 : n - 1
+    while (true) {
+      i += dy
+      if (i < 0 || i >= rows.length) return
       if (selectable(i)) { cursor = i; return }
     }
   }
 
+  // The nearest selectable row at or above `index`, else below it.
   function firstSelectableFrom(index) {
-    if (selectable(index)) return
-    cursor = Math.max(-1, index - 1)
-    moveCursor(1)
+    var i = Math.min(index, rows.length - 1)
+    for (; i >= 0; i--) if (selectable(i)) { cursor = i; return }
+    firstSelectable()
   }
 
   function firstSelectable() {
@@ -245,6 +268,7 @@ Panel {
     if (!r || !r.enabled) return
     var key = r.key
     if (key === "settings") { if (settingsOpen !== direction > 0) activate(r); return }
+    if (r.group) { if ((openGroup === key.slice(6)) !== direction > 0) activate(r); return }
     if (r.move) {
       var id = key.slice(key.indexOf(":") + 1)
       if (key.indexOf("tab:") === 0) setState("tabOrder", Settings.moveInOrder(tabOrder, id, direction))
@@ -278,7 +302,12 @@ Panel {
     var key = r.key
     if (key === "settings") {
       settingsOpen = !settingsOpen
+      openGroup = ""
       followRow("settings")
+    } else if (r.group) {
+      var group = key.slice(6)
+      openGroup = openGroup === group ? "" : group
+      followRow(key)
     } else if (key === "cursorBlink") setState("cursorBlink", !cursorBlink)
     else if (key === "cursorWhenEmpty") setState("cursorWhenEmpty", !cursorWhenEmpty)
     else if (key === "commandsWithoutSlash") setState("commandsWithoutSlash", !commandsWithoutSlash)
@@ -471,6 +500,7 @@ Panel {
     removeArmed = ""
     modelEditing = false
     settingsOpen = false
+    openGroup = ""
     Qt.callLater(function() {
       root.firstSelectable()
       flick.contentY = 0
@@ -685,16 +715,21 @@ Panel {
             }
           }
 
+          // Delegates are kept across changes (the model is only the row
+          // count, each reads its row by index): recreating them all on every
+          // edit would re-trigger the hover under a resting pointer and throw
+          // the cursor to wherever the mouse happens to be.
           Repeater {
             id: rowRepeater
-            model: root.rows
+            model: root.rows.length
 
             delegate: Loader {
               id: rowLoader
-              required property var modelData
               required property int index
+              readonly property var modelData: root.rows[index] || ({ type: "note", text: "" })
               width: content.width
-              sourceComponent: modelData.type === "header" ? headerComponent : rowComponent
+              sourceComponent: modelData.type === "header" ? headerComponent
+                : modelData.type === "note" ? noteComponent : rowComponent
 
               Component {
                 id: headerComponent
@@ -710,16 +745,23 @@ Panel {
                     foreground: root.foreground
                     fontFamily: root.fontFamily
                   }
+                }
+              }
 
-                  Text {
-                    visible: rowLoader.modelData.note !== ""
-                    width: parent.width
-                    text: rowLoader.modelData.note
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    wrapMode: Text.WordWrap
-                  }
+              Component {
+                id: noteComponent
+                Text {
+                  width: content.width
+                  leftPadding: Style.spacing.rowPaddingX + Style.space(14)
+                  rightPadding: Style.spacing.rowPaddingX
+                  topPadding: Style.space(2)
+                  bottomPadding: Style.space(2)
+                  text: rowLoader.modelData.text
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
                 }
               }
 
@@ -751,13 +793,18 @@ Panel {
       enabled: optionRow.row.enabled
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onEntered: root.cursor = optionRow.rowIndex
-      onClicked: root.activate(optionRow.row)
+      // Only a pointer that moves takes the cursor: a row sliding under a
+      // resting pointer (a group opening above it) does not.
+      onPositionChanged: if (root.cursor !== optionRow.rowIndex) root.cursor = optionRow.rowIndex
+      onClicked: {
+        root.cursor = optionRow.rowIndex
+        root.activate(optionRow.row)
+      }
     }
 
     RowLayout {
       anchors.fill: parent
-      anchors.leftMargin: Style.spacing.rowPaddingX
+      anchors.leftMargin: Style.spacing.rowPaddingX + (optionRow.row.indent ? Style.space(14) : 0)
       anchors.rightMargin: Style.spacing.rowPaddingX
       spacing: Style.space(8)
 
@@ -869,8 +916,11 @@ Panel {
       enabled: arrow.row.enabled
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onEntered: root.cursor = arrow.rowIndex
-      onClicked: root.adjust(arrow.row, arrow.direction)
+      onPositionChanged: if (root.cursor !== arrow.rowIndex) root.cursor = arrow.rowIndex
+      onClicked: {
+        root.cursor = arrow.rowIndex
+        root.adjust(arrow.row, arrow.direction)
+      }
     }
   }
 }
