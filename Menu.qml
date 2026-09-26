@@ -1798,7 +1798,7 @@ Item {
     applySerial = requestSerial
     opened = false
     filterText = ""
-    windowCtl.focus(address)
+    windowCtl.focusWindow(address)
   }
 
   // SIGTERM rather than SIGKILL: the point is to close something that has

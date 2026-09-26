@@ -477,6 +477,16 @@ eq(Windows.focusCommand("0xa2"), ["bash", "-c", Windows.focusCommand("0xa2")[2],
 eq(Windows.focusCommand("0xa2; rm -rf ~"), null, "anything but an address is refused")
 eq(Windows.focusCommand(""), null, "an empty address is refused")
 
+// A controller method named like a built-in Item property (focus, visible,
+// enabled, ...) is shadowed by the property, and calling it throws.
+{
+  const fs = require("fs")
+  const controller = fs.readFileSync(path.join(root, "WindowsController.qml"), "utf8")
+  const itemProps = ["focus", "visible", "enabled", "opacity", "state", "clip", "children", "data", "parent", "x", "y", "width", "height", "z"]
+  const clashes = (controller.match(/^\s*function (\w+)\(/gm) || []).map(m => m.trim().slice(9, -1)).filter(n => itemProps.includes(n))
+  eq(clashes, [], "WindowsController methods do not shadow Item properties")
+}
+
 console.log("")
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

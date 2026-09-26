@@ -61,7 +61,8 @@ Item {
     return Windows.windowRows(windows.list, query, windows.appInfo)
   }
 
-  function focus(address) {
+  // Not `focus`: every Item already has a `focus` property, which wins.
+  function focusWindow(address) {
     var command = Windows.focusCommand(address)
     if (command) Quickshell.execDetached(command)
   }
