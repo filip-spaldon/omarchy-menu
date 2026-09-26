@@ -298,6 +298,20 @@ Panel {
     else if (key === "ai:effort") setAgentEntry("efforts", Settings.cycle(Settings.AGENT_EFFORTS[aiAgent] || [""], aiEffort, direction))
   }
 
+  // Hover takes the cursor only when the pointer itself moved on screen. Qt
+  // also reports a move when rows slide under a resting pointer (a group
+  // opening, the list scrolling to follow the keyboard); in scene
+  // coordinates that pointer has not moved, and the cursor stays where the
+  // keys put it.
+  property point lastPointer: Qt.point(-1, -1)
+
+  function pointerMoved(item, mouse, index) {
+    var p = item.mapToItem(null, mouse.x, mouse.y)
+    if (Math.abs(p.x - lastPointer.x) < 1 && Math.abs(p.y - lastPointer.y) < 1) return
+    lastPointer = p
+    if (cursor !== index) cursor = index
+  }
+
   // A click elsewhere ends an edit of the model field: otherwise the field
   // keeps the keyboard (hidden, once its group closes) and the arrows stop
   // moving the cursor.
@@ -804,7 +818,7 @@ Panel {
       cursorShape: Qt.PointingHandCursor
       // Only a pointer that moves takes the cursor: a row sliding under a
       // resting pointer (a group opening above it) does not.
-      onPositionChanged: if (root.cursor !== optionRow.rowIndex) root.cursor = optionRow.rowIndex
+      onPositionChanged: function(mouse) { root.pointerMoved(optionRow, mouse, optionRow.rowIndex) }
       onClicked: {
         root.cursor = optionRow.rowIndex
         root.activate(optionRow.row)
@@ -931,7 +945,7 @@ Panel {
       enabled: arrow.row.enabled
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onPositionChanged: if (root.cursor !== arrow.rowIndex) root.cursor = arrow.rowIndex
+      onPositionChanged: function(mouse) { root.pointerMoved(arrowMouse, mouse, arrow.rowIndex) }
       onClicked: {
         root.cursor = arrow.rowIndex
         root.adjust(arrow.row, arrow.direction)
