@@ -123,7 +123,7 @@ Panel {
   // actions. `adjust` rows take Left/Right (and the ‹ › arrows), `toggle`
   // rows flip on Enter or click, `move` rows reorder with Left/Right.
 
-  // The groups under Settings, in order. One is open at a time.
+  // The groups under Settings, in order. Any number can be open at once.
   readonly property var groups: [
     { id: "bar", label: "Bar button", icon: "󰕮" },
     { id: "launcher", label: "Launcher", icon: "󰍉" },
@@ -134,7 +134,7 @@ Panel {
     { id: "roots", label: "Search roots", icon: "󰒍" },
     { id: "zoxide", label: "Zoxide", icon: "󰋚" }
   ]
-  property string openGroup: ""
+  property var openGroups: []
 
   readonly property var rows: {
     var out = []
@@ -147,7 +147,7 @@ Panel {
     if (settingsOpen) {
       for (var g = 0; g < groups.length; g++) {
         var group = groups[g]
-        var open = openGroup === group.id
+        var open = openGroups.indexOf(group.id) >= 0
         var count = group.id === "roots" && roots.length > 0 ? roots.length + "  " : ""
         row({ key: "group:" + group.id, label: group.label, icon: group.icon, group: true,
               value: count + (open ? "⌄" : "›") })
@@ -269,7 +269,7 @@ Panel {
     if (!r || !r.enabled) return
     var key = r.key
     if (key === "settings") { if (settingsOpen !== direction > 0) activate(r); return }
-    if (r.group) { if ((openGroup === key.slice(6)) !== direction > 0) activate(r); return }
+    if (r.group) { if ((openGroups.indexOf(key.slice(6)) >= 0) !== direction > 0) activate(r); return }
     if (r.move) {
       var id = key.slice(key.indexOf(":") + 1)
       if (key.indexOf("tab:") === 0) setState("tabOrder", Settings.moveInOrder(tabOrder, id, direction))
@@ -325,11 +325,10 @@ Panel {
     var key = r.key
     if (key === "settings") {
       settingsOpen = !settingsOpen
-      openGroup = ""
       followRow("settings")
     } else if (r.group) {
       var group = key.slice(6)
-      openGroup = openGroup === group ? "" : group
+      openGroups = Settings.toggleListed(openGroups, group)
       followRow(key)
     } else if (key === "cursorBlink") setState("cursorBlink", !cursorBlink)
     else if (key === "cursorWhenEmpty") setState("cursorWhenEmpty", !cursorWhenEmpty)
@@ -523,7 +522,7 @@ Panel {
     removeArmed = ""
     modelEditing = false
     settingsOpen = false
-    openGroup = ""
+    openGroups = []
     Qt.callLater(function() {
       root.firstSelectable()
       flick.contentY = 0
@@ -806,7 +805,7 @@ Panel {
     required property int rowIndex
 
     width: content.width
-    implicitHeight: (optionRow.row.detail || "") !== "" ? Style.space(46) : Style.space(30)
+    implicitHeight: Math.max(Style.space(30), labelColumn.implicitHeight + Style.space(10))
     foreground: root.foreground
     hasCursor: root.cursor === rowIndex && !modelField.activeFocus
     opacity: row.enabled ? 1 : 0.5
@@ -843,6 +842,7 @@ Panel {
       }
 
       Column {
+        id: labelColumn
         Layout.fillWidth: !optionRow.row.field
         Layout.alignment: Qt.AlignVCenter
         spacing: Style.space(1)
@@ -866,7 +866,8 @@ Panel {
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          elide: Text.ElideMiddle
+          // Several lines, and a long path wraps rather than losing its middle.
+          wrapMode: Text.WrapAtWordBoundaryOrAnywhere
         }
       }
 

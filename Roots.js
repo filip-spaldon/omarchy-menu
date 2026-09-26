@@ -359,22 +359,23 @@ function formatCount(n) {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")
 }
 
-// One line about a root for the settings popup: where it lives, whether it
-// answers, free space, and the index.
+// A root for the settings popup, one fact per line: where it lives; its
+// file system, source and free space (or that it is offline); the index.
 function describe(root, status, nowMs) {
-  var parts = [root.path]
-  if (!status) return parts.concat(["checking…"]).join(" · ")
-  if (!status.online) parts.push("offline")
+  var lines = [root.path]
+  if (!status) return lines.concat(["checking…"]).join("\n")
+  if (!status.online) lines.push("offline")
   else {
-    var where = status.source && status.source !== status.fsType ? status.fsType + " " + status.source : status.fsType
-    if (where) parts.push(where)
+    var where = status.source && status.source !== status.fsType ? status.fsType + " · " + status.source : status.fsType
+    var parts = where ? [where] : []
     if (status.freeBytes >= 0) parts.push(formatBytes(status.freeBytes) + " free")
+    if (parts.length) lines.push(parts.join(" · "))
   }
   if (root.cacheMinutes > 0) {
-    if (status.indexedAt > 0) parts.push(formatCount(status.indexCount) + " paths, indexed " + formatAge(status.indexedAt, nowMs))
-    else parts.push("not indexed yet")
+    if (status.indexedAt > 0) lines.push(formatCount(status.indexCount) + " paths, indexed " + formatAge(status.indexedAt, nowMs))
+    else lines.push("not indexed yet")
   }
-  return parts.join(" · ")
+  return lines.join("\n")
 }
 
 // Whether a root's index is due: missing, or older than its cache time.

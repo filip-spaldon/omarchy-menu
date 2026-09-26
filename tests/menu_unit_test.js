@@ -340,8 +340,8 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   eq(st.r0000000b.online, false, "offline status parsed")
   eq(Object.keys(st).length, 2, "malformed status lines are ignored")
   eq(Roots.describe({ path: "/mnt/n", cacheMinutes: 60 }, st.r0000000a, 1790000000000 + 5 * 60000),
-     "/mnt/n · nfs nas:/export · 1.0 MB free · 1 234 paths, indexed 5 min ago", "a root is described")
-  eq(Roots.describe({ path: "/mnt/n", cacheMinutes: 0 }, st.r0000000b), "/mnt/n · offline", "an offline root says so")
+     "/mnt/n\nnfs · nas:/export · 1.0 MB free\n1 234 paths, indexed 5 min ago", "a root is described, one fact per line")
+  eq(Roots.describe({ path: "/mnt/n", cacheMinutes: 0 }, st.r0000000b), "/mnt/n\noffline", "an offline root says so")
   eq(Roots.parsePicked("/mnt/a\tcifs\0/mnt/b c\t-\0"), [{ path: "/mnt/a", fsType: "cifs" }, { path: "/mnt/b c", fsType: "" }], "picker output parsed")
 }
 

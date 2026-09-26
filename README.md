@@ -178,7 +178,7 @@ Add it to the bar with the bar's widget picker, or put
 - **Left click** opens a popup (Settings › Bar button swaps the two clicks,
   saved as `"barLeftClick": "menu"` in `state.json`) with the System actions. Its **Settings** row
   (Enter or `→`) unfolds the option groups below; each group opens on its own
-(Enter or `→`, `←` closes), one at a time:
+(Enter or `→`, `←` closes), and several can be open at once:
   - **Bar button**: which click opens the popup and which the launcher.
   - **Launcher**: apps view, cursor style, cursor blink, cursor in an empty
     field, answers without `/`.
