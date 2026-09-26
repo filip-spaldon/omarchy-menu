@@ -5,6 +5,8 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Settings.js" as Settings
+import "Roots.js" as Roots
+import "FileSearch.js" as FileSearch
 import "Tabs.js" as Tabs
 import "MenuModel.js" as MenuModel
 import "ai/AiAdapters.js" as AiAdapters
@@ -30,6 +32,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property string homeDir: Quickshell.env("HOME")
+  readonly property string cacheHome: Quickshell.env("XDG_CACHE_HOME") || (homeDir + "/.cache")
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (homeDir + "/.local/state")) + "/omarchy-menu-omni"
   readonly property string statePath: stateDir + "/state.json"
   readonly property string stylePath: stateDir + "/style.json"
@@ -47,6 +50,13 @@ Panel {
   property var systemEntries: []
   property var whenResults: ({})
   property var installedAgents: []
+  property bool zoxideInstalled: false
+  // Roots.parseStatus of the last check, and the root whose removal waits
+  // for a second press.
+  property var rootStatus: ({})
+  property string removeArmed: ""
+  property string indexingRoot: ""
+  property var indexQueue: []
 
   property int cursor: -1
   // The options fold away behind one row; the System actions stay open.
@@ -73,6 +83,9 @@ Panel {
   readonly property bool commandsWithoutSlash: typeof st.commandsWithoutSlash === "boolean" ? st.commandsWithoutSlash : true
   // Which click opens the popup; the other opens the launcher.
   readonly property string barLeftClick: Settings.BAR_CLICKS.indexOf(st.barLeftClick) >= 0 ? st.barLeftClick : "settings"
+  readonly property var roots: Roots.normalizeRoots(st.searchRoots, homeDir)
+  readonly property string zoxideMode: Settings.ZOXIDE_MODES.indexOf(st.zoxide) >= 0 ? st.zoxide : "rank"
+  readonly property bool zoxideAdd: typeof st.zoxideAdd === "boolean" ? st.zoxideAdd : true
   readonly property bool fixedHeight: typeof sty.fixedHeight === "boolean" ? sty.fixedHeight : Settings.STYLE_DEFAULTS.fixedHeight
 
   // The agent the launcher starts on: the remembered pick, else ai.json's
@@ -110,13 +123,38 @@ Panel {
   // actions. `adjust` rows take Left/Right (and the ‹ › arrows), `toggle`
   // rows flip on Enter or click, `move` rows reorder with Left/Right.
 
+  // The groups under Settings, in order. Any number can be open at once.
+  readonly property var groups: [
+    { id: "bar", label: "Bar button", icon: "󰕮" },
+    { id: "launcher", label: "Launcher", icon: "󰍉" },
+    { id: "tabs", label: "Tabs", icon: "󰓩" },
+    { id: "all", label: "Search in All", icon: "󰈞" },
+    { id: "look", label: "Look", icon: "󰏘" },
+    { id: "ai", label: "AI", icon: "󰚩" },
+    { id: "roots", label: "Search roots", icon: "󰒍" },
+    { id: "zoxide", label: "Zoxide", icon: "󰋚" }
+  ]
+  property var openGroups: []
+
   readonly property var rows: {
     var out = []
-    function header(text, note) { out.push({ type: "header", text: text, note: note || "" }) }
+    function header(text) { out.push({ type: "header", text: text }) }
+    function note(text) { out.push({ type: "note", text: text }) }
     function row(r) { r.type = "row"; if (r.enabled === undefined) r.enabled = true; out.push(r) }
+    function item(r) { r.indent = true; row(r) }
 
     row({ key: "settings", label: "Settings", icon: "󰒓", value: settingsOpen ? "⌄" : "›" })
-    if (settingsOpen) appendSettings(out, header, row)
+    if (settingsOpen) {
+      for (var g = 0; g < groups.length; g++) {
+        var group = groups[g]
+        var open = openGroups.indexOf(group.id) >= 0
+        var count = group.id === "roots" && roots.length > 0 ? roots.length + "  " : ""
+        row({ key: "group:" + group.id, label: group.label, icon: group.icon, group: true,
+              value: count + (open ? "⌄" : "›") })
+        if (open) appendGroup(group.id, note, item)
+      }
+      row({ key: "open:folder", label: "Settings folder", icon: "󰉋", value: "Open" })
+    }
 
     header("SYSTEM")
     for (var e = 0; e < systemEntries.length; e++) {
@@ -127,51 +165,72 @@ Panel {
     return out
   }
 
-  function appendSettings(out, header, row) {
-    header("BAR BUTTON", root.stateValid ? "" : "state.json is not valid JSON")
-    row({ key: "barLeftClick", label: "Left click", value: barLeftClick === "menu" ? "Menu" : "Settings", adjust: true, enabled: stateValid })
-    row({ key: "barRightClick", label: "Right click", value: barLeftClick === "menu" ? "Settings" : "Menu", adjust: true, enabled: stateValid })
-
-    header("LAUNCHER")
-    row({ key: "appsView", label: "Apps view", value: capitalize(appsView), adjust: true, enabled: stateValid })
-    row({ key: "cursorStyle", label: "Cursor", value: capitalize(cursorStyle), adjust: true, enabled: stateValid })
-    row({ key: "cursorBlink", label: "Cursor blink", value: onOff(cursorBlink), toggle: true, enabled: stateValid })
-    row({ key: "cursorWhenEmpty", label: "Cursor in empty field", value: onOff(cursorWhenEmpty), toggle: true, enabled: stateValid })
-    row({ key: "commandsWithoutSlash", label: "Answers without “/”", value: onOff(commandsWithoutSlash), toggle: true, enabled: stateValid })
-
-    header("TABS", "Enter switches on or off, ← → moves")
-    var tabs = Tabs.orderTabs(tabOrder)
-    for (var t = 0; t < tabs.length; t++)
-      row({ key: "tab:" + tabs[t].id, label: tabs[t].label, icon: tabs[t].icon,
-            value: disabledTabs.indexOf(tabs[t].id) >= 0 ? "Off" : "On", toggle: true, move: true, enabled: stateValid })
-
-    header("SEARCH IN ALL", "Enter switches a section on or off, ← → moves")
-    var sections = Tabs.orderSections(sectionOrder)
-    for (var s = 0; s < sections.length; s++) {
-      var tabOff = disabledTabs.indexOf(sections[s].id) >= 0
-      row({ key: "section:" + sections[s].id, label: sections[s].title, icon: tabIcon(sections[s].id),
-            value: tabOff ? "Tab off" : (sectionsOff.indexOf(sections[s].id) >= 0 ? "Off" : "On"),
-            toggle: !tabOff, move: true, enabled: stateValid })
+  function appendGroup(id, note, row) {
+    if (id === "bar") {
+      if (!stateValid) note("state.json is not valid JSON")
+      row({ key: "barLeftClick", label: "Left click", value: barLeftClick === "menu" ? "Menu" : "Settings", adjust: true, enabled: stateValid })
+      row({ key: "barRightClick", label: "Right click", value: barLeftClick === "menu" ? "Settings" : "Menu", adjust: true, enabled: stateValid })
+    } else if (id === "launcher") {
+      if (!stateValid) note("state.json is not valid JSON")
+      row({ key: "appsView", label: "Apps view", value: capitalize(appsView), adjust: true, enabled: stateValid })
+      row({ key: "cursorStyle", label: "Cursor", value: capitalize(cursorStyle), adjust: true, enabled: stateValid })
+      row({ key: "cursorBlink", label: "Cursor blink", value: onOff(cursorBlink), toggle: true, enabled: stateValid })
+      row({ key: "cursorWhenEmpty", label: "Cursor in empty field", value: onOff(cursorWhenEmpty), toggle: true, enabled: stateValid })
+      row({ key: "commandsWithoutSlash", label: "Answers without “/”", value: onOff(commandsWithoutSlash), toggle: true, enabled: stateValid })
+    } else if (id === "tabs") {
+      note("Enter switches on or off, ← → moves")
+      var tabs = Tabs.orderTabs(tabOrder)
+      for (var t = 0; t < tabs.length; t++)
+        row({ key: "tab:" + tabs[t].id, label: tabs[t].label, icon: tabs[t].icon,
+              value: disabledTabs.indexOf(tabs[t].id) >= 0 ? "Off" : "On", toggle: true, move: true, enabled: stateValid })
+    } else if (id === "all") {
+      note("Enter switches a section on or off, ← → moves")
+      var sections = Tabs.orderSections(sectionOrder)
+      for (var s = 0; s < sections.length; s++) {
+        var tabOff = disabledTabs.indexOf(sections[s].id) >= 0
+        row({ key: "section:" + sections[s].id, label: sections[s].title, icon: tabIcon(sections[s].id),
+              value: tabOff ? "Tab off" : (sectionsOff.indexOf(sections[s].id) >= 0 ? "Off" : "On"),
+              toggle: !tabOff, move: true, enabled: stateValid })
+      }
+    } else if (id === "look") {
+      if (!styleValid) note("style.json is not valid JSON")
+      row({ key: "style:fontScale", label: "Text size", value: Settings.styleNumber(sty, "fontScale").toFixed(2) + "×", adjust: true, enabled: styleValid })
+      row({ key: "style:cardWidth", label: "Width", value: String(Math.round(Settings.styleNumber(sty, "cardWidth"))), adjust: true, enabled: styleValid })
+      row({ key: "style:bodyHeight", label: "Results height", value: percent(Settings.styleNumber(sty, "bodyHeight")), adjust: true, enabled: styleValid })
+      row({ key: "style:fixedHeight", label: "Fixed height", value: onOff(fixedHeight), toggle: true, enabled: styleValid })
+      var top = Settings.styleTop(sty)
+      row({ key: "style:top", label: "Distance from top", value: top < 0 ? "Centred" : percent(top), adjust: true, enabled: styleValid })
+      row({ key: "style:pickerHeight", label: "Picker height", value: percent(Settings.styleNumber(sty, "pickerHeight")), adjust: true, enabled: styleValid })
+    } else if (id === "ai") {
+      if (!aiValid) note("ai.json is not valid JSON")
+      row({ key: "ai:agent", label: "Agent", value: aiAgent ? agentLabel(aiAgent) : "None installed", adjust: true,
+            enabled: stateValid && installedAgents.length > 1 })
+      row({ key: "ai:model", label: "Model", field: true, enabled: aiValid && aiAgent !== "" })
+      row({ key: "ai:effort", label: "Effort", value: aiEffort || "CLI default", adjust: true,
+            enabled: aiValid && aiAgent !== "" && (Settings.AGENT_EFFORTS[aiAgent] || [""]).length > 1 })
+    } else if (id === "roots") {
+      note("Mounted folders searched besides your home. Enter on/off · ← → live or index · r reindex · x remove")
+      var now = Date.now()
+      for (var r = 0; r < roots.length; r++) {
+        var rt = roots[r]
+        var status = rootStatus[rt.id]
+        var value = !rt.enabled ? "Off"
+          : indexingRoot === rt.id ? "Indexing…"
+          : Roots.cacheLabel(rt.cacheMinutes)
+        if (removeArmed === rt.id) value = "x again removes"
+        row({ key: "root:" + rt.id, rootId: rt.id, label: rt.label,
+              icon: status && Roots.isNetworkFs(status.fsType) ? "󰒍" : "󰉋",
+              detail: Roots.describe(rt, status, now), value: value, adjust: true, enabled: stateValid })
+      }
+      row({ key: "root:add", label: "Add folder…", icon: "󰐕", value: pickProc.running ? "Choosing…" : "Browse", enabled: stateValid })
+    } else if (id === "zoxide") {
+      note(zoxideInstalled ? "Folders you visit often rank higher" : "zoxide is not installed")
+      row({ key: "zoxide:mode", label: "Ranking",
+            value: zoxideMode === "off" ? "Off" : zoxideMode === "rank" ? "Boost" : "Boost + results",
+            adjust: true, enabled: stateValid && zoxideInstalled })
+      row({ key: "zoxide:add", label: "Learn folders opened here", value: onOff(zoxideAdd), toggle: true,
+            enabled: stateValid && zoxideInstalled && zoxideMode !== "off" })
     }
-
-    header("LOOK", root.styleValid ? "" : "style.json is not valid JSON")
-    row({ key: "style:fontScale", label: "Text size", value: Settings.styleNumber(sty, "fontScale").toFixed(2) + "×", adjust: true, enabled: styleValid })
-    row({ key: "style:cardWidth", label: "Width", value: String(Math.round(Settings.styleNumber(sty, "cardWidth"))), adjust: true, enabled: styleValid })
-    row({ key: "style:bodyHeight", label: "Results height", value: percent(Settings.styleNumber(sty, "bodyHeight")), adjust: true, enabled: styleValid })
-    row({ key: "style:fixedHeight", label: "Fixed height", value: onOff(fixedHeight), toggle: true, enabled: styleValid })
-    var top = Settings.styleTop(sty)
-    row({ key: "style:top", label: "Distance from top", value: top < 0 ? "Centred" : percent(top), adjust: true, enabled: styleValid })
-    row({ key: "style:pickerHeight", label: "Picker height", value: percent(Settings.styleNumber(sty, "pickerHeight")), adjust: true, enabled: styleValid })
-
-    header("AI", root.aiValid ? "" : "ai.json is not valid JSON")
-    row({ key: "ai:agent", label: "Agent", value: aiAgent ? agentLabel(aiAgent) : "None installed", adjust: true,
-          enabled: stateValid && installedAgents.length > 1 })
-    row({ key: "ai:model", label: "Model", field: true, enabled: aiValid && aiAgent !== "" })
-    row({ key: "ai:effort", label: "Effort", value: aiEffort || "CLI default", adjust: true,
-          enabled: aiValid && aiAgent !== "" && (Settings.AGENT_EFFORTS[aiAgent] || [""]).length > 1 })
-
-    header("FILES")
-    row({ key: "open:folder", label: "Settings folder", icon: "󰉋", value: "Open" })
   }
 
   function selectable(index) {
@@ -179,15 +238,21 @@ Panel {
     return !!r && r.type === "row" && r.enabled
   }
 
+  // Up and Down stop at the ends instead of wrapping around.
   function moveCursor(dy) {
-    var n = rows.length
-    if (n === 0) return
     var i = cursor
-    for (var step = 0; step < n; step++) {
-      i = (i + dy + n) % n
-      if (i < 0) i = dy > 0 ? 0 : n - 1
+    while (true) {
+      i += dy
+      if (i < 0 || i >= rows.length) return
       if (selectable(i)) { cursor = i; return }
     }
+  }
+
+  // The nearest selectable row at or above `index`, else below it.
+  function firstSelectableFrom(index) {
+    var i = Math.min(index, rows.length - 1)
+    for (; i >= 0; i--) if (selectable(i)) { cursor = i; return }
+    firstSelectable()
   }
 
   function firstSelectable() {
@@ -200,9 +265,11 @@ Panel {
   // ---------------------------------------------------------------- actions --
 
   function adjust(r, direction) {
+    endFieldEdit()
     if (!r || !r.enabled) return
     var key = r.key
     if (key === "settings") { if (settingsOpen !== direction > 0) activate(r); return }
+    if (r.group) { if ((openGroups.indexOf(key.slice(6)) >= 0) !== direction > 0) activate(r); return }
     if (r.move) {
       var id = key.slice(key.indexOf(":") + 1)
       if (key.indexOf("tab:") === 0) setState("tabOrder", Settings.moveInOrder(tabOrder, id, direction))
@@ -212,6 +279,11 @@ Panel {
     }
     if (r.toggle) { activate(r); return }
     if (!r.adjust) return
+    if (key.indexOf("root:") === 0 && r.rootId) {
+      updateRoot(r.rootId, function(x) { x.cacheMinutes = Roots.nextCache(x.cacheMinutes, direction); return x })
+      return
+    }
+    if (key === "zoxide:mode") { setState("zoxide", Settings.cycle(Settings.ZOXIDE_MODES, zoxideMode, direction)); return }
     if (key === "barLeftClick" || key === "barRightClick")
       setState("barLeftClick", Settings.cycle(Settings.BAR_CLICKS, barLeftClick, direction))
     else if (key === "appsView") setState("appsView", Settings.cycle(Settings.APPS_VIEWS, appsView, direction))
@@ -226,16 +298,46 @@ Panel {
     else if (key === "ai:effort") setAgentEntry("efforts", Settings.cycle(Settings.AGENT_EFFORTS[aiAgent] || [""], aiEffort, direction))
   }
 
+  // Hover takes the cursor only when the pointer itself moved on screen. Qt
+  // also reports a move when rows slide under a resting pointer (a group
+  // opening, the list scrolling to follow the keyboard); in scene
+  // coordinates that pointer has not moved, and the cursor stays where the
+  // keys put it.
+  property point lastPointer: Qt.point(-1, -1)
+
+  function pointerMoved(item, mouse, index) {
+    var p = item.mapToItem(null, mouse.x, mouse.y)
+    if (Math.abs(p.x - lastPointer.x) < 1 && Math.abs(p.y - lastPointer.y) < 1) return
+    lastPointer = p
+    if (cursor !== index) cursor = index
+  }
+
+  // A click elsewhere ends an edit of the model field: otherwise the field
+  // keeps the keyboard (hidden, once its group closes) and the arrows stop
+  // moving the cursor.
+  function endFieldEdit() {
+    if (modelEditing) keyCatcher.forceActiveFocus()
+  }
+
   function activate(r) {
+    endFieldEdit()
     if (!r || !r.enabled) return
     var key = r.key
     if (key === "settings") {
       settingsOpen = !settingsOpen
       followRow("settings")
+    } else if (r.group) {
+      var group = key.slice(6)
+      openGroups = Settings.toggleListed(openGroups, group)
+      followRow(key)
     } else if (key === "cursorBlink") setState("cursorBlink", !cursorBlink)
     else if (key === "cursorWhenEmpty") setState("cursorWhenEmpty", !cursorWhenEmpty)
     else if (key === "commandsWithoutSlash") setState("commandsWithoutSlash", !commandsWithoutSlash)
     else if (key === "style:fixedHeight") setStyle("fixedHeight", !fixedHeight)
+    else if (key === "zoxide:add") setState("zoxideAdd", !zoxideAdd)
+    else if (key === "root:add") pickFolders()
+    else if (key.indexOf("root:") === 0 && r.rootId)
+      updateRoot(r.rootId, function(x) { x.enabled = !x.enabled; return x })
     else if (key.indexOf("section:") === 0) {
       if (r.toggle) setState("allSectionsOff", Settings.toggleListed(sectionsOff, key.slice(8)))
     } else if (key.indexOf("tab:") === 0)
@@ -248,6 +350,86 @@ Panel {
       close()
       Util.execDetached(r.action)
     } else if (r.adjust) adjust(r, 1)
+  }
+
+  // ---------------------------------------------------------------- roots --
+
+  function updateRoot(id, change) {
+    removeArmed = ""
+    setState("searchRoots", Roots.updateRoot(st.searchRoots, homeDir, id, change))
+    Qt.callLater(refreshRootStatus)
+  }
+
+  // x on a root: the first press arms, the second removes (and deletes its
+  // index). Anything else in between disarms.
+  function removeRoot(r) {
+    if (!r || !r.rootId || !r.enabled) return
+    if (removeArmed !== r.rootId) { removeArmed = r.rootId; return }
+    var id = r.rootId
+    removeArmed = ""
+    setState("searchRoots", Roots.updateRoot(st.searchRoots, homeDir, id, function() { return null }))
+    Quickshell.execDetached(["rm", "-f", "--", Roots.indexPath(cacheHome, id), Roots.indexPath(cacheHome, id) + ".lock"])
+    Qt.callLater(function() { root.firstSelectableFrom(root.cursor) })
+  }
+
+  function reindexRoot(r) {
+    if (!r || !r.rootId) return
+    var target = null
+    for (var i = 0; i < roots.length; i++) if (roots[i].id === r.rootId) target = roots[i]
+    if (!target || !target.enabled || target.cacheMinutes <= 0) return
+    if (indexQueue.indexOf(target.id) < 0 && indexingRoot !== target.id) indexQueue = indexQueue.concat([target.id])
+    runIndexQueue()
+  }
+
+  function runIndexQueue() {
+    if (indexProc.running || indexQueue.length === 0) return
+    var id = indexQueue[0]
+    indexQueue = indexQueue.slice(1)
+    for (var i = 0; i < roots.length; i++) {
+      if (roots[i].id !== id) continue
+      indexingRoot = id
+      indexProc.command = Roots.indexCommand(cacheHome, roots[i], FileSearch.EXCLUDES)
+      indexProc.running = true
+      return
+    }
+    runIndexQueue()
+  }
+
+  function refreshRootStatus() {
+    if (statusProc.running || roots.length === 0) return
+    statusProc.command = Roots.statusCommand(cacheHome, roots)
+    statusProc.running = true
+  }
+
+  // The file manager's folder chooser (through the desktop portal) comes up
+  // over everything; the popup closes so it cannot hold the keyboard. The
+  // chosen folders are added when it returns.
+  function pickFolders() {
+    if (pickProc.running || !stateValid) return
+    close()
+    pickProc.command = Roots.pickCommand("Add search roots")
+    pickProc.running = true
+  }
+
+  function addPicked(text) {
+    var picked = Roots.parsePicked(text)
+    if (picked.length === 0) return
+    var list = st.searchRoots
+    for (var i = 0; i < picked.length; i++) list = Roots.addRoot(list, picked[i].path, homeDir, picked[i].fsType)
+    setState("searchRoots", list)
+    // New indexed roots get their first index now rather than within the
+    // launcher's next minute.
+    Qt.callLater(function() {
+      var queue = root.indexQueue.slice()
+      for (var j = 0; j < root.roots.length; j++) {
+        var rt = root.roots[j]
+        var s = root.rootStatus[rt.id]
+        if (rt.cacheMinutes > 0 && (!s || !s.indexedAt) && queue.indexOf(rt.id) < 0) queue.push(rt.id)
+      }
+      root.indexQueue = queue
+      root.runIndexQueue()
+      root.refreshRootStatus()
+    })
   }
 
   // Keeps the cursor on a row that moved.
@@ -288,7 +470,7 @@ Panel {
   }
 
   function reload() {
-    stateReader.load(root.statePath, 4096)
+    stateReader.load(root.statePath, Settings.STATE_MAX_BYTES)
     styleReader.load(root.stylePath, 8192)
     aiReader.load(root.aiPath, 16384)
     defaultMenuReader.load(root.defaultMenuPath, 1048576)
@@ -299,6 +481,7 @@ Panel {
         var adapter = AiAdapters.get(AiConfig.SUPPORTED_AGENTS[i])
         if (adapter && !adapter.disabledReason) binaries.push(adapter.binary)
       }
+      binaries.push("zoxide")
       agentProbe.command = ["sh", "-c",
         'for b; do command -v -- "$b" >/dev/null 2>&1 && printf "%s\\n" "$b"; done', "sh"].concat(binaries)
       agentProbe.running = true
@@ -336,8 +519,10 @@ Panel {
 
   onOpenedChanged: if (opened) {
     reload()
+    removeArmed = ""
     modelEditing = false
     settingsOpen = false
+    openGroups = []
     Qt.callLater(function() {
       root.firstSelectable()
       flick.contentY = 0
@@ -345,7 +530,11 @@ Panel {
     })
   }
 
-  onCursorChanged: Qt.callLater(ensureCursorVisible)
+  onCursorChanged: {
+    var r = rows[cursor]
+    if (removeArmed && (!r || r.rootId !== removeArmed)) removeArmed = ""
+    Qt.callLater(ensureCursorVisible)
+  }
 
   function ensureCursorVisible() {
     var item = rowRepeater.itemAt(cursor)
@@ -389,7 +578,35 @@ Panel {
 
   // A read that fails (missing file, or one the reader refuses) counts as
   // empty: the popup shows defaults and a save creates the file.
-  FileReader { id: stateReader; onLoaded: function(text) { root.stateData = Settings.parseObject(text) } }
+  FileReader {
+    id: stateReader
+    onLoaded: function(text) {
+      root.stateData = Settings.parseObject(text)
+      if (root.opened) root.refreshRootStatus()
+    }
+  }
+
+  Process {
+    id: statusProc
+    stdout: StdioCollector { id: statusOut; waitForEnd: true }
+    onExited: root.rootStatus = Roots.parseStatus(statusOut.text || "")
+  }
+
+  Process {
+    id: indexProc
+    onExited: {
+      root.indexingRoot = ""
+      root.refreshRootStatus()
+      root.runIndexQueue()
+    }
+  }
+
+  // Folder picker output: capped, like every helper's.
+  Process {
+    id: pickProc
+    stdout: StdioCollector { id: pickOut; waitForEnd: true }
+    onExited: function(exitCode) { if (exitCode === 0) root.addPicked(String(pickOut.text || "").slice(0, 65536)) }
+  }
   FileReader { id: styleReader; onLoaded: function(text) { root.styleData = Settings.parseObject(text) } }
   FileReader { id: aiReader; onLoaded: function(text) { root.aiData = Settings.parseObject(text) } }
   FileReader {
@@ -433,6 +650,7 @@ Panel {
           if (adapter && !adapter.disabledReason && found.indexOf(adapter.binary) >= 0) agents.push(adapter.id)
         }
         root.installedAgents = agents
+        root.zoxideInstalled = found.indexOf("zoxide") >= 0
       }
     }
   }
@@ -451,7 +669,7 @@ Panel {
     fontFamily: "omarchy"
     // Each monitor's bar has its own button: re-read the click mapping when
     // the pointer arrives, so a change made from another bar applies here.
-    onTooltipHoveredChanged: if (tooltipHovered && !root.opened) stateReader.load(root.statePath, 4096)
+    onTooltipHoveredChanged: if (tooltipHovered && !root.opened) stateReader.load(root.statePath, Settings.STATE_MAX_BYTES)
     tooltipText: root.barLeftClick === "menu"
       ? "Left click: menu\nRight click: settings and system"
       : "Left click: settings and system\nRight click: menu"
@@ -486,6 +704,8 @@ Panel {
       }
       onActivateRequested: root.activate(root.rowAt(root.cursor))
       onCloseRequested: root.close()
+      onDeleteRequested: root.removeRoot(root.rowAt(root.cursor))
+      onTextKey: function(text) { if (text === "r") root.reindexRoot(root.rowAt(root.cursor)) }
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
       Flickable {
@@ -517,16 +737,21 @@ Panel {
             }
           }
 
+          // Delegates are kept across changes (the model is only the row
+          // count, each reads its row by index): recreating them all on every
+          // edit would re-trigger the hover under a resting pointer and throw
+          // the cursor to wherever the mouse happens to be.
           Repeater {
             id: rowRepeater
-            model: root.rows
+            model: root.rows.length
 
             delegate: Loader {
               id: rowLoader
-              required property var modelData
               required property int index
+              readonly property var modelData: root.rows[index] || ({ type: "note", text: "" })
               width: content.width
-              sourceComponent: modelData.type === "header" ? headerComponent : rowComponent
+              sourceComponent: modelData.type === "header" ? headerComponent
+                : modelData.type === "note" ? noteComponent : rowComponent
 
               Component {
                 id: headerComponent
@@ -542,16 +767,23 @@ Panel {
                     foreground: root.foreground
                     fontFamily: root.fontFamily
                   }
+                }
+              }
 
-                  Text {
-                    visible: rowLoader.modelData.note !== ""
-                    width: parent.width
-                    text: rowLoader.modelData.note
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    wrapMode: Text.WordWrap
-                  }
+              Component {
+                id: noteComponent
+                Text {
+                  width: content.width
+                  leftPadding: Style.spacing.rowPaddingX + Style.space(14)
+                  rightPadding: Style.spacing.rowPaddingX
+                  topPadding: Style.space(2)
+                  bottomPadding: Style.space(2)
+                  text: rowLoader.modelData.text
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
                 }
               }
 
@@ -573,7 +805,7 @@ Panel {
     required property int rowIndex
 
     width: content.width
-    implicitHeight: Style.space(30)
+    implicitHeight: Math.max(Style.space(30), labelColumn.implicitHeight + Style.space(10))
     foreground: root.foreground
     hasCursor: root.cursor === rowIndex && !modelField.activeFocus
     opacity: row.enabled ? 1 : 0.5
@@ -583,13 +815,18 @@ Panel {
       enabled: optionRow.row.enabled
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onEntered: root.cursor = optionRow.rowIndex
-      onClicked: root.activate(optionRow.row)
+      // Only a pointer that moves takes the cursor: a row sliding under a
+      // resting pointer (a group opening above it) does not.
+      onPositionChanged: function(mouse) { root.pointerMoved(optionRow, mouse, optionRow.rowIndex) }
+      onClicked: {
+        root.cursor = optionRow.rowIndex
+        root.activate(optionRow.row)
+      }
     }
 
     RowLayout {
       anchors.fill: parent
-      anchors.leftMargin: Style.spacing.rowPaddingX
+      anchors.leftMargin: Style.spacing.rowPaddingX + (optionRow.row.indent ? Style.space(14) : 0)
       anchors.rightMargin: Style.spacing.rowPaddingX
       spacing: Style.space(8)
 
@@ -604,16 +841,34 @@ Panel {
         Layout.alignment: Qt.AlignVCenter
       }
 
-      Text {
-        text: optionRow.row.label
-        textFormat: Text.PlainText
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        font.bold: optionRow.hasCursor
-        elide: Text.ElideRight
+      Column {
+        id: labelColumn
         Layout.fillWidth: !optionRow.row.field
         Layout.alignment: Qt.AlignVCenter
+        spacing: Style.space(1)
+
+        Text {
+          width: optionRow.row.field ? implicitWidth : parent.width
+          text: optionRow.row.label
+          textFormat: Text.PlainText
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          font.bold: optionRow.hasCursor
+          elide: Text.ElideRight
+        }
+
+        Text {
+          visible: (optionRow.row.detail || "") !== ""
+          width: parent.width
+          text: optionRow.row.detail || ""
+          textFormat: Text.PlainText
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          // Several lines, and a long path wraps rather than losing its middle.
+          wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+        }
       }
 
       TextField {
@@ -626,7 +881,13 @@ Panel {
         foreground: root.foreground
         font.family: root.fontFamily
         hasCursor: false
-        onActiveFocusChanged: root.modelEditing = activeFocus
+        onActiveFocusChanged: {
+          root.modelEditing = activeFocus
+          // An edit left without Enter is dropped, not kept on show unsaved.
+          if (!activeFocus) text = root.aiModel
+        }
+        // The row it sits in became another row (a group closed): let go.
+        onVisibleChanged: if (!visible && activeFocus) keyCatcher.forceActiveFocus()
         onAccepted: {
           if (!root.saveModel(text)) return
           focus = false
@@ -685,8 +946,11 @@ Panel {
       enabled: arrow.row.enabled
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onEntered: root.cursor = arrow.rowIndex
-      onClicked: root.adjust(arrow.row, arrow.direction)
+      onPositionChanged: function(mouse) { root.pointerMoved(arrowMouse, mouse, arrow.rowIndex) }
+      onClicked: {
+        root.cursor = arrow.rowIndex
+        root.adjust(arrow.row, arrow.direction)
+      }
     }
   }
 }

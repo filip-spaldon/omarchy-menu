@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "Tabs.js" as Tabs
 import "Settings.js" as Settings
+import "Roots.js" as Roots
 
 // Per-user files under the state directory: style.json (the card's
 // geometry) and state.json (apps view, tab and section order, disabled
@@ -77,7 +78,7 @@ Item {
 
   function loadState() {
     if (stateReadProc.running) return
-    stateReadProc.command = store.menu.readFileCommand(store.statePath, 4096)
+    stateReadProc.command = store.menu.readFileCommand(store.statePath, Settings.STATE_MAX_BYTES)
     stateReadProc.running = true
   }
 
@@ -108,6 +109,12 @@ Item {
     store.menu.cursorBlink = typeof state.cursorBlink === "boolean" ? state.cursorBlink : true
     store.menu.cursorWhenEmpty = typeof state.cursorWhenEmpty === "boolean" ? state.cursorWhenEmpty : true
     store.menu.commandsWithoutSlash = typeof state.commandsWithoutSlash === "boolean" ? state.commandsWithoutSlash : true
+    // Only reassigned when it changed: a new list restarts the roots' status
+    // check and search.
+    var roots = Roots.normalizeRoots(state.searchRoots, store.menu.homeDir)
+    if (JSON.stringify(roots) !== JSON.stringify(store.menu.searchRoots)) store.menu.searchRoots = roots
+    store.menu.zoxideMode = Settings.ZOXIDE_MODES.indexOf(state.zoxide) >= 0 ? state.zoxide : "rank"
+    store.menu.zoxideAdd = typeof state.zoxideAdd === "boolean" ? state.zoxideAdd : true
 
     // Read after the launcher opened (it re-reads on every open): if All was
     // just switched off, move on to the first tab that is on.
@@ -121,7 +128,8 @@ Item {
     if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
         || !Array.isArray(state.disabledTabs) || !Array.isArray(state.allSectionsOff) || !state.appsView
         || state.cursorStyle === undefined || state.cursorBlink === undefined || state.cursorWhenEmpty === undefined
-        || state.commandsWithoutSlash === undefined) store.saveState()
+        || state.commandsWithoutSlash === undefined || !Array.isArray(state.searchRoots)
+        || state.zoxide === undefined || state.zoxideAdd === undefined) store.saveState()
   }
 
   // Written to a temporary file and renamed over the old one, so a crash
@@ -143,6 +151,10 @@ Item {
     next.cursorBlink = store.menu.cursorBlink
     next.cursorWhenEmpty = store.menu.cursorWhenEmpty
     next.commandsWithoutSlash = store.menu.commandsWithoutSlash
+    // The roots are the popup's to edit; only a missing list is created.
+    if (!Array.isArray(next.searchRoots)) next.searchRoots = []
+    next.zoxide = store.menu.zoxideMode
+    next.zoxideAdd = store.menu.zoxideAdd
     if (store.menu.aiAgent) next.aiAgent = store.menu.aiAgent
     store.stateData = next
     stateWriteProc.command = store.stateFileWriteCommand(store.statePath, JSON.stringify(next, null, 2) + "\n", false)

@@ -73,6 +73,10 @@ this list, in review and before a release:
     or, for a caller's file, only when it is a regular non-symlink file of
     ours;
   - lists of paths are NUL-separated.
+- **Mounts**: anything that touches a search root (a network mount that may
+  hang) runs under its own `timeout -k`, never on the path that shows the
+  menu, and a root that fails its status check is skipped. The launcher never
+  mounts, unmounts or logs in to anything.
 - **Signals**: a process is identified by its pid and start time and
   signalled through a pidfd, never by a pid that may have been reused.
 - **Opening things**:

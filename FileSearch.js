@@ -220,19 +220,38 @@ function extractTerms(query) {
   return terms
 }
 
-// The fd argument vector for one search. Every term has to match somewhere in
-// the full path (`--and` for the rest); an empty query matches everything and
-// ranking decides what shows. Passed to Process as an array: no shell ever
-// sees the query.
-function buildArgv(query, filter, forDirs, home) {
+// The fd argument vector for one search of $HOME. Every term has to match
+// somewhere in the full path (`--and` for the rest); an empty query matches
+// everything and ranking decides what shows. Passed to Process as an array:
+// no shell ever sees the query. `excludes` are extra fd -E patterns (the
+// search roots inside $HOME, which are searched under their own label).
+function buildArgv(query, filter, forDirs, home, excludes) {
+  var paths = filter.systemFolders ? [home + "/.config", home + "/.local/share"] : [home]
+  return fdArgv(query, filter, forDirs ? ["d"] : ["f"], true, excludes || [], paths)
+}
+
+// fd over search roots (Roots.js) that are searched live. No --follow: a
+// share's symlinks may point anywhere, loops included. Directories come back
+// with a trailing slash, which tells them apart when both kinds are asked for.
+function buildRootArgv(query, filter, wantDirs, wantFiles, paths) {
+  var types = []
+  if (wantDirs) types.push("d")
+  if (wantFiles) types.push("f")
+  return fdArgv(query, filter, types, false, [], paths)
+}
+
+function fdArgv(query, filter, types, follow, extraExcludes, paths) {
   // --print0: a file name may contain a newline; NUL cannot occur in one, so
   // each path arrives whole and no name can pose as another path.
-  var argv = ["fd", "--color=never", "--print0", "-i", "--no-ignore", "--follow", "--max-results", String(MAX_RESULTS)]
-  argv.push("--type", forDirs ? "d" : "f")
+  var argv = ["fd", "--color=never", "--print0", "-i", "--no-ignore"]
+  if (follow) argv.push("--follow")
+  argv.push("--max-results", String(MAX_RESULTS))
+  for (var y = 0; y < types.length; y++) argv.push("--type", types[y])
 
   if (filter.hidden === true) argv.push("--hidden")
 
   for (var i = 0; i < EXCLUDES.length; i++) argv.push("-E", EXCLUDES[i])
+  for (var x = 0; x < extraExcludes.length; x++) argv.push("-E", extraExcludes[x])
 
   if (filter.systemFolders) {
     argv.push("--max-depth", "3")
@@ -240,7 +259,7 @@ function buildArgv(query, filter, forDirs, home) {
     for (var c = 0; c < SYSTEM_CONTENT_EXCLUDES.length; c++) argv.push("-E", "**/" + SYSTEM_CONTENT_EXCLUDES[c] + "/*")
   }
 
-  if (!forDirs) {
+  if (types.indexOf("d") < 0) {
     for (var e = 0; e < filter.exts.length; e++) argv.push("-e", filter.exts[e])
   }
 
@@ -250,13 +269,7 @@ function buildArgv(query, filter, forDirs, home) {
   argv.push("--full-path")
   argv.push("--")
   argv.push(terms.length === 0 ? "." : terms[0])
-
-  if (filter.systemFolders) {
-    argv.push(home + "/.config")
-    argv.push(home + "/.local/share")
-  } else {
-    argv.push(home)
-  }
+  for (var p = 0; p < paths.length; p++) argv.push(paths[p])
 
   return argv
 }
@@ -345,25 +358,103 @@ function isSystemPath(path, home) {
   return false
 }
 
-function parseLines(text, isDir, home) {
+// fd's (or the index search's) NUL-separated output as items. isDir null
+// reads the kind from the trailing slash fd gives directories. With `roots`,
+// an item inside one carries its label and is shown relative to it; its
+// place in the ranking is judged inside the root, as $HOME's files are.
+function parseLines(text, isDir, home, roots) {
   var out = []
   var lines = String(text || "").split("\0")
   for (var i = 0; i < lines.length; i++) {
+    var raw = lines[i]
+    var dirMark = /\/$/.test(raw)
     // fd marks directories with a trailing slash.
-    var path = lines[i].replace(/\/+$/, "")
+    var path = raw.replace(/\/+$/, "")
     if (!path || path.charAt(0) !== "/") continue
     var name = basename(path)
     if (!name) continue
+    var kind = isDir === null || isDir === undefined ? dirMark : isDir
+    var root = roots ? rootOf(path, roots) : null
     out.push({
       path: path,
       name: name,
-      dir: parentDir(path, home),
-      isDir: isDir,
-      isSystem: isSystemPath(path, home),
-      icon: iconFor(name, isDir)
+      dir: root ? rootDir(path, root) : parentDir(path, home),
+      isDir: kind,
+      isSystem: root ? isSystemPath(path, root.path) : isSystemPath(path, home),
+      icon: iconFor(name, kind),
+      rootId: root ? root.id : "",
+      rootLabel: root ? root.label : ""
     })
   }
   return out
+}
+
+function rootOf(path, roots) {
+  var best = null
+  for (var i = 0; i < roots.length; i++) {
+    var r = roots[i].path
+    if (path.indexOf(r + "/") === 0 && (!best || r.length > best.path.length)) best = roots[i]
+  }
+  return best
+}
+
+// "NAS › Photos/2024" for a path inside root NAS.
+function rootDir(path, root) {
+  var rel = path.slice(root.path.length + 1)
+  var idx = rel.lastIndexOf("/")
+  return idx <= 0 ? root.label : root.label + " › " + rel.slice(0, idx)
+}
+
+// `zoxide query --list --score` output as { path: score }.
+function parseZoxide(text) {
+  var map = {}
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var m = /^\s*([0-9]+(?:\.[0-9]+)?)\s+(\/.*)$/.exec(lines[i])
+    if (!m) continue
+    var path = m[2].replace(/\/+$/, "")
+    if (path && !(path in map)) map[path] = Number(m[1])
+  }
+  return map
+}
+
+// Folders zoxide knows that match every term of the query, as items: the
+// places the user actually goes, found even where fd did not look.
+function zoxideItems(frecency, query, home, roots, limit) {
+  var q = String(query || "").trim()
+  if (!q || !frecency) return []
+  var out = []
+  for (var path in frecency) {
+    var name = basename(path)
+    if (!name) continue
+    var root = roots ? rootOf(path, roots) : null
+    var item = {
+      path: path, name: name,
+      dir: root ? rootDir(path, root) : parentDir(path, home),
+      isDir: true, isSystem: false, icon: iconFor(name, true),
+      rootId: root ? root.id : "", rootLabel: root ? root.label : ""
+    }
+    if (scoreItem(item, q) < 0) continue
+    out.push(item)
+    if (out.length >= (limit || 200)) break
+  }
+  return out
+}
+
+// How much a zoxide score lifts an item: a folder by its own frecency, a
+// file by a third of its folder's. At most 1.5, against term scores of 0 to 5
+// per term, so a frequent folder wins between near matches but never beats a
+// name that matches while its own does not.
+function frecencyBonus(item, frecency) {
+  if (!frecency) return 0
+  var own = frecency[item.path]
+  if (item.isDir && own > 0) return Math.min(1.5, Math.log(1 + own) / Math.LN10 * 0.75)
+  if (!item.isDir) {
+    var slash = item.path.lastIndexOf("/")
+    var parent = slash > 0 ? frecency[item.path.slice(0, slash)] : 0
+    if (parent > 0) return Math.min(0.5, Math.log(1 + parent) / Math.LN10 * 0.25)
+  }
+  return 0
 }
 
 // Scores one term against a file name: lower is better, -1 is no match.
@@ -411,20 +502,31 @@ function byName(a, b) {
 // Orders candidates and keeps the first `limit`. User files always come before
 // system (dotted) ones; within that the sort mode decides. With no query,
 // relevance means shallow and folders-first, the way a file manager opens.
-function rankResults(items, query, limit, home, mode) {
+// A folder zoxide knows is the user's own, dotted or not: ~/.config/hypr,
+// visited daily, is not ranked as system noise. `frecency` (optional) is
+// parseZoxide's map.
+function rankResults(items, query, limit, home, mode, frecency) {
   var sort = mode || "relevance"
   var q = String(query || "").trim().toLowerCase()
   var entries = []
+  var seen = {}
 
   for (var i = 0; i < items.length; i++) {
+    // The same path from two sources (fd and zoxide, $HOME and a root).
+    if (seen[items[i].path]) continue
     var score = q ? scoreItem(items[i], q) : 0
     if (score < 0) continue
-    entries.push({ item: items[i], score: score, isSystem: systemFlag(items[i], home) })
+    seen[items[i].path] = true
+    var bonus = frecencyBonus(items[i], frecency)
+    entries.push({ item: items[i], score: score - bonus, bonus: bonus,
+                   isSystem: systemFlag(items[i], home) && !(items[i].isDir && bonus > 0) })
   }
 
   entries.sort(function(a, b) {
     if (sort === "relevance" && q && a.score !== b.score) return a.score - b.score
     if (a.isSystem !== b.isSystem) return a.isSystem ? 1 : -1
+    // No query: the folders the user goes to most come first.
+    if (sort === "relevance" && !q && a.bonus !== b.bonus) return b.bonus - a.bonus
 
     if (sort === "name_asc") return byName(a.item, b.item)
     if (sort === "name_desc") return byName(b.item, a.item)
@@ -473,6 +575,7 @@ function isLaunchableName(name) {
 
 if (typeof module !== "undefined") {
   module.exports = {
+    EXCLUDES: EXCLUDES,
     FILE_FILTERS: FILE_FILTERS,
     FOLDER_FILTERS: FOLDER_FILTERS,
     ALL_FILTER: ALL_FILTER,
@@ -486,6 +589,11 @@ if (typeof module !== "undefined") {
     accentRegex: accentRegex,
     extractTerms: extractTerms,
     buildArgv: buildArgv,
+    buildRootArgv: buildRootArgv,
+    parseZoxide: parseZoxide,
+    zoxideItems: zoxideItems,
+    frecencyBonus: frecencyBonus,
+    rootDir: rootDir,
     parseStatLines: parseStatLines,
     formatMtime: formatMtime,
     parentDir: parentDir,

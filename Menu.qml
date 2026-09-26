@@ -96,6 +96,12 @@ Item {
   // password, shell, kill, ai...) answer only after "/"; plain text is then
   // purely a search. Default true: plain text also shows any answer on top.
   property bool commandsWithoutSlash: true
+  // Search roots (Roots.js, normalized) and zoxide in the file ranking:
+  // "off", "rank" (frecent folders rise) or "results" (and join the
+  // results); zoxideAdd records folders opened from here as visits.
+  property var searchRoots: []
+  property string zoxideMode: "rank"
+  property bool zoxideAdd: true
   // All with nothing typed is just the search field and the tab chips: the
   // card is a prompt, and picking a tab or typing is what opens it up.
   readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim()
@@ -126,6 +132,7 @@ Item {
   // looked like the whole shell restarting.
   property string appsView: "list"
   readonly property bool gridActive: root.tabsActive && !root.commandMode && root.activeTab === "apps" && root.appsView === "grid"
+  readonly property string cacheHome: Quickshell.env("XDG_CACHE_HOME") || (root.homeDir + "/.cache")
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (root.homeDir + "/.local/state")) + "/omarchy-menu-omni"
 
   // Per-user ordering, also from state.json and hand-editable there:
@@ -272,7 +279,8 @@ Item {
     if (root.activeTab === "apps")
       return "Enter launch · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
-      return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
+      return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · "
+        + (fileCtl.hasRoots ? "Ctrl+R where · " : "") + "Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
     if (root.activeTab === "system")
       return root.systemTwoPane
         ? "↑↓ browse · →/Enter open · ← back · type to search · Tab next tab · Esc close"
@@ -916,6 +924,7 @@ Item {
   }
 
   function openEnclosingFolder(row) {
+    fileCtl.learnFolder(root.enclosingDir(row))
     root.openPath(root.enclosingDir(row))
   }
 
@@ -933,6 +942,7 @@ Item {
   }
 
   function openTerminalAt(row) {
+    fileCtl.learnFolder(root.enclosingDir(row))
     root.closeLauncher()
     // The equals form: xdg-terminal-exec reads "--dir DIR" as a command.
     Quickshell.execDetached(["xdg-terminal-exec", "--dir=" + root.enclosingDir(row)])
@@ -1687,6 +1697,7 @@ Item {
     } else if (row.kind === "file") {
       root.openFile(row.target)
     } else if (row.kind === "folder") {
+      fileCtl.learnFolder(row.target)
       root.openPath(row.target)
     } else if (row.kind === "kill") {
       root.killProcess(row.target)
@@ -1939,10 +1950,13 @@ Item {
     if (place.tab === "all" && !root.tabEnabled("all"))
       place = { tab: Tabs.firstEnabledTab(root.tabOrder, root.disabledTabs), menu: "root" }
     root.activeTab = place.tab
-    // Type filters start over with each open, as in omarchy-find; the sort
-    // mode and the result limit are preferences and stay.
+    // Type filters and where to look start over with each open, as in
+    // omarchy-find; the sort mode and the result limit are preferences and
+    // stay.
     fileCtl.fileFilterIndex = 0
     fileCtl.folderFilterIndex = 0
+    fileCtl.rootScope = "all"
+    fileCtl.prepare()
     root.pendingInitialMenu = place.menu
     root.openExistingMenu(place.menu)
     root.systemPane = place.menu === "root" ? "left" : "right"
@@ -2376,6 +2390,11 @@ Item {
                      && answerEngine.toggleKillGroups()) {
             // Only claimed while kill rows are on show.
             event.accepted = true
+          } else if ((root.activeTab === "files" || root.activeTab === "folders") && root.tabsActive
+                     && !root.commandMode && event.key === Qt.Key_R && event.modifiers === Qt.ControlModifier
+                     && fileCtl.cycleRootScope()) {
+            // Files and Folders with search roots: where to look.
+            event.accepted = true
           } else if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)
                      && answerEngine.regenerateUtility()) {
             // Only claimed when there was something to reroll, so Ctrl+R stays
@@ -2585,7 +2604,8 @@ Item {
           id: fileBar
           visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && (root.activeTab === "files" || root.activeTab === "folders")
           width: parent.width
-          height: visible ? fileFilterChips.implicitHeight : 0
+          height: visible ? fileFilterChips.implicitHeight
+            + (scopeChips.visible ? Style.space(6) + scopeChips.implicitHeight : 0) : 0
 
           TabBar {
             id: fileFilterChips
@@ -2599,6 +2619,27 @@ Item {
             fontSize: root.scaledFont(Style.font.caption)
             onTabClicked: function(id) {
               fileCtl.setFileFilter(id)
+              Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+            }
+          }
+
+          // Where to look: everywhere, $HOME only, or one search root
+          // (Ctrl+R). Only there when a root is.
+          TabBar {
+            id: scopeChips
+            visible: fileCtl.hasRoots
+            anchors.left: parent.left
+            anchors.top: fileFilterChips.bottom
+            anchors.topMargin: Style.space(6)
+            width: parent.width
+            tabs: fileCtl.scopeChoices
+            activeTab: fileCtl.currentScope()
+            fontFamily: root.fontFamily
+            foreground: root.foreground
+            accent: Color.accent
+            fontSize: root.scaledFont(Style.font.caption)
+            onTabClicked: function(id) {
+              fileCtl.setRootScope(id)
               Qt.callLater(function() { keyCatcher.forceActiveFocus() })
             }
           }
