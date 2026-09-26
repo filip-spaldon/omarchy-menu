@@ -22,6 +22,10 @@ var APPS_VIEWS = ["list", "grid"]
 // right click opens the other.
 var BAR_CLICKS = ["settings", "menu"]
 var CURSOR_STYLES = ["block", "beam", "underline", "outline", "none"]
+// state.json "zoxide": how zoxide's folder scores enter the file search.
+var ZOXIDE_MODES = ["off", "rank", "results"]
+// state.json's read ceiling: the search roots make it more than a few keys.
+var STATE_MAX_BYTES = 65536
 
 // Reasoning effort each agent's CLI accepts ("" leaves the CLI's own).
 var AGENT_EFFORTS = {
@@ -176,6 +180,8 @@ if (typeof module !== "undefined") {
     APPS_VIEWS: APPS_VIEWS,
     BAR_CLICKS: BAR_CLICKS,
     CURSOR_STYLES: CURSOR_STYLES,
+    ZOXIDE_MODES: ZOXIDE_MODES,
+    STATE_MAX_BYTES: STATE_MAX_BYTES,
     AGENT_EFFORTS: AGENT_EFFORTS,
     MODEL_PATTERN: MODEL_PATTERN,
     parseObject: parseObject,

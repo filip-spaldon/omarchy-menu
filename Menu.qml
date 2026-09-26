@@ -96,6 +96,12 @@ Item {
   // password, shell, kill, ai...) answer only after "/"; plain text is then
   // purely a search. Default true: plain text also shows any answer on top.
   property bool commandsWithoutSlash: true
+  // Search roots (Roots.js, normalized) and zoxide in the file ranking:
+  // "off", "rank" (frecent folders rise) or "results" (and join the
+  // results); zoxideAdd records folders opened from here as visits.
+  property var searchRoots: []
+  property string zoxideMode: "rank"
+  property bool zoxideAdd: true
   // All with nothing typed is just the search field and the tab chips: the
   // card is a prompt, and picking a tab or typing is what opens it up.
   readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim()
@@ -126,6 +132,7 @@ Item {
   // looked like the whole shell restarting.
   property string appsView: "list"
   readonly property bool gridActive: root.tabsActive && !root.commandMode && root.activeTab === "apps" && root.appsView === "grid"
+  readonly property string cacheHome: Quickshell.env("XDG_CACHE_HOME") || (root.homeDir + "/.cache")
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (root.homeDir + "/.local/state")) + "/omarchy-menu-omni"
 
   // Per-user ordering, also from state.json and hand-editable there:
@@ -916,6 +923,7 @@ Item {
   }
 
   function openEnclosingFolder(row) {
+    fileCtl.learnFolder(root.enclosingDir(row))
     root.openPath(root.enclosingDir(row))
   }
 
@@ -933,6 +941,7 @@ Item {
   }
 
   function openTerminalAt(row) {
+    fileCtl.learnFolder(root.enclosingDir(row))
     root.closeLauncher()
     // The equals form: xdg-terminal-exec reads "--dir DIR" as a command.
     Quickshell.execDetached(["xdg-terminal-exec", "--dir=" + root.enclosingDir(row)])
@@ -1687,6 +1696,7 @@ Item {
     } else if (row.kind === "file") {
       root.openFile(row.target)
     } else if (row.kind === "folder") {
+      fileCtl.learnFolder(row.target)
       root.openPath(row.target)
     } else if (row.kind === "kill") {
       root.killProcess(row.target)
@@ -1943,6 +1953,7 @@ Item {
     // mode and the result limit are preferences and stay.
     fileCtl.fileFilterIndex = 0
     fileCtl.folderFilterIndex = 0
+    fileCtl.prepare()
     root.pendingInitialMenu = place.menu
     root.openExistingMenu(place.menu)
     root.systemPane = place.menu === "root" ? "left" : "right"
@@ -2591,7 +2602,7 @@ Item {
             id: fileFilterChips
             anchors.left: parent.left
             width: parent.width - fileSortLabel.implicitWidth - Style.space(12)
-            tabs: FileSearch.filtersFor(root.activeTab).map(function(f) { return { id: f.id, label: f.label, icon: "" } })
+            tabs: FileSearch.filtersFor(root.activeTab, fileCtl.hasRoots).map(function(f) { return { id: f.id, label: f.label, icon: "" } })
             activeTab: fileCtl.fileFilterFor(root.activeTab).id
             fontFamily: root.fontFamily
             foreground: root.foreground

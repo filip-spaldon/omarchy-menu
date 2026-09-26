@@ -56,8 +56,9 @@ consumers) retain their plain prompt without launcher tabs.
 | Ctrl+S | Cycle the sort order |
 | Ctrl+L | Cycle the displayed result limit |
 
-Files filters: All files, Documents, Images, Videos, Audio and Code.
-Folders filters: Folders and System folders. Sort by relevance, newest, oldest,
+Files filters: All files, Documents, Images, Videos, Audio, Code and, when
+you added search roots, Remotes. Folders filters: Folders, System folders and
+Remotes. Sort by relevance, newest, oldest,
 name A–Z or name Z–A; display limits are 15, 30, 60, 100 and 200.
 
 Search uses `fd`, excludes package caches, virtual environments, Git internals
@@ -66,6 +67,59 @@ names and paths, not file contents. System folders include browser configuration
 roots while skipping their cache and profile internals. All starts file searches
 at two characters and skips them when an instant answer already handles the
 query. Late results keep the selection on the same item where possible.
+
+### Search roots (NAS, cloud drives, other disks)
+
+Besides your home folder, Files, Folders and All can search other folders:
+a NAS share, a cloud drive, a second disk. Omni does not connect anything
+itself; a root is a folder that is already mounted, by whatever means you
+use (`fstab`, `rclone mount`, `sshfs`, GVFS through the file manager).
+
+Add one from the bar popup: **Settings › Search roots › Add folder…** opens
+your file manager's folder chooser (through the desktop portal; `zenity` if
+there is none). Each root shows its path, file system and source, free space
+and index state, and takes these keys:
+
+| Keys | Action |
+| --- | --- |
+| `Enter` | Switch the root on or off |
+| `←`/`→` | Live search, or an index rebuilt every 15 min, 1 h, 6 h or 1 day |
+| `r` | Rebuild the index now |
+| `x`, `x` | Remove the root and its index |
+
+- **Live** runs `fd` over the root as you type, like the home search, in a
+  separate lane: local results appear at once and the root's are added when
+  they arrive.
+- **Index** lists the root in the background into
+  `~/.cache/omarchy-menu-omni/roots/` and searches that list, which is instant
+  even on a slow share. A network file system (NFS, SMB, rclone, sshfs) is added
+  with an hourly index; a local disk is added live.
+- A root that does not answer within two seconds counts as offline: live
+  search skips it, and an indexed root still shows results, marked
+  *offline*.
+- Results carry the root's label, e.g. `NAS › Photos/2024`. The **Remotes**
+  filter (Ctrl+F) shows only the roots.
+
+Roots are stored in `state.json`, so they can also be edited by hand:
+
+```json
+"searchRoots": [
+  { "path": "/mnt/nas/home", "label": "NAS", "enabled": true, "cacheMinutes": 60 },
+  { "path": "/mnt/GoogleDrive", "label": "Drive", "enabled": true, "cacheMinutes": 360 }
+]
+```
+
+`cacheMinutes: 0` is live. Paths must be absolute; `~/` is expanded.
+
+### zoxide
+
+With [zoxide](https://github.com/ajeetdsouza/zoxide) installed, folders you
+visit often rank higher among equal matches, and so do files in them
+(`"zoxide": "rank"`, the default). `"results"` also adds the folders zoxide
+knows to Folders and All even where `fd` did not look, and `"off"` ignores
+zoxide. Folders opened from the launcher (Enter, Alt+Enter, Ctrl+T) are
+recorded as visits (`"zoxideAdd": true`), so `z` in a terminal learns from it
+too. Both are in the bar popup under **Zoxide**.
 
 ## Tab order and visibility
 
@@ -83,7 +137,10 @@ Settings are read on every open from
   "cursorStyle": "block",
   "cursorBlink": true,
   "cursorWhenEmpty": true,
-  "commandsWithoutSlash": true
+  "commandsWithoutSlash": true,
+  "searchRoots": [],
+  "zoxide": "rank",
+  "zoxideAdd": true
 }
 ```
 
@@ -128,6 +185,9 @@ Add it to the bar with the bar's widget picker, or put
     their order. A section that is off leaves All only, its tab stays
     (`allSectionsOff` in `state.json`).
   - **Look**: the `style.json` geometry.
+  - **Search roots**: folders searched besides your home, and how
+    (see [Search roots](#search-roots-nas-cloud-drives-other-disks)).
+  - **Zoxide**: ranking by visited folders, and learning from the launcher.
   - **AI**: agent, plus the model and effort for that agent.
   - **Settings folder**: opens `~/.local/state/omarchy-menu-omni/`.
 - The **System** actions below it are always shown: every action of the
@@ -299,14 +359,18 @@ Omni uses the existing Omarchy shell and its menu, browser and application
 helpers. File search requires `fd`; clipboard actions use `wl-copy` / `wl-paste`
 (`wl-clipboard`); opening paths uses `gio` (`glib2`); terminals use
 `xdg-terminal-exec`. Other helpers are Bash, GNU coreutils, `ps` (`procps-ng`),
-`timedatectl` (`systemd`), `curl`, `jq`, `gtk-launch` and `uwsm-app`. These are
-normally provided by Omarchy. AI additionally needs a supported agent CLI and
+`timedatectl` (`systemd`), `curl`, `jq`, `gtk-launch`, `uwsm-app`, `findmnt` and
+`flock` (`util-linux`). These are normally provided by Omarchy. The folder
+chooser for search roots uses the desktop portal through `python-gobject`
+(an Omarchy base package), or `zenity`; zoxide is optional. AI additionally needs a supported agent CLI and
 its authentication; see [AI answers](#ai-answers).
 
 There is no custom installer, remote build or additional service. The plugin
 runs inside the existing shell with your user permissions. It reads menu
-configuration, installed applications and file names beneath your home directory;
-preferences and cached exchange rates are written to the paths documented above.
+configuration, installed applications and file names beneath your home directory
+and the search roots you added; preferences, cached exchange rates and root
+indexes are written to the paths documented above. It never mounts or logs in
+to anything.
 Currency queries access the rate service, AI submission starts the chosen agent,
 and opening a URL or web search launches your browser. System actions retain the
 usual Omarchy behavior, including permission prompts where required.
@@ -369,12 +433,12 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | --- | --- |
 | `Menu.qml` | Entry point: tabs, routing, row model, keys and the card's layout |
 | `AnswerEngine.qml` | Instant answers (calculator, conversions, time, generators, kill, URL, shell, web search) and the data they fetch |
-| `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes, results and ranking into rows |
+| `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes over $HOME and the search roots, root status and background indexing, zoxide scores, results and ranking into rows |
 | `AiController.qml` | AI mode: config, agent discovery and switching, generation processes, terminal handoff |
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Settings.js`, `ai/*.js` | Pure logic, tested with Node |
+| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.

@@ -12,6 +12,7 @@ const Tabs = require(path.join(root, "Tabs.js"))
 const FileSearch = require(path.join(root, "FileSearch.js"))
 const MenuModel = require(path.join(root, "MenuModel.js"))
 const Settings = require(path.join(root, "Settings.js"))
+const Roots = require(path.join(root, "Roots.js"))
 
 let pass = 0
 let fail = 0
@@ -274,6 +275,153 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   eq(open(plain), plain, "an ordinary file opens itself")
   eq(open(exe), dir, "a file with the executable bit opens its folder")
   fs.rmSync(dir, { recursive: true, force: true })
+}
+
+// ------------------------------------------------------ search roots ------
+{
+  const home = "/home/u"
+  eq(Roots.cleanPath("~/NAS/", home), "/home/u/NAS", "~ is expanded and the trailing slash dropped")
+  eq(Roots.cleanPath("/mnt//nas///docs", home), "/mnt/nas/docs", "repeated slashes collapse")
+  eq(Roots.cleanPath("relative/path", home), "", "a relative path is refused")
+  eq(Roots.cleanPath("/mnt/../etc", home), "", "a .. segment is refused")
+  eq(Roots.cleanPath("/mnt/./x", home), "", "a . segment is refused")
+  eq(Roots.cleanPath("/", home), "", "/ itself is refused")
+  eq(Roots.cleanPath("/home/u", home), "", "$HOME itself is refused (searched already)")
+  eq(Roots.cleanPath("/mnt/a\nb", home), "", "control characters are refused")
+  eq(Roots.cleanPath(42, home), "", "a non-path is refused")
+
+  const roots = Roots.normalizeRoots([
+    { path: "/mnt/nas", label: "NAS", cacheMinutes: 60 },
+    { path: "/mnt/nas/" },
+    "junk", null, [],
+    { path: "../x" },
+    { path: "/media/disk", enabled: false, cacheMinutes: -3 },
+    { path: "/mnt/cloud", label: "  \u0007 ", cacheMinutes: 2 }
+  ], home)
+  eq(roots.map(r => r.path), ["/mnt/nas", "/media/disk", "/mnt/cloud"], "invalid and duplicate roots are dropped")
+  eq(roots.map(r => r.label), ["NAS", "disk", "cloud"], "a missing or blank label falls back to the folder name")
+  eq(roots.map(r => r.enabled), [true, false, true], "enabled defaults to true")
+  eq(roots.map(r => r.cacheMinutes), [60, 0, 5], "cache minutes: negative is live, tiny is raised to 5")
+  assert(/^r[0-9a-f]{8}$/.test(roots[0].id) && roots[0].id === Roots.rootId("/mnt/nas"), "ids are stable path hashes")
+  eq(Roots.normalizeRoots(Array.from({ length: 40 }, (_, i) => ({ path: "/mnt/r" + i })), home).length, Roots.MAX_ROOTS, "the root count is capped")
+  eq(Roots.serializeRoots(roots)[0], { path: "/mnt/nas", label: "NAS", enabled: true, cacheMinutes: 60 }, "serialized roots carry no id")
+
+  eq(Roots.addRoot([], "/mnt/share", home, "cifs")[0].cacheMinutes, 60, "a network share is added with an index")
+  eq(Roots.addRoot([], "/mnt/disk", home, "ext4")[0].cacheMinutes, 0, "a local disk is added live")
+  eq(Roots.addRoot([], "/mnt/r", home, "fuse.rclone")[0].cacheMinutes, 60, "fuse.* counts as network")
+  eq(Roots.addRoot([], "/mnt/w", home, "fuseblk")[0].cacheMinutes, 0, "fuseblk (NTFS) counts as local")
+  eq(Roots.addRoot([{ path: "/mnt/a" }], "/mnt/a/", home, "").length, 1, "adding a known root changes nothing")
+  eq(Roots.addRoot([], "etc", home, "").length, 0, "adding an invalid path changes nothing")
+  const id = Roots.rootId("/mnt/nas")
+  eq(Roots.updateRoot([{ path: "/mnt/nas" }], home, id, r => { r.enabled = false; return r })[0].enabled, false, "updateRoot changes one root")
+  eq(Roots.updateRoot([{ path: "/mnt/nas" }, { path: "/mnt/b" }], home, id, () => null).map(r => r.path), ["/mnt/b"], "updateRoot removes on null")
+  eq(Roots.nextCache(0, 1), 15, "cache cycles forward")
+  eq(Roots.nextCache(0, -1), 1440, "cache cycles backward and wraps")
+  eq([0, 15, 60, 1440].map(Roots.cacheLabel), ["Live", "Index 15 min", "Index 1 h", "Index 1 d"], "cache labels")
+
+  eq(Roots.rootFor("/mnt/nas/a/b", roots).path, "/mnt/nas", "rootFor finds the root of a path")
+  eq(Roots.rootFor("/mnt/nasty", roots), null, "a sibling with a shared prefix is not inside")
+  eq(Roots.homeExcludes([{ path: "/home/u/NAS" }, { path: "/mnt/x" }, { path: "/home/u/a*b" }], home), ["/NAS", "/a\\*b"],
+     "roots inside $HOME become anchored, glob-escaped fd excludes")
+
+  const now = Date.parse("2026-09-26T12:00:00Z")
+  const due = (r, at, failed) => Roots.indexDue(Object.assign({ enabled: true, cacheMinutes: 60 }, r), at, failed, now)
+  assert(due({}, 0, 0), "a missing index is due")
+  assert(!due({}, now - 30 * 60000, 0), "a fresh index is not due")
+  assert(due({}, now - 61 * 60000, 0), "a stale index is due")
+  assert(!due({}, 0, now - 60000), "a failed rebuild waits before retrying")
+  assert(due({}, 0, now - 11 * 60000), "and retries after the wait")
+  assert(!due({ cacheMinutes: 0 }, 0, 0), "a live root is never indexed")
+  assert(!due({ enabled: false }, 0, 0), "a disabled root is not indexed")
+
+  const st = Roots.parseStatus("r0000000a\tonline\tnfs\t1000000\tnas:/export\t1790000000\t1234\n"
+    + "r0000000b\toffline\t-\t-\t-\t-\t-\nbogus line\n")
+  eq(st.r0000000a, { online: true, fsType: "nfs", freeBytes: 1000000, source: "nas:/export", indexedAt: 1790000000000, indexCount: 1234 }, "status line parsed")
+  eq(st.r0000000b.online, false, "offline status parsed")
+  eq(Object.keys(st).length, 2, "malformed status lines are ignored")
+  eq(Roots.describe({ path: "/mnt/n", cacheMinutes: 60 }, st.r0000000a, 1790000000000 + 5 * 60000),
+     "/mnt/n · nfs nas:/export · 1.0 MB free · 1 234 paths, indexed 5 min ago", "a root is described")
+  eq(Roots.describe({ path: "/mnt/n", cacheMinutes: 0 }, st.r0000000b), "/mnt/n · offline", "an offline root says so")
+  eq(Roots.parsePicked("/mnt/a\tcifs\0/mnt/b c\t-\0"), [{ path: "/mnt/a", fsType: "cifs" }, { path: "/mnt/b c", fsType: "" }], "picker output parsed")
+}
+
+// ---------------------------------------- index, index search, status ----
+{
+  const fs = require("fs"), os = require("os"), { spawnSync } = require("child_process")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-roots-"))
+  const share = path.join(dir, "share"), cache = path.join(dir, "cache")
+  for (const d of ["Docs/.hidden", "Fotky/leto", "node_modules/pkg"]) fs.mkdirSync(path.join(share, d), { recursive: true })
+  for (const f of ["Docs/Správa 2024.pdf", "Docs/notes.md", "Docs/.hidden/secret.txt", "Fotky/leto/IMG_1.JPG", "node_modules/pkg/index.js", "Docs/new\nline.txt"])
+    fs.writeFileSync(path.join(share, f), "x")
+  const root = { id: Roots.rootId(share), path: share }
+  const run = (argv) => spawnSync(argv[0], argv.slice(1), { encoding: "utf8" })
+
+  eq(run(Roots.indexCommand(cache, root, FileSearch.EXCLUDES)).status, 0, "an index is built")
+  const idx = Roots.indexPath(cache, root.id)
+  eq(fs.statSync(idx).mode & 0o777, 0o600, "the index is private")
+  const search = (kinds, hidden, exts, q) => run(Roots.indexSearchCommand(kinds, hidden, exts, FileSearch.extractTerms(q), [{ root: share, index: idx }]))
+    .stdout.split("\0").filter(Boolean).map(p => p.slice(share.length + 1)).sort()
+  eq(search("f", true, [], "sprava"), ["Docs/Správa 2024.pdf"], "the index search is accent-insensitive")
+  eq(search("f", false, [], ""), ["Docs/Správa 2024.pdf", "Docs/new\nline.txt", "Docs/notes.md", "Fotky/leto/IMG_1.JPG"],
+     "hidden paths and excluded folders are left out; a newline in a name survives")
+  assert(search("f", true, [], "secret").length === 1, "hidden paths are found when the filter includes them")
+  eq(search("f", true, ["jpg"], ""), ["Fotky/leto/IMG_1.JPG"], "extensions filter case-insensitively")
+  eq(search("d", true, [], "leto"), ["Fotky/leto/"], "folders keep their trailing slash")
+  eq(search("df", true, [], "docs notes"), ["Docs/notes.md"], "every term has to match")
+  eq(search("f", true, [], "a.b(").length, 0, "regex metacharacters in a query are literal")
+  eq(run(Roots.indexSearchCommand("f", true, [], [], [{ root: share, index: idx + ".missing" }])).status, 0, "a missing index finds nothing")
+  fs.symlinkSync(idx, path.join(cache, "link.idx"))
+  eq(run(Roots.indexSearchCommand("f", true, [], [], [{ root: share, index: path.join(cache, "link.idx") }])).stdout, "", "a symlinked index is not read")
+
+  // A cut-off record (no final NUL) is skipped rather than read as a path.
+  fs.writeFileSync(idx, share + "/Docs/notes.md\0" + share + "/Docs/cut")
+  eq(search("f", true, [], ""), ["Docs/notes.md"], "a truncated last record is skipped")
+
+  eq(run(Roots.indexCommand(cache, { id: "r00000001", path: path.join(dir, "gone") }, [])).status, 4, "an unreachable root keeps its old index")
+  const status = Roots.parseStatus(run(Roots.statusCommand(cache, [root, { id: "r00000001", path: path.join(dir, "gone") }])).stdout)
+  assert(status[root.id].online && status[root.id].indexedAt > 0 && status[root.id].indexCount === 1, "status of a reachable, indexed root")
+  eq(status.r00000001.online, false, "status of an unreachable root")
+  fs.rmSync(dir, { recursive: true, force: true })
+}
+
+// ----------------------------------------------------- roots in results ---
+{
+  const home = "/home/u"
+  const roots = [{ id: "r1", path: "/mnt/nas", label: "NAS" }]
+  const items = FileSearch.parseLines(["/mnt/nas/Photos/2024/a.jpg", "/mnt/nas/Photos/", "/mnt/nas/.cfg/x", "/home/u/b.txt"].join("\0"), null, home, roots)
+  eq(items.map(i => [i.name, i.dir, i.isDir, i.rootId]), [
+    ["a.jpg", "NAS › Photos/2024", false, "r1"], ["Photos", "NAS", true, "r1"], ["x", "NAS › .cfg", false, "r1"], ["b.txt", "~", false, ""]
+  ], "root items carry their label, kind from the trailing slash")
+  eq(items.map(i => i.isSystem), [false, false, true, false], "dotted paths inside a root rank as system, the rest as the user's")
+  eq(FileSearch.filtersFor("files", false).map(f => f.id).indexOf("remotes"), -1, "no Remotes filter without roots")
+  eq(FileSearch.filtersFor("files", true).slice(-1)[0].id, "remotes", "Remotes is the last Files filter with roots")
+  eq(FileSearch.filtersFor("folders", true).slice(-1)[0].id, "remoteFolders", "and the last Folders filter")
+  const live = FileSearch.buildRootArgv("foto", FileSearch.ALL_FILTER, true, true, ["/mnt/a", "/mnt/b"])
+  assert(live.indexOf("--follow") < 0, "live roots are walked without following links")
+  eq(live.slice(-4), ["--", "f[oóòõôö]t[oóòõôö]", "/mnt/a", "/mnt/b"], "live roots are the search paths")
+  eq(live.filter((a, i) => live[i - 1] === "--type"), ["d", "f"], "both kinds in one live search")
+  const homeArgv = FileSearch.buildArgv("x", FileSearch.ALL_FILTER, false, home, ["/NAS"])
+  assert(homeArgv.join(" ").indexOf("-E /NAS") >= 0, "the $HOME search excludes roots inside it")
+}
+
+// ----------------------------------------------------------- zoxide ------
+{
+  const home = "/home/u"
+  const z = FileSearch.parseZoxide("  35.5 /home/u/work/menuland\n  2.0 /home/u/.config/hypr\ngarbage\n 1 relative\n")
+  eq(z, { "/home/u/work/menuland": 35.5, "/home/u/.config/hypr": 2 }, "zoxide scores parsed")
+  const items = FileSearch.parseLines(["/home/u/aa/menuland/", "/home/u/work/menuland/", "/home/u/work/menuland/plan.md"].join("\0"), null, home)
+  eq(FileSearch.rankResults(items.slice(0, 2), "menuland", 5, home, "relevance", null).map(i => i.path)[0], "/home/u/aa/menuland",
+     "without zoxide equal matches keep path order")
+  eq(FileSearch.rankResults(items.slice(0, 2), "menuland", 5, home, "relevance", z).map(i => i.path)[0], "/home/u/work/menuland",
+     "a frecent folder wins between equal matches")
+  assert(FileSearch.frecencyBonus(items[2], z) > 0 && FileSearch.frecencyBonus(items[2], z) <= 0.5, "a file in a frecent folder gets a smaller lift")
+  assert(FileSearch.frecencyBonus(items[1], { "/home/u/work/menuland": 1e9 }) <= 1.5, "the lift is capped")
+  const hypr = FileSearch.parseLines("/home/u/.config/hypr/\0/home/u/hyprland-notes/", true, home)
+  eq(FileSearch.rankResults(hypr, "", 5, home, "relevance", z)[0].path, "/home/u/.config/hypr", "a frecent dotted folder is not demoted")
+  eq(FileSearch.zoxideItems(z, "hypr", home, [], 10).map(i => i.path), ["/home/u/.config/hypr"], "zoxide folders matching the query")
+  eq(FileSearch.zoxideItems(z, "", home, [], 10), [], "no zoxide folders without a query")
+  const dup = FileSearch.parseLines("/home/u/.config/hypr/", true, home).concat(FileSearch.zoxideItems(z, "hypr", home, [], 10))
+  eq(FileSearch.rankResults(dup, "hypr", 5, home, "relevance", z).length, 1, "a folder found twice is listed once")
 }
 
 console.log("")
