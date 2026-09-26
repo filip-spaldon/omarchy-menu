@@ -265,6 +265,7 @@ Panel {
   // ---------------------------------------------------------------- actions --
 
   function adjust(r, direction) {
+    endFieldEdit()
     if (!r || !r.enabled) return
     var key = r.key
     if (key === "settings") { if (settingsOpen !== direction > 0) activate(r); return }
@@ -297,7 +298,15 @@ Panel {
     else if (key === "ai:effort") setAgentEntry("efforts", Settings.cycle(Settings.AGENT_EFFORTS[aiAgent] || [""], aiEffort, direction))
   }
 
+  // A click elsewhere ends an edit of the model field: otherwise the field
+  // keeps the keyboard (hidden, once its group closes) and the arrows stop
+  // moving the cursor.
+  function endFieldEdit() {
+    if (modelEditing) keyCatcher.forceActiveFocus()
+  }
+
   function activate(r) {
+    endFieldEdit()
     if (!r || !r.enabled) return
     var key = r.key
     if (key === "settings") {
@@ -857,7 +866,13 @@ Panel {
         foreground: root.foreground
         font.family: root.fontFamily
         hasCursor: false
-        onActiveFocusChanged: root.modelEditing = activeFocus
+        onActiveFocusChanged: {
+          root.modelEditing = activeFocus
+          // An edit left without Enter is dropped, not kept on show unsaved.
+          if (!activeFocus) text = root.aiModel
+        }
+        // The row it sits in became another row (a group closed): let go.
+        onVisibleChanged: if (!visible && activeFocus) keyCatcher.forceActiveFocus()
         onAccepted: {
           if (!root.saveModel(text)) return
           focus = false
