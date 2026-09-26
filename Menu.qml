@@ -1492,7 +1492,7 @@ Item {
       var id = order[i].id
       if (!root.inAll(id)) continue
       var sectionRows = id === "apps" ? root.appTabRows(query)
-        : id === "windows" ? windowCtl.rows(query)
+        : id === "windows" ? windowCtl.windowRows(query)
         : id === "files" ? fileCtl.fileSectionRows(false)
         : id === "folders" ? fileCtl.fileSectionRows(true)
         : root.systemSearchRows(query, "root", false)
@@ -1547,7 +1547,7 @@ Item {
       rows = active === "root" ? [] : root.systemTabRows("", active)
     else if (root.activeTab === "system") rows = root.systemTabRows(query, active)
     else if (root.activeTab === "apps") rows = root.appTabRows(query)
-    else if (root.activeTab === "windows") rows = windowCtl.rows(query)
+    else if (root.activeTab === "windows") rows = windowCtl.windowRows(query)
     else if (root.activeTab === "all") rows = root.allTabRows(query)
     else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
 
@@ -1735,7 +1735,7 @@ Item {
       var label = row.label
       // A running application is switched to, the way a dock does; Shift
       // opens another one.
-      var openWindow = launchNew ? "" : windowCtl.windowFor(appId)
+      var openWindow = launchNew ? "" : windowCtl.latestWindowOf(appId)
       if (openWindow) {
         root.focusWindow(openWindow)
         return
@@ -1801,10 +1801,10 @@ Item {
   }
 
   // How many windows an application has open, for the running marker on its
-  // row or tile. Reads windowCtl.running, so bindings on it update as
+  // row or tile. Reads windowCtl.windowsByAppId, so bindings on it update as
   // windows open and close.
   function appWindowCount(appId) {
-    return windowCtl.windowCount(appId)
+    return windowCtl.windowCountOf(appId)
   }
 
   // Closes the menu first: the dispatch switches workspace (or raises the

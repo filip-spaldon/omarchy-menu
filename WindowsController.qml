@@ -4,122 +4,138 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import "Windows.js" as Windows
 
-// Open windows for the Windows tab and All's Windows section. The list is
-// read from `hyprctl -j clients` each time the menu opens, and again while it
-// is open whenever Hyprland reports a window opening, closing, moving or
-// being retitled. Parsing, grouping and ranking are Windows.js; focusing runs
-// its argv. Reaches the menu through `menu` for the tab, the query and
-// redraws.
+// Open windows for the Windows tab, All's Windows section and the running
+// marker in Apps. The list is read from `hyprctl -j clients` each time the
+// menu opens, and again while it is open whenever Hyprland reports a window
+// opening, closing, moving or being retitled. Parsing, ranking and matching
+// are Windows.js; this file does the I/O and the desktop-entry lookups.
+// Reaches the menu through `menu` for the tab, the query and redraws.
 Item {
-  id: windows
+  id: tracker
 
   required property var menu
 
-  property var list: []
-  // class -> { id, name, icon } or null, looked up in the desktop entries
-  // once per class; dropped whenever the installed entries change, so a
-  // lookup made before they finished loading is not kept as a miss.
-  property var appCache: ({})
-  // desktop entry id -> addresses, most recent first (Windows.runningByEntry).
-  // Replaced, never mutated, so the rows' bindings on it re-evaluate.
-  property var running: ({})
+  // Parsed by Windows.parseClients.
+  property var openWindows: []
+  // Window class -> { id, name, icon } of its desktop entry, or null when
+  // none matches. A Map, because window classes are arbitrary strings and
+  // "__proto__" is not a safe plain-object key. Emptied whenever the
+  // installed entries change, so a lookup made before they finished loading
+  // is not remembered as a miss.
+  property var appByClass: new Map()
+  // Desktop entry id -> window addresses, most recent first. Replaced rather
+  // than mutated, so the running markers bound to it re-evaluate.
+  property var windowsByAppId: new Map()
 
-  readonly property bool wanted: windows.menu.opened && !windows.menu.dmenuActive
-    && (windows.menu.activeTab === "windows"
-        || (windows.menu.activeTab === "all" && windows.menu.inAll("windows")))
+  // Hyprland events that change what the list shows. Several can arrive for
+  // one change (openwindow, then the title), so they restart a short timer
+  // rather than each reading the list.
+  readonly property var refreshEvents: [
+    "openwindow", "closewindow",
+    "movewindow", "movewindowv2",
+    "windowtitle", "windowtitlev2",
+    "changefloatingmode"
+  ]
+
+  readonly property bool windowRowsOnScreen: tracker.menu.opened && !tracker.menu.dmenuActive
+    && (tracker.menu.activeTab === "windows"
+        || (tracker.menu.activeTab === "all" && tracker.menu.inAll("windows")))
 
   function refresh() {
-    if (clientsProc.running) { refreshTimer.restart(); return }
-    clientsProc.command = windows.menu.boundedCommand("hyprctl -j clients", 3, 1048576)
+    if (clientsProc.running) {
+      refreshTimer.restart()
+      return
+    }
+    clientsProc.command = tracker.menu.boundedCommand("hyprctl -j clients", 3, 1048576)
     clientsProc.running = true
   }
 
-  function appInfo(cls) {
-    var key = String(cls || "")
+  function appForClass(windowClass) {
+    const key = String(windowClass || "")
     if (!key) return null
-    if (windows.appCache.hasOwnProperty(key)) return windows.appCache[key]
-    var info = null
+    if (tracker.appByClass.has(key)) return tracker.appByClass.get(key)
+
+    let app = null
     try {
-      var entry = DesktopEntries.heuristicLookup(key) || windows.webappEntry(key)
-      if (entry) info = { id: String(entry.id || ""), name: String(entry.name || ""), icon: String(entry.icon || "") }
-    } catch (e) {
-      info = null
+      const entry = DesktopEntries.heuristicLookup(key) || tracker.findWebappEntry(key)
+      if (entry) app = { id: String(entry.id || ""), name: String(entry.name || ""), icon: String(entry.icon || "") }
+    } catch (error) {
+      app = null
     }
-    windows.appCache[key] = info
-    return info
+    tracker.appByClass.set(key, app)
+    return app
   }
 
   // A web app whose class names only its URL: its host against the
-  // installed entries' names (Windows.webappKeys has the rules).
-  function webappEntry(cls) {
-    var keys = Windows.webappKeys(cls)
-    if (keys.length === 0) return null
-    var values = (DesktopEntries.applications && DesktopEntries.applications.values) || []
-    for (var k = 0; k < keys.length; k++)
-      for (var i = 0; i < values.length; i++)
-        if (values[i] && Windows.normalizeName(values[i].name) === keys[k]) return values[i]
+  // installed entries' names (Windows.webappNameKeys has the rules).
+  function findWebappEntry(windowClass) {
+    const nameKeys = Windows.webappNameKeys(windowClass)
+    if (nameKeys.length === 0) return null
+    const entries = Array.from((DesktopEntries.applications && DesktopEntries.applications.values) || [])
+    for (const nameKey of nameKeys) {
+      const entry = entries.find(candidate => candidate && Windows.normalizeName(candidate.name) === nameKey)
+      if (entry) return entry
+    }
     return null
   }
 
-  function updateRunning() {
-    windows.running = Windows.runningByEntry(windows.list, function(cls) {
-      var info = windows.appInfo(cls)
-      return info ? info.id : ""
+  function updateWindowsByAppId() {
+    tracker.windowsByAppId = Windows.windowsByAppId(tracker.openWindows, windowClass => {
+      const app = tracker.appForClass(windowClass)
+      return app ? app.id : ""
     })
   }
 
-  function windowCount(appId) {
-    var addresses = windows.running[String(appId || "")]
+  function windowCountOf(appId) {
+    const addresses = tracker.windowsByAppId.get(String(appId || ""))
     return addresses ? addresses.length : 0
   }
 
-  // The most recently focused window of an application, or "" when it has
-  // none open.
-  function windowFor(appId) {
-    var addresses = windows.running[String(appId || "")]
+  // The address of an application's most recently focused window, or ""
+  // when it has none open.
+  function latestWindowOf(appId) {
+    const addresses = tracker.windowsByAppId.get(String(appId || ""))
     return addresses && addresses.length > 0 ? addresses[0] : ""
   }
 
-  function rows(query) {
-    return Windows.windowRows(windows.list, query, windows.appInfo)
+  function windowRows(query) {
+    return Windows.windowRows(tracker.openWindows, query, tracker.appForClass)
   }
 
-  // Not `focus`: every Item already has a `focus` property, which wins.
+  // Not named `focus`: every Item already has a `focus` property, and the
+  // property wins over a method of the same name.
   function focusWindow(address) {
-    var command = Windows.focusCommand(address)
+    const command = Windows.focusCommand(address)
     if (command) Quickshell.execDetached(command)
   }
 
   Connections {
-    target: windows.menu
+    target: tracker.menu
     function onOpenedChanged() {
-      if (windows.menu.opened) windows.refresh()
+      if (tracker.menu.opened) tracker.refresh()
     }
   }
 
-  // Several events arrive for one change (openwindow, then the title), so
-  // they are coalesced into one read.
   Timer {
     id: refreshTimer
     interval: 120
-    onTriggered: windows.refresh()
+    onTriggered: tracker.refresh()
   }
 
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (!windows.menu.opened) return
-      var name = String(event && event.name || "")
-      if (/^(openwindow|closewindow|movewindow|movewindowv2|windowtitle|windowtitlev2|changefloatingmode)$/.test(name))
-        refreshTimer.restart()
+      if (!tracker.menu.opened) return
+      const eventName = String((event && event.name) || "")
+      if (tracker.refreshEvents.includes(eventName)) refreshTimer.restart()
     }
   }
 
   Connections {
     target: DesktopEntries.applications
     function onValuesChanged() {
-      windows.appCache = ({})
-      windows.updateRunning()
+      tracker.appByClass = new Map()
+      tracker.updateWindowsByAppId()
     }
   }
 
@@ -128,10 +144,10 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        if (!windows.menu.opened) return
-        windows.list = Windows.parseClients(text)
-        windows.updateRunning()
-        if (windows.wanted) windows.menu.rebuildDisplay(true)
+        if (!tracker.menu.opened) return
+        tracker.openWindows = Windows.parseClients(text)
+        tracker.updateWindowsByAppId()
+        if (tracker.windowRowsOnScreen) tracker.menu.rebuildDisplay(true)
       }
     }
   }

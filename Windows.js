@@ -1,233 +1,299 @@
-// Open windows for the Windows tab and All's Windows section: the client list
-// Hyprland reports, made safe to show, grouped by workspace and filtered by
-// the query. Pure data in, data out -- nothing here touches QML -- so it runs
-// under node. Reading the list and focusing a window live in
-// WindowsController.qml.
+// Open windows for the Windows tab, All's Windows section and the running
+// marker in Apps: the client list Hyprland reports, made safe to show,
+// grouped by workspace, filtered by the query and matched to applications.
+// Pure data in, data out -- nothing here touches QML -- so it runs under
+// node. Reading the list and focusing a window live in WindowsController.qml.
+//
+// Written in ES2015+ (const/let, arrows, Map). Quickshell's engine supports
+// it, with one exception worth knowing: object rest/spread (`{ ...rest }`,
+// ES2018) does not parse, and one syntax error unloads the whole module.
 
 // Hyprland addresses are hex pointers ("0xaaab131000f0"). Anything else is
-// not a window this tab will hand to a dispatcher.
-var ADDRESS_PATTERN = /^0x[0-9a-fA-F]{1,16}$/
+// not a window this module will hand to a dispatcher.
+const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{1,16}$/
 
 // Past this many the list is noise rather than a switcher, and the client
 // JSON is bounded anyway.
-var MAX_WINDOWS = 200
+const MAX_WINDOWS = 200
+const MAX_CLASS_LENGTH = 256
+const MAX_TITLE_LENGTH = 512
+const MAX_WORKSPACE_NAME_LENGTH = 128
+
+const SPECIAL_WORKSPACE_PREFIX = "special:"
+// The special workspace SUPER + S toggles.
+const SCRATCHPAD_NAME = "scratchpad"
+// Shown for a window whose application has no icon to borrow.
+const FALLBACK_WINDOW_ICON = "󰖯"
+
+// How well a window matches the query; lower sorts first.
+const MatchRank = Object.freeze({
+  NO_MATCH: -1,
+  // The app name or title starts with the query. Without a query every
+  // window ranks here, so the list keeps its workspace order.
+  PREFIX: 0,
+  // The app name or title contains the query.
+  SUBSTRING: 1,
+  // Every word is found, but across the class and workspace as well.
+  OTHER_FIELD: 2
+})
+
+// ------------------------------------------------------------ parsing ----
 
 function isAddress(value) {
   return ADDRESS_PATTERN.test(String(value || ""))
 }
 
-function text(value, max) {
-  var s = String(value === null || value === undefined ? "" : value)
-  return s.length > max ? s.slice(0, max) : s
+function boundedString(value, maxLength) {
+  const text = value === null || value === undefined ? "" : String(value)
+  return text.slice(0, maxLength)
 }
 
-// `hyprctl -j clients` to [{ address, cls, title, workspaceId, workspaceName,
-// special, floating, focus, pid }]. Unmapped and hidden clients (a window
-// being torn down, a tab of a group) are left out; so is anything without a
-// usable address. Malformed input is an empty list, never an exception.
-function parseClients(raw) {
-  var list
+// Unmapped and hidden clients (a window being torn down, a background tab of
+// a group) are not windows anyone can switch to.
+function isSwitchableClient(client) {
+  return !!client && typeof client === "object"
+    && isAddress(client.address)
+    && client.mapped !== false
+    && client.hidden !== true
+}
+
+function toOpenWindow(client) {
+  const workspace = client.workspace && typeof client.workspace === "object" ? client.workspace : {}
+  const workspaceName = boundedString(workspace.name, MAX_WORKSPACE_NAME_LENGTH)
+  const workspaceId = Number.isFinite(Number(workspace.id)) ? Number(workspace.id) : 0
+  const focusHistoryId = Number(client.focusHistoryID)
+  return {
+    address: String(client.address),
+    windowClass: boundedString(client.class || client.initialClass, MAX_CLASS_LENGTH),
+    title: boundedString(client.title || client.initialTitle, MAX_TITLE_LENGTH),
+    workspaceId: workspaceId,
+    workspaceName: workspaceName,
+    // Special workspaces have negative ids and "special:<name>" names.
+    isSpecialWorkspace: workspaceName.startsWith(SPECIAL_WORKSPACE_PREFIX) || workspaceId < 0,
+    isFloating: client.floating === true,
+    // Hyprland's focusHistoryID: 0 is the window focused last. A window
+    // without one sorts after every window that has one.
+    focusRecency: Number.isFinite(focusHistoryId) ? focusHistoryId : MAX_WINDOWS
+  }
+}
+
+// `hyprctl -j clients` output to the windows worth listing, each shaped by
+// toOpenWindow. Malformed input is an empty list, never an exception.
+function parseClients(json) {
+  let clients
   try {
-    list = JSON.parse(String(raw || ""))
-  } catch (e) {
+    clients = JSON.parse(String(json || ""))
+  } catch (error) {
     return []
   }
-  if (!Array.isArray(list)) return []
-
-  var out = []
-  for (var i = 0; i < list.length && out.length < MAX_WINDOWS; i++) {
-    var c = list[i]
-    if (!c || typeof c !== "object") continue
-    if (!isAddress(c.address)) continue
-    if (c.mapped === false || c.hidden === true) continue
-    var ws = c.workspace && typeof c.workspace === "object" ? c.workspace : {}
-    var wsName = text(ws.name, 128)
-    var wsId = Number(ws.id)
-    if (!isFinite(wsId)) wsId = 0
-    out.push({
-      address: String(c.address),
-      cls: text(c.class || c.initialClass, 256),
-      title: text(c.title || c.initialTitle, 512),
-      workspaceId: wsId,
-      workspaceName: wsName,
-      // Special workspaces have negative ids and "special:<name>" names.
-      special: wsName.indexOf("special:") === 0 || wsId < 0,
-      floating: c.floating === true,
-      focus: isFinite(Number(c.focusHistoryID)) ? Number(c.focusHistoryID) : MAX_WINDOWS,
-      pid: Number(c.pid) || 0
-    })
-  }
-  return out
+  if (!Array.isArray(clients)) return []
+  return clients.filter(isSwitchableClient).slice(0, MAX_WINDOWS).map(toOpenWindow)
 }
 
-// What a workspace is called on screen: "2", "Scratchpad" for the one
-// SUPER + S toggles, "<name> (special)" for any other special workspace.
-function workspaceLabel(win) {
-  if (!win) return ""
-  if (win.special) {
-    var name = win.workspaceName.replace(/^special:/, "")
-    if (!name || name === "scratchpad") return "Scratchpad"
-    return name + " (special)"
-  }
-  return win.workspaceName || String(win.workspaceId)
+// --------------------------------------------------------- workspaces ----
+
+// "special:music" -> "music"; "" for the unnamed special workspace.
+function specialWorkspaceName(openWindow) {
+  const name = openWindow.workspaceName
+  return name.startsWith(SPECIAL_WORKSPACE_PREFIX) ? name.slice(SPECIAL_WORKSPACE_PREFIX.length) : name
 }
+
+function isOnScratchpad(openWindow) {
+  if (!openWindow.isSpecialWorkspace) return false
+  const name = specialWorkspaceName(openWindow)
+  return name === "" || name === SCRATCHPAD_NAME
+}
+
+// What a workspace is called in full: "2", "Scratchpad", "music (special)".
+function workspaceLabel(openWindow) {
+  if (isOnScratchpad(openWindow)) return "Scratchpad"
+  if (openWindow.isSpecialWorkspace) return `${specialWorkspaceName(openWindow)} (special)`
+  return openWindow.workspaceName || String(openWindow.workspaceId)
+}
+
+// The short form for a row's right-hand column: "ws 2", "scratch", "music".
+function workspaceTrail(openWindow) {
+  if (isOnScratchpad(openWindow)) return "scratch"
+  if (openWindow.isSpecialWorkspace) return specialWorkspaceName(openWindow)
+  return `ws ${openWindow.workspaceName || openWindow.workspaceId}`
+}
+
+// ------------------------------------------------------------ sorting ----
+
+function compareText(a, b) {
+  if (a === b) return 0
+  return a < b ? -1 : 1
+}
+
+// Most recently focused first.
+function compareByRecency(a, b) {
+  return a.focusRecency - b.focusRecency || compareText(a.address, b.address)
+}
+
+// Regular workspaces in number order, then special ones by name; inside a
+// workspace, the most recently focused window first.
+function compareByWorkspaceThenRecency(a, b) {
+  if (a.isSpecialWorkspace !== b.isSpecialWorkspace) return a.isSpecialWorkspace ? 1 : -1
+  const byWorkspace = a.isSpecialWorkspace
+    ? compareText(a.workspaceName, b.workspaceName)
+    : a.workspaceId - b.workspaceId
+  return byWorkspace || compareByRecency(a, b)
+}
+
+// ----------------------------------------------------------- matching ----
+
+// Every word of the query has to appear somewhere in the title, the app
+// name, the class or the workspace. See MatchRank for the order.
+function matchRank(openWindow, appName, query) {
+  const needle = String(query || "").trim().toLowerCase()
+  if (!needle) return MatchRank.PREFIX
+
+  const title = openWindow.title.toLowerCase()
+  const name = String(appName || "").toLowerCase()
+  const searchable = [
+    title,
+    name,
+    openWindow.windowClass.toLowerCase(),
+    workspaceLabel(openWindow).toLowerCase(),
+    workspaceTrail(openWindow).toLowerCase()
+  ].join(" ")
+
+  const everyWordFound = needle.split(/\s+/).every(word => searchable.includes(word))
+  if (!everyWordFound) return MatchRank.NO_MATCH
+  if (name.startsWith(needle) || title.startsWith(needle)) return MatchRank.PREFIX
+  if (name.includes(needle) || title.includes(needle)) return MatchRank.SUBSTRING
+  return MatchRank.OTHER_FIELD
+}
+
+// --------------------------------------------------------------- rows ----
+
+// "Zen Browser · floating". The workspace has its own column; only a special
+// workspace other than the scratchpad is also named here, because the
+// column has room for its short name alone.
+function windowDetail(openWindow, appName) {
+  const parts = [appName]
+  if (openWindow.isSpecialWorkspace && !isOnScratchpad(openWindow)) parts.push(workspaceLabel(openWindow))
+  if (openWindow.isFloating) parts.push("floating")
+  return parts.join(" · ")
+}
+
+// The menu's row shape (queryRow in Menu.qml). Every field is set on every
+// row: a QML ListModel fixes its roles on the first row appended, and a row
+// missing one silently loses it.
+function toWindowRow(match) {
+  const openWindow = match.openWindow
+  const appIcon = match.app && match.app.icon ? String(match.app.icon) : ""
+  return {
+    itemId: `window:${openWindow.address}`,
+    disabled: false,
+    kind: "window",
+    icon: appIcon ? "" : FALLBACK_WINDOW_ICON,
+    iconFont: "",
+    appIcon: appIcon,
+    appId: openWindow.windowClass,
+    label: openWindow.title || match.appName || "(untitled)",
+    target: openWindow.address,
+    detail: windowDetail(openWindow, match.appName),
+    path: "",
+    childCount: 0,
+    action: "",
+    provider: "",
+    score: match.rank,
+    section: "",
+    trailText: workspaceTrail(openWindow)
+  }
+}
+
+// appForClass(windowClass) -> { id, name, icon } of the matching desktop
+// entry, or null. Without one, a web app is named by its host and anything
+// else by its class.
+function windowRows(openWindows, query, appForClass) {
+  const hasQuery = String(query || "").trim() !== ""
+  const matches = (openWindows || []).map(openWindow => {
+    const app = (appForClass && appForClass(openWindow.windowClass)) || null
+    const appName = app && app.name
+      ? String(app.name)
+      : webappHost(openWindow.windowClass) || openWindow.windowClass
+    return { openWindow: openWindow, app: app, appName: appName, rank: matchRank(openWindow, appName, query) }
+  })
+  return matches
+    .filter(match => match.rank !== MatchRank.NO_MATCH)
+    .sort((a, b) => (hasQuery ? a.rank - b.rank : 0) || compareByWorkspaceThenRecency(a.openWindow, b.openWindow))
+    .map(toWindowRow)
+}
+
+// ----------------------------------------------------------- web apps ----
 
 // Chromium-family web apps (omarchy-launch-webapp) get a class built from
 // the URL: "chrome-app.hey.com__-Default", "chrome-web.whatsapp.com__-Default".
 // Their desktop entries often carry no StartupWMClass, so the class alone
 // matches nothing; the host is what is left to go on.
-var WEBAPP_CLASS = /^(?:chrome|chromium|brave|msedge|vivaldi)-([A-Za-z0-9.-]+)__?.*-[A-Za-z0-9 ]+$/
-var HOST_NOISE = ["www", "app", "web", "m", "mobile"]
+const WEBAPP_CLASS_PATTERN = /^(?:chrome|chromium|brave|msedge|vivaldi)-([A-Za-z0-9.-]+)__?.*-[A-Za-z0-9 ]+$/
+// Host labels that say nothing about which app it is.
+const UNINFORMATIVE_HOST_LABELS = ["www", "app", "web", "m", "mobile"]
 
-function webappHost(cls) {
-  var m = WEBAPP_CLASS.exec(String(cls || ""))
-  return m ? m[1].toLowerCase() : ""
+function webappHost(windowClass) {
+  const match = WEBAPP_CLASS_PATTERN.exec(String(windowClass || ""))
+  return match ? match[1].toLowerCase() : ""
 }
 
 // Names compared the way people write them: "Music For Programming" and
 // "musicforprogramming" are the same app.
-function normalizeName(value) {
-  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
+function normalizeName(name) {
+  return String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
 }
 
-// What a web app's desktop entry may be called, most specific first: the
-// host without its TLD run together, then each meaningful label.
-// "musicforprogramming.net" -> ["musicforprogramming"];
-// "app.hey.com" -> ["apphey", "hey"].
-function webappKeys(cls) {
-  var host = webappHost(cls)
+// What a web app's desktop entry may be called, normalized, most specific
+// first: the host without its TLD run together, then each informative label.
+//   "musicforprogramming.net" -> ["musicforprogramming"]
+//   "app.hey.com"             -> ["apphey", "hey"]
+function webappNameKeys(windowClass) {
+  const host = webappHost(windowClass)
   if (!host) return []
-  var labels = host.split(".")
-  if (labels.length > 1) labels.pop()
-  var keys = [normalizeName(labels.join(""))]
-  for (var i = 0; i < labels.length; i++) {
-    var key = normalizeName(labels[i])
-    if (key.length > 1 && HOST_NOISE.indexOf(key) < 0 && keys.indexOf(key) < 0) keys.push(key)
-  }
-  return keys.filter(function(k) { return k })
+  const labels = host.split(".")
+  const labelsWithoutTld = labels.length > 1 ? labels.slice(0, -1) : labels
+  const wholeHost = normalizeName(labelsWithoutTld.join(""))
+  const informativeLabels = labelsWithoutTld
+    .map(normalizeName)
+    .filter(label => label.length > 1 && !UNINFORMATIVE_HOST_LABELS.includes(label))
+  const keys = [wholeHost, ...informativeLabels].filter(key => key !== "")
+  return keys.filter((key, index) => keys.indexOf(key) === index)
 }
 
-// Short form for the right-hand column of a row.
-function workspaceTrail(win) {
-  if (!win) return ""
-  if (win.special) {
-    var name = win.workspaceName.replace(/^special:/, "")
-    return !name || name === "scratchpad" ? "scratch" : name
+// ------------------------------------------------------- running apps ----
+
+// Which applications have windows open: desktop entry id -> addresses, most
+// recently focused first, so the first address is the window to switch to.
+// appIdForClass(windowClass) is the matching entry's id, or "" when none
+// matches (that window marks no application).
+function windowsByAppId(openWindows, appIdForClass) {
+  const byAppId = new Map()
+  const byRecency = (openWindows || []).slice().sort(compareByRecency)
+  for (const openWindow of byRecency) {
+    const appId = appIdForClass ? String(appIdForClass(openWindow.windowClass) || "") : ""
+    if (!appId) continue
+    if (!byAppId.has(appId)) byAppId.set(appId, [])
+    byAppId.get(appId).push(openWindow.address)
   }
-  return "ws " + (win.workspaceName || String(win.workspaceId))
-}
-
-// Workspaces in number order with the special ones last; inside a workspace
-// the most recently focused window first.
-function compareWindows(a, b) {
-  if (a.special !== b.special) return a.special ? 1 : -1
-  if (a.workspaceId !== b.workspaceId) return a.special ? b.workspaceId - a.workspaceId : a.workspaceId - b.workspaceId
-  if (a.focus !== b.focus) return a.focus - b.focus
-  return a.address < b.address ? -1 : 1
-}
-
-// Lower is better, -1 for no match. Every word of the query has to appear
-// somewhere in the title, the class, the app name or the workspace; a title
-// or app name that starts with the query ranks first.
-function matchScore(win, appName, query) {
-  var q = String(query || "").toLowerCase().trim()
-  if (!q) return 0
-  var title = win.title.toLowerCase()
-  var name = String(appName || "").toLowerCase()
-  var cls = win.cls.toLowerCase()
-  var haystack = [title, name, cls, workspaceLabel(win).toLowerCase(), workspaceTrail(win)].join(" ")
-  var words = q.split(/\s+/)
-  for (var i = 0; i < words.length; i++) if (haystack.indexOf(words[i]) < 0) return -1
-  if (name.indexOf(q) === 0 || title.indexOf(q) === 0) return 0
-  if (name.indexOf(q) >= 0 || title.indexOf(q) >= 0) return 1
-  return 2
-}
-
-// windows: parsed clients. appInfo(cls) -> { name, icon } or null, from the
-// desktop entries. Returns the menu's row shape (see queryRow in Menu.qml),
-// kind "window", with the address as the target.
-function windowRows(windows, query, appInfo) {
-  var picked = []
-  var list = windows || []
-  for (var i = 0; i < list.length; i++) {
-    var win = list[i]
-    var info = (appInfo && appInfo(win.cls)) || null
-    var appName = info && info.name ? String(info.name) : (webappHost(win.cls) || win.cls)
-    var score = matchScore(win, appName, query)
-    if (score < 0) continue
-    picked.push({ win: win, info: info, appName: appName, score: score })
-  }
-
-  var q = String(query || "").trim()
-  picked.sort(function(a, b) {
-    if (q && a.score !== b.score) return a.score - b.score
-    return compareWindows(a.win, b.win)
-  })
-
-  var rows = []
-  for (var j = 0; j < picked.length; j++) {
-    var p = picked[j]
-    // The workspace is the right-hand column; a special one other than the
-    // scratchpad is named in full here, since the column only has room for
-    // its short name.
-    var details = [p.appName]
-    if (p.win.special && workspaceLabel(p.win) !== "Scratchpad") details.push(workspaceLabel(p.win))
-    if (p.win.floating) details.push("floating")
-    rows.push({
-      itemId: "window:" + p.win.address,
-      disabled: false,
-      kind: "window",
-      icon: p.info && p.info.icon ? "" : "󰖯",
-      iconFont: "",
-      appIcon: p.info && p.info.icon ? String(p.info.icon) : "",
-      appId: p.win.cls,
-      label: p.win.title || p.appName || "(untitled)",
-      target: p.win.address,
-      detail: details.join(" · "),
-      path: "",
-      childCount: 0,
-      action: "",
-      provider: "",
-      score: p.score,
-      section: "",
-      trailText: workspaceTrail(p.win)
-    })
-  }
-  return rows
-}
-
-// Which installed applications have windows open: desktop entry id ->
-// addresses, most recently focused first, so the first one is the window to
-// switch to. entryIdFor(cls) is the desktop entry id for a window class, or
-// "" when no entry matches (that window marks nothing).
-function runningByEntry(windows, entryIdFor) {
-  var sorted = (windows || []).slice().sort(function(a, b) {
-    if (a.focus !== b.focus) return a.focus - b.focus
-    return a.address < b.address ? -1 : 1
-  })
-  var out = {}
-  for (var i = 0; i < sorted.length; i++) {
-    var id = entryIdFor ? String(entryIdFor(sorted[i].cls) || "") : ""
-    if (!id) continue
-    if (!out.hasOwnProperty(id)) out[id] = []
-    out[id].push(sorted[i].address)
-  }
-  return out
+  return byAppId
 }
 
 // The right-hand text of a running application's row.
-function runningLabel(count) {
-  if (!(count > 0)) return ""
-  return count === 1 ? "running" : count + " windows"
+function runningLabel(windowCount) {
+  if (!(windowCount > 0)) return ""
+  return windowCount === 1 ? "running" : `${windowCount} windows`
 }
+
+// ----------------------------------------------------------- focusing ----
 
 // Focusing a window on a hidden workspace (or the scratchpad) brings that
 // workspace up. Lua-config Hyprland takes hl.dsp.focus; older builds only
 // know focuswindow, so fall back to it as omarchy-launch-or-focus does. The
 // address arrives as $1, never spliced into the script.
-var FOCUS_SCRIPT = 'hyprctl dispatch "hl.dsp.focus({ window = \\"address:$1\\" })" >/dev/null 2>&1'
+const FOCUS_SCRIPT = 'hyprctl dispatch "hl.dsp.focus({ window = \\"address:$1\\" })" >/dev/null 2>&1'
   + ' || hyprctl dispatch focuswindow "address:$1" >/dev/null'
 
+// The argv that focuses a window, or null for anything but an address.
 function focusCommand(address) {
   if (!isAddress(address)) return null
   return ["bash", "-c", FOCUS_SCRIPT, "omarchy-menu-focus", String(address)]
@@ -235,19 +301,20 @@ function focusCommand(address) {
 
 if (typeof module !== "undefined") {
   module.exports = {
-    MAX_WINDOWS: MAX_WINDOWS,
-    isAddress: isAddress,
-    parseClients: parseClients,
-    workspaceLabel: workspaceLabel,
-    workspaceTrail: workspaceTrail,
-    compareWindows: compareWindows,
-    matchScore: matchScore,
-    windowRows: windowRows,
-    runningByEntry: runningByEntry,
-    runningLabel: runningLabel,
-    webappHost: webappHost,
-    webappKeys: webappKeys,
-    normalizeName: normalizeName,
-    focusCommand: focusCommand
+    MAX_WINDOWS,
+    MatchRank,
+    isAddress,
+    parseClients,
+    workspaceLabel,
+    workspaceTrail,
+    compareByWorkspaceThenRecency,
+    matchRank,
+    windowRows,
+    webappHost,
+    webappNameKeys,
+    normalizeName,
+    windowsByAppId,
+    runningLabel,
+    focusCommand
   }
 }
