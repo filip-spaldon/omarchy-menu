@@ -199,6 +199,25 @@ eq(write.slice(-3), ["/d", "/d/f.json", "$(boom)"], "written content reaches bas
 assert(write[2].indexOf("boom") === -1, "written content never enters the script text")
 eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read path reaches perl as an argument")
 
+// ------------------------------------------------------- open-time cost --
+// Opening the menu must not run the guard batch (every `when:`/`checked:`
+// expression, ~200 processes): only an open that shows System rows does,
+// through ensureGuards, so the default open does not start ~200 processes.
+{
+  const fs = require("fs")
+  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  const functionBody = name => {
+    const start = menuSource.indexOf("function " + name + "(")
+    if (start < 0) return ""
+    const next = menuSource.indexOf("\n  function ", start + 1)
+    return menuSource.slice(start, next < 0 ? undefined : next)
+  }
+  eq(/evaluateGuards\(\)/.test(functionBody("openExistingMenu")), false, "opening the menu does not evaluate guards")
+  eq(/evaluateGuards\(\)/.test(functionBody("rebuildItemsFromSources")), false, "reloading menu sources does not evaluate guards")
+  eq(/showsSystemRows\(\)\) root\.ensureGuards\(\)/.test(functionBody("rebuildDisplay")), true, "showing System rows evaluates guards")
+  eq(/root\.activeTab === "apps"/.test(functionBody("showsSystemRows")), false, "Apps never counts as System rows")
+}
+
 // ------------------------------------------------------------ kill rows --
 
 {
