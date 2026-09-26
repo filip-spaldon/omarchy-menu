@@ -265,6 +265,8 @@ Item {
 
   // The key hints under the results, for what the current tab can do.
   function footerHints() {
+    if (answerEngine.killActive)
+      return "Enter end process · Ctrl+E " + (answerEngine.killExpanded ? "one row per app" : "every process") + " · Esc clear"
     if (root.commandMode) return root.answerQuery ? "Answers only · Enter use · Ctrl+R new value · Esc clear"
                                                   : "Type a command after / · Esc clear"
     if (root.activeTab === "apps")
@@ -2303,6 +2305,10 @@ Item {
             // the rest of Linux knows, and Super+V handled directly for anyone
             // running this without that bind.
             root.pasteIntoFilter()
+            event.accepted = true
+          } else if (event.key === Qt.Key_E && event.modifiers === Qt.ControlModifier
+                     && answerEngine.toggleKillGroups()) {
+            // Only claimed while kill rows are on show.
             event.accepted = true
           } else if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)
                      && answerEngine.regenerateUtility()) {

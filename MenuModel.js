@@ -1494,45 +1494,96 @@ function parseKillQuery(query) {
 }
 
 // The process list the kill answer offers, one line per process:
-//   pid starttime pcpu rss comm
+//   pid starttime ppid pcpu rss comm
 // starttime is field 22 of /proc/<pid>/stat, the clock tick the process
 // started at. A pid can be reused once its process is gone; the pair of pid
 // and start time cannot, so it is what a kill row carries and what
-// KILL_PROGRAM checks before it signals anything. comm goes last because it
-// may contain spaces. ps sorts by CPU, so the busiest match comes first.
-// The script runs under Menu.boundedCommand (time and byte limits).
-var PROCESS_LIST_SCRIPT = "ps -eo pid=,pcpu=,rss=,comm= --sort=-pcpu | perl -ne '"
-  + "my ($pid, $rest) = /^\\s*(\\d+)\\s+(.*)$/ or next; "
+// KILL_PROGRAM checks before it signals anything. ppid groups an app's
+// helper processes under its main one. comm goes last because it may
+// contain spaces. ps sorts by CPU. The script runs under
+// Menu.boundedCommand (time and byte limits).
+var PROCESS_LIST_SCRIPT = "ps -eo pid=,ppid=,pcpu=,rss=,comm= --sort=-pcpu | perl -ne '"
+  + "my ($pid, $ppid, $rest) = /^\\s*(\\d+)\\s+(\\d+)\\s+(.*)$/ or next; "
   + "open(my $f, \"<\", \"/proc/$pid/stat\") or next; my $s = <$f>; close $f; "
   + "$s =~ s/^.*\\)\\s//s or next; my @x = split / /, $s; "
-  + "print \"$pid $x[19] $rest\\n\" if defined $x[19]'"
+  + "print \"$pid $x[19] $ppid $rest\\n\" if defined $x[19]'"
 
-// Entries of PROCESS_LIST_SCRIPT's output whose name contains `filter`,
-// in the order listed, at most `limit` of them.
-function parseProcessList(text, filter, limit) {
+// Processes from PROCESS_LIST_SCRIPT's output whose name contains `filter`,
+// at most `limit` of them.
+//
+// Grouped (the default): a process whose parent has the same name is a
+// helper of that parent -- a browser's renderers, a zygote's children -- so
+// only the top of each such chain is listed, carrying the CPU and memory of
+// the whole group and how many processes it holds. Separate instances (two
+// terminals, two shells) have differently named parents and stay separate.
+// Groups are ordered by their total CPU.
+//
+// expanded: every matching process on its own, in ps's CPU order.
+function parseProcessList(text, filter, limit, expanded) {
   var needle = String(filter || "").toLowerCase()
   var lines = String(text || "").split("\n")
-  var found = []
   var ceiling = limit > 0 ? limit : 8
+  var all = []
+  var byPid = {}
 
-  for (var i = 0; i < lines.length && found.length < ceiling; i++) {
-    var m = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(.+?)\s*$/.exec(lines[i])
+  for (var i = 0; i < lines.length; i++) {
+    var m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(.+?)\s*$/.exec(lines[i])
     if (!m) continue
-
     var pid = parseInt(m[1], 10)
-    var name = m[5]
-    if (!(pid > 0) || !name) continue
-    if (needle && name.toLowerCase().indexOf(needle) < 0) continue
-
-    found.push({
+    if (!(pid > 0) || byPid[pid]) continue
+    var proc = {
       pid: pid,
       start: m[2],
-      name: name,
-      cpu: parseFloat(m[3]) || 0,
-      rss: parseInt(m[4], 10) || 0
-    })
+      ppid: parseInt(m[3], 10),
+      name: m[6],
+      cpu: parseFloat(m[4]) || 0,
+      rss: parseInt(m[5], 10) || 0,
+      count: 1
+    }
+    all.push(proc)
+    byPid[pid] = proc
   }
 
+  function matches(p) { return !needle || p.name.toLowerCase().indexOf(needle) >= 0 }
+  function entry(p) {
+    return { pid: p.pid, start: p.start, name: p.name, cpu: p.cpu, rss: p.rss, count: p.count }
+  }
+
+  var found = []
+  if (expanded) {
+    for (var e = 0; e < all.length && found.length < ceiling; e++)
+      if (matches(all[e])) found.push(entry(all[e]))
+    return found
+  }
+
+  var groups = {}
+  var order = []
+  for (var k = 0; k < all.length; k++) {
+    var p = all[k]
+    if (!matches(p)) continue
+    // Up the chain while the parent carries the same name; the guard stops a
+    // cycle in a listing that changed while ps read it.
+    var root = p
+    for (var hops = 0; hops < 64; hops++) {
+      var parent = byPid[root.ppid]
+      if (!parent || parent === root || parent.name !== root.name) break
+      root = parent
+    }
+    var group = groups[root.pid]
+    if (!group) {
+      group = groups[root.pid] = { pid: root.pid, start: root.start, name: root.name, cpu: 0, rss: 0, count: 0 }
+      order.push(group)
+    }
+    group.cpu += p.cpu
+    group.rss += p.rss
+    group.count += 1
+  }
+
+  order.sort(function(a, b) { return b.cpu - a.cpu || b.rss - a.rss })
+  for (var g = 0; g < order.length && g < ceiling; g++) {
+    order[g].cpu = Math.round(order[g].cpu * 10) / 10
+    found.push(order[g])
+  }
   return found
 }
 
