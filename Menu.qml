@@ -673,8 +673,50 @@ Item {
     if (!value) return Quickshell.iconPath("application-x-executable", true)
     if (value.indexOf("file://") === 0 || value.indexOf("image://") === 0) return value
     if (value.charAt(0) === "/") return Util.fileUrl(value)
+    // The index first: Qt reads the icon theme once, when the shell starts,
+    // so an app installed since then would otherwise show the generic icon
+    // until a restart.
+    var found = root.fallbackIconIndex[value]
+    if (found) return Util.fileUrl(found)
     var themed = Quickshell.iconPath(value, true)
     return themed.length > 0 ? themed : Quickshell.iconPath("application-x-executable", true)
+  }
+
+  // App and device icons by name, rebuilt on every open the way AppLibrary
+  // builds its own: the XDG icon dirs and /usr/share/pixmaps, SVGs before
+  // PNGs, first hit per name. Reassigning the property re-evaluates every
+  // icon binding, so a new app's icon appears in the open list.
+  property var fallbackIconIndex: ({})
+
+  readonly property string iconScanScript: [
+    'dirs="$HOME/.icons $HOME/.local/share/icons"',
+    'IFS=":"; for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do dirs="$dirs $d/icons"; done; unset IFS',
+    'for ext in svg png; do',
+    '  for base in $dirs; do',
+    '    [ -d "$base" ] && find "$base" \\( -path "*/apps/*" -o -path "*/devices/*" \\) -name "*.$ext" -print0 2>/dev/null',
+    '  done',
+    '  find /usr/share/pixmaps -maxdepth 1 -name "*.$ext" -print0 2>/dev/null',
+    'done'
+  ].join("\n")
+
+  function refreshFallbackIcons() {
+    if (!root.usingFallbackApps || fallbackIconScan.running) return
+    fallbackIconScan.command = ["bash", "-c", 'timeout -k 1 10 bash -c "$1" | head -c 8388608', "bash", root.iconScanScript]
+    fallbackIconScan.running = true
+  }
+
+  function applyFallbackIcons(text) {
+    var next = ({})
+    var paths = String(text || "").split("\0")
+    for (var i = 0; i < paths.length; i++) {
+      var path = paths[i]
+      if (path.charAt(0) !== "/") continue
+      var file = path.slice(path.lastIndexOf("/") + 1)
+      var dot = file.lastIndexOf(".")
+      var name = dot > 0 ? file.slice(0, dot) : file
+      if (name && next[name] === undefined) next[name] = path
+    }
+    root.fallbackIconIndex = next
   }
 
   function appIconSource(icon) {
@@ -696,10 +738,6 @@ Item {
     var id = String(appId || "")
     if (!id) return
     Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-remove-launcher-entry", id, String(label || id)])
-  }
-
-  function refreshAppIcons() {
-    root.refreshAppIcons()
   }
 
   // The apps provider is QML-native: rows come from the shared AppLibrary
@@ -1833,6 +1871,7 @@ Item {
     // The shell may start before first-install packages have finished placing
     // their icons. Refresh here even when the desktop entry list did not change.
     if (root.appLibrary) root.appLibrary.refreshIcons()
+    else root.refreshFallbackIcons()
 
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -2051,6 +2090,12 @@ Item {
     function onValuesChanged() {
       if (root.providersLoaded["apps"]) root.mergeAppRows()
     }
+  }
+
+  Process {
+    id: fallbackIconScan
+    stdout: StdioCollector { id: fallbackIconOut; waitForEnd: true }
+    onExited: root.applyFallbackIcons(fallbackIconOut.text)
   }
 
   // The package-owned hidden-entry list AppLibrary applies. Read through the
