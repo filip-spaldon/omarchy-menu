@@ -40,6 +40,9 @@ var DEFAULT_CONFIG = {
   efforts: DEFAULT_EFFORTS,
   prefix: "ai ",
   maxAnswerRows: 6,
+  // Local addition (omarchy-menu-omni): a run still going after this many
+  // seconds is stopped and shown as timed out.
+  maxRunSeconds: 300,
   drainBaseCps: 60,
   rampDoubleMs: 500,
   maxCps: 2400,
@@ -100,6 +103,11 @@ function coerceField(key, value) {
     case "maxAnswerRows": {
       var rows = Number(value)
       if (isFinite(rows) && rows >= 1 && rows <= 40) return Math.round(rows)
+      return undefined
+    }
+    case "maxRunSeconds": {
+      var secs = Number(value)
+      if (isFinite(secs) && secs >= 10 && secs <= 3600) return Math.round(secs)
       return undefined
     }
     case "drainBaseCps": { // starting reveal rate, chars/sec — see DEFAULT_CONFIG comment

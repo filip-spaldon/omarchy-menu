@@ -343,11 +343,16 @@ Item {
     root.selectionFile = ""
     root.doneFile = ""
 
-    if (selection === null || selection === undefined) {
-      resultProc.command = ["bash", "-c", ": > " + Util.shellQuote(activeDoneFile)]
-    } else {
-      resultProc.command = ["bash", "-c", "printf '%s\\n' " + Util.shellQuote(selection) + " > " + Util.shellQuote(activeSelectionFile) + "; : > " + Util.shellQuote(activeDoneFile)]
-    }
+    // The caller made the selection file (mktemp) and removed the done file;
+    // both paths came over IPC. The selection is written only into a regular
+    // file of ours that is not a symlink, and the done file is created with
+    // noclobber, so neither write can be redirected elsewhere. Paths and the
+    // value reach bash as arguments.
+    var hasSelection = selection !== null && selection !== undefined
+    resultProc.command = ["bash", "-c",
+      'if [ "$3" = 1 ] && [ -f "$1" ] && [ ! -L "$1" ] && [ -O "$1" ]; then printf "%s\\n" "$4" > "$1"; fi; '
+        + '[ -L "$2" ] && exit 1; [ -e "$2" ] || { set -C; : > "$2"; }',
+      "bash", activeSelectionFile, activeDoneFile, hasSelection ? "1" : "0", hasSelection ? String(selection) : ""]
     resultProc.running = true
   }
 
@@ -498,9 +503,16 @@ Item {
 
   // Providers and guards keep their own exit codes -- both read them to tell a
   // batch that finished from one that was cut off -- so they take the deadline
-  // without a pipe, and their ceiling is applied as their output is collected.
+  // without a pipe. Their output goes to newline-split parsers, which buffer
+  // a line whole before handing it over, so the output guard relay bounds it
+  // at the source: no line over 16 KiB, no more than the helper ceiling in
+  // all (past it the script is stopped, which reads as cut off), and
+  // stderr capped. The collectors keep their own ceiling as well.
+  readonly property int helperLineCeiling: 16384      // 16 KiB
+
   function guardedCommand(script) {
-    return ["timeout", "-k", "2", String(root.helperDeadline), "bash", "-lc", script]
+    return ["timeout", "-k", "2", String(root.helperDeadline)].concat(
+      AiBackend.boundOutput(["bash", "-lc", script], root.helperLineCeiling, root.helperOutputCeiling, 4096, 16384))
   }
 
   function loadMenuSources() {
@@ -668,15 +680,14 @@ Item {
     if (root.appLibrary) { root.appLibrary.launch(appId, label); return }
     var id = String(appId || "")
     if (!id) return
-    Util.execDetached("uwsm-app -- gtk-launch " + Util.shellQuote(id + ".desktop"))
+    Quickshell.execDetached(["uwsm-app", "--", "gtk-launch", id + ".desktop"])
   }
 
   function removeApp(appId, label) {
     if (root.appLibrary) { root.appLibrary.remove(appId, label); return }
     var id = String(appId || "")
     if (!id) return
-    Util.execDetached(Util.shellQuote(root.omarchyPath + "/bin/omarchy-remove-launcher-entry")
-      + " " + Util.shellQuote(id) + " " + Util.shellQuote(String(label || id)))
+    Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-remove-launcher-entry", id, String(label || id)])
   }
 
   function refreshAppIcons() {
@@ -881,6 +892,23 @@ Item {
     Quickshell.execDetached(["gio", "open", path])
   }
 
+  // A search result opened with Enter. Anything whose default handler would
+  // run or install it -- a launchable type (FileSearch.isLaunchableName) or
+  // a file with the executable bit -- opens its folder instead, so a file
+  // that merely matched a search is never executed by it. The bit is tested
+  // when Enter is pressed; paths reach bash as arguments.
+  function openFile(path) {
+    if (!path) return
+    var slash = path.lastIndexOf("/")
+    var dir = slash > 0 ? path.slice(0, slash) : "/"
+    root.closeLauncher()
+    if (FileSearch.isLaunchableName(path.slice(slash + 1))) {
+      Quickshell.execDetached(["gio", "open", dir])
+      return
+    }
+    Quickshell.execDetached(["bash", "-c", FileSearch.OPEN_FILE_SCRIPT, "bash", path, dir])
+  }
+
   function enclosingDir(row) {
     if (row.kind === "folder") return row.target
     var slash = row.target.lastIndexOf("/")
@@ -893,7 +921,7 @@ Item {
 
   function copyPath(row) {
     root.closeLauncher()
-    Quickshell.execDetached(["wl-copy", "--", row.target])
+    root.copyText(row.target)
   }
 
 
@@ -1656,7 +1684,9 @@ Item {
       return // read-only hint
     } else if (row.kind === "shell") {
       root.runInTerminal(row.target)
-    } else if (row.kind === "file" || row.kind === "folder") {
+    } else if (row.kind === "file") {
+      root.openFile(row.target)
+    } else if (row.kind === "folder") {
       root.openPath(row.target)
     } else if (row.kind === "kill") {
       root.killProcess(row.target)
@@ -1737,16 +1767,24 @@ Item {
     applySerial = requestSerial
     opened = false
     filterText = ""
-    Util.execDetached("omarchy-launch-browser " + Util.shellQuote(url))
+    Quickshell.execDetached(["omarchy-launch-browser", String(url)])
   }
 
-  // printf rather than echo so the result lands without a trailing newline,
-  // and shellQuote so it lands as text however it was spelled.
   function copyToClipboard(text) {
     applySerial = requestSerial
     opened = false
     filterText = ""
-    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
+    root.copyText(text)
+  }
+
+  // Text reaches wl-copy on its stdin, exactly as given (no trailing
+  // newline), and of any size: an argument is limited to 128 KiB by the
+  // kernel, an AI answer may be larger. A copy asked for while one is being
+  // written replaces the queued one.
+  function copyText(text) {
+    clipboardProc.queued = String(text === null || text === undefined ? "" : text)
+    clipboardProc.hasQueued = true
+    if (!clipboardProc.running) clipboardProc.startNext()
   }
 
   function applySelected(id, action) {
@@ -1791,8 +1829,17 @@ Item {
   function openDmenu(payload) {
     requestSerial += 1
     mode = payload.mode === "input" ? "input" : "select"
-    dmenuPrompt = String(payload.prompt || (mode === "input" ? "Input" : "Select"))
-    dmenuOptions = Array.isArray(payload.options) ? payload.options : []
+    dmenuPrompt = MenuModel.sanitizeText(String(payload.prompt || (mode === "input" ? "Input" : "Select")), 256)
+    // Whatever a caller sends over IPC: at most 100000 options, and none
+    // over 64 KiB (the value is returned as typed, so a longer one is left
+    // out rather than cut).
+    var options = []
+    var given = Array.isArray(payload.options) ? payload.options : []
+    for (var o = 0; o < given.length && options.length < 100000; o++) {
+      var option = String(given[o] === null || given[o] === undefined ? "" : given[o])
+      if (option.length <= 65536) options.push(option)
+    }
+    dmenuOptions = options
     selectionFile = String(payload.selectionFile || "")
     doneFile = String(payload.doneFile || "")
     requestActive = !!doneFile
@@ -1941,6 +1988,25 @@ Item {
       }
       root.startNextProvider()
     }
+  }
+
+  Process {
+    id: clipboardProc
+    property string queued: ""
+    property bool hasQueued: false
+    property string sending: ""
+    command: ["wl-copy"]
+    function startNext() {
+      clipboardProc.sending = clipboardProc.queued
+      clipboardProc.hasQueued = false
+      clipboardProc.stdinEnabled = true
+      clipboardProc.running = true
+    }
+    onStarted: {
+      clipboardProc.write(clipboardProc.sending)
+      clipboardProc.stdinEnabled = false
+    }
+    onExited: if (clipboardProc.hasQueued) Qt.callLater(clipboardProc.startNext)
   }
 
   Process {

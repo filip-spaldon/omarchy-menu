@@ -48,7 +48,7 @@ consumers) retain their plain prompt without launcher tabs.
 
 | Shortcut | Action |
 | --- | --- |
-| Enter | Open the selected path with its default application |
+| Enter | Open the selected path with its default application. Files that would run or install rather than open (`.desktop`, AppImage, scripts, installers and packages, or anything with the executable bit) open their folder instead |
 | Alt+Enter | Open its containing folder |
 | Ctrl+C | Copy the path |
 | Ctrl+T | Open a terminal in the folder |
@@ -222,6 +222,9 @@ model or reasoning effort per agent for launcher questions — for example a
 cheap, fast model as above. Codex launcher questions skip `config.toml` (see
 below), so without an entry here they use Codex's built-in default model.
 Continuing in the terminal resumes on the CLI's own model.
+
+A question still running after `maxRunSeconds` (default 300, 10–3600) is
+stopped and shown as timed out.
 
 For compatibility with omarchy-find's `ai.json`, two older keys still work: an
 `"agent"` overrides the Omarchy default for the first-run preselection only

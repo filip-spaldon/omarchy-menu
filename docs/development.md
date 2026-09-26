@@ -51,6 +51,37 @@ node tests/ai_unit_test.js
 These suites exercise the JavaScript models and AI adapters. Use the live shell
 to check QML rendering, keyboard focus, plugin registration.
 
+## Safety checklist
+
+Anything that starts a process or reads outside input is checked against
+this list, in review and before a release:
+
+- **Processes**:
+  - bounded in time (`timeout`, or a deadline timer for AI runs),
+  - bounded in bytes (`head -c` for a collected output),
+  - output read line by line (`SplitParser`) goes through the output guard
+    relay (`AiBackend.boundOutput`), which also bounds line length.
+- **Arguments**:
+  - commands are started as argument arrays, never as shell text with values
+    spliced in; where bash is needed, values arrive as `$1`, `$2`, ...;
+  - a value from outside (a prompt, an id from an agent, a path) must not be
+    able to pass as an option: validate it, prefix it, or put it after `--`.
+- **Files**:
+  - read through `Settings.readFileCommand` (no symlinks, owner and size
+    checked);
+  - written through a temporary file and a rename (`Settings.writeCommand`),
+    or, for a caller's file, only when it is a regular non-symlink file of
+    ours;
+  - lists of paths are NUL-separated.
+- **Signals**: a process is identified by its pid and start time and
+  signalled through a pidfd, never by a pid that may have been reused.
+- **Opening things**:
+  - URLs are opened only for allowed schemes;
+  - files whose default handler runs or installs them open their folder
+    instead.
+- **Answers and displayed text**: capped in size, sanitized
+  (`MenuModel.sanitizeText`) and shown as plain text.
+
 ## Plugin lifecycle
 
 The manifest declares `kinds: ["menu", "bar-widget"]`. Enable it in

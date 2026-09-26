@@ -99,7 +99,7 @@ assert(sys.indexOf("--max-depth") !== -1, "System folders are depth-limited")
 assert(sys.indexOf("chromium") === -1, "browser folders are not excluded whole")
 assert(sys.indexOf("**/chromium/*") !== -1, "only a browser folder's contents are excluded")
 
-const parsed = FileSearch.parseLines(home + "/Docs/\n" + home + "/.config/hypr/\nrelative\n\n", true, home)
+const parsed = FileSearch.parseLines(home + "/Docs/\0" + home + "/.config/hypr/\0relative\0\0", true, home)
 eq(parsed.map(i => i.name), ["Docs", "hypr"], "parseLines keeps absolute paths and strips the trailing slash")
 eq(parsed.map(i => i.dir), ["~", "~/.config"], "parent dirs are shown relative to home")
 eq(parsed.map(i => i.isSystem), [false, true], "dotted paths are system paths")
@@ -119,7 +119,15 @@ eq(FileSearch.rankResults(items, "", 2, home, "relevance").length, 2, "results a
 eq(FileSearch.rankResults(items, "zzz", 9, home, "relevance"), [], "non-matching queries rank nothing")
 eq(FileSearch.scoreItem({ name: "Príloha.pdf", path: home + "/Príloha.pdf" }, "priloha"), 1, "matching ignores accents")
 
-eq(FileSearch.parseStatLines("1700000000\t/x\ngarbage\n0\t/y\n5\trelative\n"), { "/x": 1700000000000 }, "parseStatLines keeps valid lines only")
+eq(FileSearch.parseStatLines("1700000000\t/x\0garbage\0000\t/y\0005\trelative\0"), { "/x": 1700000000000 }, "parseStatLines keeps valid lines only")
+assert(argv.indexOf("--print0") !== -1, "fd prints NUL-separated paths")
+const tricky = FileSearch.parseLines(home + "/dl/evil\n/etc/passwd\0" + home + "/ok.txt\0", false, home)
+eq(tricky.map(i => i.path), [home + "/dl/evil\n/etc/passwd", home + "/ok.txt"], "a newline in a file name never splits it into another path")
+eq(FileSearch.parseStatLines("1700000000\t/a\nb\0"), { "/a\nb": 1700000000000 }, "stat output keeps names with newlines whole")
+for (const n of ["app.desktop", "tool.AppImage", "x.pkg.tar.zst", "setup.sh", "a.EXE", "i.deb"])
+  assert(FileSearch.isLaunchableName(n), n + " opens its folder, not itself")
+for (const n of ["doc.pdf", "notes.txt", ".bashrc", "README", "photo.jpg", "app.js"])
+  assert(!FileSearch.isLaunchableName(n), n + " opens normally")
 eq(FileSearch.formatMtime(new Date(2026, 8, 23, 9, 5).getTime(), new Date(2026, 8, 23, 18, 0).getTime()), "Today 09:05", "today")
 eq(FileSearch.formatMtime(new Date(2026, 8, 22, 9, 5).getTime(), new Date(2026, 8, 23, 18, 0).getTime()), "Yesterday 09:05", "yesterday")
 eq(FileSearch.formatMtime(new Date(2025, 0, 2, 9, 5).getTime(), new Date(2026, 8, 23, 18, 0).getTime()), "02/01/25 09:05", "older years")
@@ -243,6 +251,21 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
 
   const gone = spawnSync("sh", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim()
   eq(kill(gone + ":1"), 3, "a pid with no process sends nothing")
+}
+
+// --------------------------------------------------- opening a file ------
+{
+  const fs = require("fs"), os = require("os"), { spawnSync } = require("child_process")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-open-"))
+  const bin = path.join(dir, "bin"); fs.mkdirSync(bin)
+  fs.writeFileSync(path.join(bin, "gio"), '#!/bin/sh\nprintf "%s\\n" "$2"\n', { mode: 0o755 })
+  const plain = path.join(dir, "notes.txt"); fs.writeFileSync(plain, "x")
+  const exe = path.join(dir, "tool"); fs.writeFileSync(exe, "#!/bin/sh\n", { mode: 0o755 })
+  const open = (p) => spawnSync("bash", ["-c", FileSearch.OPEN_FILE_SCRIPT, "bash", p, dir],
+    { encoding: "utf8", env: Object.assign({}, process.env, { PATH: bin + ":" + process.env.PATH }) }).stdout.trim()
+  eq(open(plain), plain, "an ordinary file opens itself")
+  eq(open(exe), dir, "a file with the executable bit opens its folder")
+  fs.rmSync(dir, { recursive: true, force: true })
 }
 
 console.log("")

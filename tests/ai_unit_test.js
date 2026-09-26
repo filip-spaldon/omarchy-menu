@@ -1274,6 +1274,36 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   AiBackend.loadConfig(null, "")
 }
 
+// ------------------------------------------------ AI hardening (2.2) ----
+{
+  AiBackend.loadConfig(JSON.stringify({ agent: "claude" }), "")
+  AiBackend.cancel()
+  let g = AiBackend.beginGeneration("--dangerously-skip-permissions hi")
+  const pIdx = g.argv.indexOf("-p")
+  eq(g.argv[pIdx + 1], " --dangerously-skip-permissions hi", "a prompt starting with '-' can never be read as an option")
+  eq(AiBackend.session.prompt, "--dangerously-skip-permissions hi", "the prompt itself is kept as typed")
+
+  AiBackend.handleLine(g.generation, JSON.stringify({ type: "system", subtype: "init", session_id: "--resume-evil" }))
+  eq(AiBackend.session.sessionRef, null, "a session id that starts with '-' is never taken")
+  AiBackend.cancel()
+  g = AiBackend.beginGeneration("ok")
+  AiBackend.handleLine(g.generation, JSON.stringify({ type: "system", subtype: "init", session_id: "3f2a9c1e-1111-4222-8333-444455556666" }))
+  eq(AiBackend.session.sessionRef, "3f2a9c1e-1111-4222-8333-444455556666", "a plain session id is taken")
+  assert(!AiBackend.SESSION_REF_PATTERN.test("a b") && !AiBackend.SESSION_REF_PATTERN.test("x".repeat(200)),
+         "session ids with spaces or of unbounded length are refused")
+
+  eq(AiBackend.getConfig().maxRunSeconds, 300, "runs time out after five minutes by default")
+  const snap = AiBackend.timeOut(g.generation)
+  eq([snap.state, snap.errorKind], ["error", "timeout"], "a run past its deadline ends in a timeout error")
+  eq(AiBackend.handleExit(g.generation, 143).errorKind, "timeout", "the kill that follows does not replace the timeout message")
+  eq(AiBackend.timeOut(g.generation - 1), null, "a stale deadline changes nothing")
+  AiBackend.cancel()
+
+  eq(AiConfig.mergeConfig(JSON.stringify({ maxRunSeconds: 60 }), "").config.maxRunSeconds, 60, "ai.json sets the run deadline")
+  eq(AiConfig.mergeConfig(JSON.stringify({ maxRunSeconds: 5 }), "").config.maxRunSeconds, 300, "a deadline under 10 s is ignored")
+  AiBackend.loadConfig(null, "")
+}
+
 // ------------------------------------------------------------- summary ----
 
 console.log("")
