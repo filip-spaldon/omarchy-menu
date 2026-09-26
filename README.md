@@ -170,7 +170,7 @@ answer.
 | `uuid`, `password 24`, `epoch` | Generated values; Ctrl+R refreshes them |
 | `sha256 omarchy`, `base64 hello` | Developer utilities |
 | `github.com/basecamp/omarchy` | Open a URL |
-| `kill chromium` | Matching processes; Enter sends SIGTERM |
+| `kill chromium` | Matching apps, one row each with its helper processes counted in (a process whose parent has the same name belongs to it); Ctrl+E lists every process. Enter sends SIGTERM to the one listed, checked by pid and start time |
 | `shell ping sme.sk` | Enter runs the command in a new terminal, which stays open afterwards |
 
 Start a query with `/` for answers only: `/2+3`, `/100 km to miles`,

@@ -50,6 +50,12 @@ Item {
 
   property real processListedAt: 0
 
+  // Whether the rows on show are kill rows, and whether they list every
+  // process (Ctrl+E) instead of one row per app. Leaving the kill answer
+  // switches back to grouped.
+  property bool killActive: false
+  property bool killExpanded: false
+
   // The system's zone database, borrowed rather than reimplemented: the zone
   // list from timedatectl, and each zone's current offset from `date`. The
   // engine QML runs has no Intl, so the offset is what the clock is built on.
@@ -346,7 +352,11 @@ Item {
   // no listing per keystroke, and none at all until "kill" is typed.
   function killRows(query) {
     var filter = MenuModel.parseKillQuery(query)
-    if (filter === null) return null
+    if (answers.killActive !== (filter !== null)) answers.killActive = filter !== null
+    if (filter === null) {
+      if (answers.killExpanded) answers.killExpanded = false
+      return null
+    }
 
     answers.ensureProcessList()
 
@@ -357,7 +367,7 @@ Item {
       })]
     }
 
-    var found = MenuModel.parseProcessList(answers.processList, filter, 8)
+    var found = MenuModel.parseProcessList(answers.processList, filter, 8, answers.killExpanded)
     if (found.length === 0) {
       return [answers.menu.queryRow({
         kind: "kill", icon: "󰚌",
@@ -368,17 +378,29 @@ Item {
     var rows = []
     for (var i = 0; i < found.length; i++) {
       rows.push(answers.menu.queryRow({
-        id: "kill." + found[i].pid,
+        id: "kill." + found[i].pid + "." + found[i].start,
         kind: "kill",
         icon: "󰚌",
         label: found[i].name,
-        detail: "pid " + found[i].pid + " · " + found[i].cpu.toFixed(1)
-              + "% cpu · " + MenuModel.formatMemory(found[i].rss),
-        payload: String(found[i].pid)
+        // A group's figures are the whole app's: its processes summed.
+        detail: "pid " + found[i].pid
+              + (found[i].count > 1 ? " · " + found[i].count + " processes" : "")
+              + " · " + found[i].cpu.toFixed(1) + "% cpu · " + MenuModel.formatMemory(found[i].rss),
+        // pid and start time: Menu.killProcess signals only that process.
+        payload: MenuModel.killTarget(found[i].pid, found[i].start)
       }))
     }
 
     return rows
+  }
+
+  // Ctrl+E: one row per app, or every process. Claimed only while the kill
+  // answer is on show.
+  function toggleKillGroups() {
+    if (!answers.killActive) return false
+    answers.killExpanded = !answers.killExpanded
+    answers.menu.rebuildDisplay()
+    return true
   }
 
   // Held for a few seconds rather than debounced: the listing is what is
@@ -391,7 +413,7 @@ Item {
     if (answers.processList && now - answers.processListedAt < 5) return
     answers.processListedAt = now
 
-    processProc.command = answers.menu.boundedCommand("ps -eo pid,comm,pcpu,rss --sort=-pcpu --no-headers", 5, 262144)
+    processProc.command = answers.menu.boundedCommand(MenuModel.PROCESS_LIST_SCRIPT, 5, 262144)
     processProc.running = true
   }
 

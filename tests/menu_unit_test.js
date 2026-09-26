@@ -190,6 +190,61 @@ eq(write.slice(-3), ["/d", "/d/f.json", "$(boom)"], "written content reaches bas
 assert(write[2].indexOf("boom") === -1, "written content never enters the script text")
 eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read path reaches perl as an argument")
 
+// ------------------------------------------------------------ kill rows --
+
+{
+  const list = "  42 1234 1 12.5 2048 Web Content\n7 99 1 0.0 10 bash\nbad line\n"
+  eq(MenuModel.parseProcessList(list, "web", 8),
+     [{ pid: 42, start: "1234", name: "Web Content", cpu: 12.5, rss: 2048, count: 1 }], "a listed process keeps its start time and a name with spaces")
+  eq(MenuModel.parseProcessList(list, "", 8).length, 2, "malformed lines are skipped")
+
+  // pid start ppid pcpu rss comm: a browser with helpers, two separate
+  // terminals, and a helper whose parent is gone from the listing.
+  const tree = [
+    "300 30 100 5.0 1000 chromium",
+    "100 10 1 2.0 4000 chromium",
+    "101 11 100 1.5 500 chromium",
+    "400 40 300 0.5 100 chromium",
+    "150 15 100 0.1 50 chrome_crashpad",
+    "200 20 1 0.2 30 foot",
+    "201 21 1 0.1 30 foot",
+    "500 50 999 0.3 70 chromium"
+  ].join("\n")
+  const grouped = MenuModel.parseProcessList(tree, "chromium", 8)
+  eq(grouped.map((g) => [g.pid, g.count]), [[100, 4], [500, 1]], "an app's same-named helpers fold into its top process")
+  eq([grouped[0].cpu, grouped[0].rss, grouped[0].start], [9, 5600, "10"], "a group sums its CPU and memory and is killed by its top process")
+  eq(MenuModel.parseProcessList(tree, "foot", 8).length, 2, "separate instances with other parents stay separate")
+  eq(MenuModel.parseProcessList(tree, "chrom", 8).map((g) => [g.pid, g.name]), [[100, "chromium"], [500, "chromium"], [150, "chrome_crashpad"]],
+     "a differently named child is its own row; groups go by total CPU")
+  eq(MenuModel.parseProcessList(tree, "chromium", 8, true).map((p) => p.pid), [300, 100, 101, 400, 500],
+     "expanded lists every matching process in ps order")
+  assert(MenuModel.parseProcessList("1 1 2 0 0 x\n2 2 1 0 0 x", "x", 8).length <= 2, "a parent cycle in a torn listing still ends")
+  eq(MenuModel.killTarget(42, "1234"), "42:1234", "a kill row carries pid and start time")
+
+  const { spawn, spawnSync, execFileSync } = require("child_process")
+  const fs = require("fs")
+  const startOf = (pid) => fs.readFileSync("/proc/" + pid + "/stat", "utf8").replace(/^.*\)\s/s, "").split(" ")[19]
+  const alive = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return false } }
+  const kill = (target) => spawnSync("perl", ["-e", MenuModel.KILL_PROGRAM, "--", target]).status
+
+  const listed = execFileSync("bash", ["-c", MenuModel.PROCESS_LIST_SCRIPT], { encoding: "utf8" })
+  const self = MenuModel.parseProcessList(listed, "", 100000).find((p) => p.pid === process.pid)
+  assert(self && self.start === startOf(process.pid), "the listing reports each process's /proc start time")
+
+  const child = spawn("sleep", ["30"], { stdio: "ignore" })
+  const start = startOf(child.pid)
+  eq(kill(child.pid + ":" + (Number(start) + 1)), 4, "a start time that does not match sends nothing")
+  assert(alive(child.pid), "the process whose pid only matched is left alone")
+  eq(kill("not-a-target"), 2, "a malformed target is refused")
+  eq(kill(child.pid + ":" + start), 0, "the listed process is signalled")
+  spawnSync("sleep", ["0.2"])
+  assert(!alive(child.pid) || fs.readFileSync("/proc/" + child.pid + "/stat", "utf8").includes(") Z "), "the listed process is gone")
+  child.kill("SIGKILL")
+
+  const gone = spawnSync("sh", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim()
+  eq(kill(gone + ":1"), 3, "a pid with no process sends nothing")
+}
+
 console.log("")
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

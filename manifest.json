@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "omarchy-menu-omni",
   "name": "Omarchy Menu Omni",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "author": "filippaldo",
   "description": "Unified Omarchy launcher with app list/grid, system actions, file and folder search, configurable tabs, AI answers, calculator, conversions and developer utilities",
   "kinds": [
