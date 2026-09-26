@@ -36,13 +36,25 @@ Item {
     if (windows.appCache.hasOwnProperty(key)) return windows.appCache[key]
     var info = null
     try {
-      var entry = DesktopEntries.heuristicLookup(key)
+      var entry = DesktopEntries.heuristicLookup(key) || windows.webappEntry(key)
       if (entry) info = { name: String(entry.name || ""), icon: String(entry.icon || "") }
     } catch (e) {
       info = null
     }
     windows.appCache[key] = info
     return info
+  }
+
+  // A web app whose class names only its URL: its host against the
+  // installed entries' names (Windows.webappKeys has the rules).
+  function webappEntry(cls) {
+    var keys = Windows.webappKeys(cls)
+    if (keys.length === 0) return null
+    var values = (DesktopEntries.applications && DesktopEntries.applications.values) || []
+    for (var k = 0; k < keys.length; k++)
+      for (var i = 0; i < values.length; i++)
+        if (values[i] && Windows.normalizeName(values[i].name) === keys[k]) return values[i]
+    return null
   }
 
   function rows(query) {

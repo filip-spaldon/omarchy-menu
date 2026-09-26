@@ -72,6 +72,41 @@ function workspaceLabel(win) {
   return win.workspaceName || String(win.workspaceId)
 }
 
+// Chromium-family web apps (omarchy-launch-webapp) get a class built from
+// the URL: "chrome-app.hey.com__-Default", "chrome-web.whatsapp.com__-Default".
+// Their desktop entries often carry no StartupWMClass, so the class alone
+// matches nothing; the host is what is left to go on.
+var WEBAPP_CLASS = /^(?:chrome|chromium|brave|msedge|vivaldi)-([A-Za-z0-9.-]+)__?.*-[A-Za-z0-9 ]+$/
+var HOST_NOISE = ["www", "app", "web", "m", "mobile"]
+
+function webappHost(cls) {
+  var m = WEBAPP_CLASS.exec(String(cls || ""))
+  return m ? m[1].toLowerCase() : ""
+}
+
+// Names compared the way people write them: "Music For Programming" and
+// "musicforprogramming" are the same app.
+function normalizeName(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
+}
+
+// What a web app's desktop entry may be called, most specific first: the
+// host without its TLD run together, then each meaningful label.
+// "musicforprogramming.net" -> ["musicforprogramming"];
+// "app.hey.com" -> ["apphey", "hey"].
+function webappKeys(cls) {
+  var host = webappHost(cls)
+  if (!host) return []
+  var labels = host.split(".")
+  if (labels.length > 1) labels.pop()
+  var keys = [normalizeName(labels.join(""))]
+  for (var i = 0; i < labels.length; i++) {
+    var key = normalizeName(labels[i])
+    if (key.length > 1 && HOST_NOISE.indexOf(key) < 0 && keys.indexOf(key) < 0) keys.push(key)
+  }
+  return keys.filter(function(k) { return k })
+}
+
 // Short form for the right-hand column of a row.
 function workspaceTrail(win) {
   if (!win) return ""
@@ -117,7 +152,7 @@ function windowRows(windows, query, appInfo) {
   for (var i = 0; i < list.length; i++) {
     var win = list[i]
     var info = (appInfo && appInfo(win.cls)) || null
-    var appName = info && info.name ? String(info.name) : win.cls
+    var appName = info && info.name ? String(info.name) : (webappHost(win.cls) || win.cls)
     var score = matchScore(win, appName, query)
     if (score < 0) continue
     picked.push({ win: win, info: info, appName: appName, score: score })
@@ -132,7 +167,11 @@ function windowRows(windows, query, appInfo) {
   var rows = []
   for (var j = 0; j < picked.length; j++) {
     var p = picked[j]
-    var details = [p.appName, p.win.special ? workspaceLabel(p.win) : "Workspace " + workspaceLabel(p.win)]
+    // The workspace is the right-hand column; a special one other than the
+    // scratchpad is named in full here, since the column only has room for
+    // its short name.
+    var details = [p.appName]
+    if (p.win.special && workspaceLabel(p.win) !== "Scratchpad") details.push(workspaceLabel(p.win))
     if (p.win.floating) details.push("floating")
     rows.push({
       itemId: "window:" + p.win.address,
@@ -179,6 +218,9 @@ if (typeof module !== "undefined") {
     compareWindows: compareWindows,
     matchScore: matchScore,
     windowRows: windowRows,
+    webappHost: webappHost,
+    webappKeys: webappKeys,
+    normalizeName: normalizeName,
     focusCommand: focusCommand
   }
 }

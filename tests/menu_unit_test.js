@@ -448,10 +448,23 @@ eq(Windows.workspaceTrail(wins[3]), "scratch", "the scratchpad trails as scratch
 const appInfo = cls => cls === "zen" ? { name: "Zen Browser", icon: "zen" } : null
 let rows = Windows.windowRows(wins, "", appInfo)
 eq(rows.map(r => r.target), ["0xa3", "0xa2", "0xa1", "0xa4"], "grouped by workspace, most recent first, scratchpad last")
-eq(rows[1].detail, "Zen Browser · Workspace 1 · floating", "detail names the app, the workspace and floating")
+eq(rows[1].detail, "Zen Browser · floating", "detail names the app and floating; the workspace is the trail")
+eq(rows[1].trailText, "ws 1", "the trail names the workspace")
 eq([rows[1].appIcon, rows[1].icon], ["zen", ""], "a matched desktop entry supplies the icon")
 eq([rows[0].appIcon, rows[0].icon], ["", "󰖯"], "an unmatched class falls back to a glyph")
-eq(rows[3].detail, "spotify · Scratchpad", "scratchpad windows say so")
+eq([rows[3].detail, rows[3].trailText], ["spotify", "scratch"], "scratchpad windows say so in the trail")
+eq(Windows.windowRows([{ address: "0xb1", cls: "x", title: "t", workspaceId: -97, workspaceName: "special:music", special: true, floating: false, focus: 0 }], "", null)[0].detail,
+   "x · music (special)", "other special workspaces are named in the detail")
+
+eq(Windows.webappHost("chrome-musicforprogramming.net__-Default"), "musicforprogramming.net", "a web app class gives its host")
+eq(Windows.webappHost("chrome-app.hey.com__calendar-Default"), "app.hey.com", "the path after the host is ignored")
+eq(Windows.webappHost("foot"), "", "an ordinary class is not a web app")
+eq(Windows.webappKeys("chrome-musicforprogramming.net__-Default"), ["musicforprogramming"], "host keys drop the TLD")
+eq(Windows.webappKeys("chrome-app.hey.com__-Default"), ["apphey", "hey"], "noise labels are skipped")
+eq(Windows.webappKeys("chrome-web.whatsapp.com__-Default"), ["webwhatsapp", "whatsapp"], "whatsapp matches by its label")
+eq(Windows.normalizeName("Music For Programming"), "musicforprogramming", "names normalize for matching")
+eq(Windows.windowRows(Windows.parseClients(JSON.stringify([{ address: "0xc1", class: "chrome-musicforprogramming.net__-Default", title: "mfp", workspace: { id: 3, name: "3" } }])), "", null)[0].detail,
+   "musicforprogramming.net", "an unmatched web app is named by its host")
 eq(rows[0].kind, "window", "window rows have their own kind")
 
 eq(Windows.windowRows(wins, "tidal", appInfo).map(r => r.target), ["0xa2"], "the query matches the title")
