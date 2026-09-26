@@ -239,6 +239,14 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   const self = MenuModel.parseProcessList(listed, "", 100000).find((p) => p.pid === process.pid)
   assert(self && self.start === startOf(process.pid), "the listing reports each process's /proc start time")
 
+  // A process that names itself to look like extra fields: perl's $0 sets
+  // the kernel comm. It must list as itself, with its own pid and start.
+  const odd = spawn("perl", ["-e", '$0 = "x) 9 9 (y"; sleep 30'], { stdio: "ignore" })
+  spawnSync("sleep", ["0.3"])
+  const oddListed = MenuModel.parseProcessList(execFileSync("bash", ["-c", MenuModel.PROCESS_LIST_SCRIPT], { encoding: "utf8" }), "x) 9", 8, true)
+  eq(oddListed.map((p) => [p.pid, p.start, p.name]), [[odd.pid, startOf(odd.pid), "x) 9 9 (y"]], "a name made to look like fields lists as itself")
+  odd.kill("SIGKILL")
+
   const child = spawn("sleep", ["30"], { stdio: "ignore" })
   const start = startOf(child.pid)
   eq(kill(child.pid + ":" + (Number(start) + 1)), 4, "a start time that does not match sends nothing")

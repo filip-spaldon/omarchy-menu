@@ -1499,14 +1499,18 @@ function parseKillQuery(query) {
 // started at. A pid can be reused once its process is gone; the pair of pid
 // and start time cannot, so it is what a kill row carries and what
 // KILL_PROGRAM checks before it signals anything. ppid groups an app's
-// helper processes under its main one. comm goes last because it may
-// contain spaces. ps sorts by CPU. The script runs under
+// helper processes under its main one. Name, ppid and start time all come
+// from one read of the same stat file, so a row never pairs one process's
+// name with another's identity; only the CPU and memory figures come from
+// ps. The name goes last because it may contain spaces, and control
+// characters in it become "?". ps sorts by CPU. The script runs under
 // Menu.boundedCommand (time and byte limits).
-var PROCESS_LIST_SCRIPT = "ps -eo pid=,ppid=,pcpu=,rss=,comm= --sort=-pcpu | perl -ne '"
-  + "my ($pid, $ppid, $rest) = /^\\s*(\\d+)\\s+(\\d+)\\s+(.*)$/ or next; "
-  + "open(my $f, \"<\", \"/proc/$pid/stat\") or next; my $s = <$f>; close $f; "
-  + "$s =~ s/^.*\\)\\s//s or next; my @x = split / /, $s; "
-  + "print \"$pid $x[19] $ppid $rest\\n\" if defined $x[19]'"
+var PROCESS_LIST_SCRIPT = "ps -eo pid=,pcpu=,rss= --sort=-pcpu | perl -ne '"
+  + "my ($pid, $cpu, $rss) = /^\\s*(\\d+)\\s+([\\d.]+)\\s+(\\d+)\\s*$/ or next; "
+  + "open(my $f, \"<\", \"/proc/$pid/stat\") or next; my $s = do { local $/; <$f> }; close $f; "
+  + "$s =~ /^\\d+ \\((.*)\\) (.*)$/s or next; my ($name, @x) = ($1, split / /, $2); "
+  + "next unless defined $x[19]; $name =~ tr/\\x00-\\x1f\\x7f/?/; "
+  + "print \"$pid $x[19] $x[1] $cpu $rss $name\\n\"'"
 
 // Processes from PROCESS_LIST_SCRIPT's output whose name contains `filter`,
 // at most `limit` of them.
