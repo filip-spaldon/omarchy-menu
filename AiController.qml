@@ -205,6 +205,7 @@ Item {
     }
     ai.aiPendingSpawn = null
     proc.gen = generation
+    ai.aiStartDeadline(generation)
     // Spawned with stdin enabled and closed in onStarted: otherwise the child
     // inherits a stdin that never reaches EOF, and codex exec waits on it.
     proc.stdinEnabled = true
@@ -219,12 +220,22 @@ Item {
     var pending = ai.aiPendingSpawn
     ai.aiPendingSpawn = null
     proc.gen = pending.generation
+    ai.aiStartDeadline(pending.generation)
     proc.stdinEnabled = true
     proc.command = pending.argv
     proc.running = true
   }
 
+  // maxRunSeconds (ai.json, default 300): a run still going then is shown as
+  // timed out and stopped like a cancel.
+  function aiStartDeadline(generation) {
+    aiDeadlineTimer.gen = generation
+    aiDeadlineTimer.interval = AiBackend.getConfig().maxRunSeconds * 1000
+    aiDeadlineTimer.restart()
+  }
+
   function aiCancel(invalidateHandoff) {
+    aiDeadlineTimer.stop()
     ai.aiPendingSpawn = null
     ai.aiKillProcessIfRunning(aiProcA, aiKillFallbackTimerA)
     ai.aiKillProcessIfRunning(aiProcB, aiKillFallbackTimerB)
@@ -255,13 +266,14 @@ Item {
   }
 
   function onAiExit(gen, exitCode) {
+    if (aiDeadlineTimer.gen === gen) aiDeadlineTimer.stop()
     var snap = AiBackend.handleExit(gen, exitCode)
     if (snap) ai.aiSession = snap
   }
 
   function aiCopyAnswer() {
     if (!ai.aiSession || ai.aiSession.state === "idle" || !ai.aiSession.rawText) return
-    Quickshell.execDetached(["wl-copy", "--", ai.aiSession.rawText])
+    ai.menu.copyText(ai.aiSession.rawText)
   }
 
   function aiPromptChangedSinceSubmit() {
@@ -287,7 +299,11 @@ Item {
     aiHandoffProcess.resumeArgv = resumeArgv
     aiHandoffProcess.handled = false
     // The equals form: xdg-terminal-exec reads "--dir DIR" as a command.
-    aiHandoffProcess.command = ["xdg-terminal-exec", "--dir=" + ai.menu.homeDir, "--"].concat(resumeArgv)
+    // The terminal lives on after this, and its stderr is collected for the
+    // error message only: the first 16 KiB are passed on, the rest is read
+    // and dropped (still read, so the terminal never blocks on a full pipe).
+    aiHandoffProcess.command = ["bash", "-c", 'exec "$@" 2> >(head -c 16384 >&2; cat >/dev/null)', "bash",
+      "xdg-terminal-exec", "--dir=" + ai.menu.homeDir, "--"].concat(resumeArgv)
     aiHandoffProcess.running = true
     aiHandoffGrace.restart()
   }
@@ -392,6 +408,19 @@ Item {
 
   // Two slots alternate per generation; only aiDispatchOrQueue and
   // aiTryDispatchPending may set command/running on them.
+  Timer {
+    id: aiDeadlineTimer
+    property int gen: 0
+    repeat: false
+    onTriggered: {
+      var snap = AiBackend.timeOut(aiDeadlineTimer.gen)
+      if (!snap) return
+      ai.aiSession = snap
+      if (aiProcA.gen === aiDeadlineTimer.gen) ai.aiKillProcessIfRunning(aiProcA, aiKillFallbackTimerA)
+      if (aiProcB.gen === aiDeadlineTimer.gen) ai.aiKillProcessIfRunning(aiProcB, aiKillFallbackTimerB)
+    }
+  }
+
   Process {
     id: aiProcA
     property int gen: 0

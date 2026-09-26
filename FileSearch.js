@@ -225,7 +225,9 @@ function extractTerms(query) {
 // ranking decides what shows. Passed to Process as an array: no shell ever
 // sees the query.
 function buildArgv(query, filter, forDirs, home) {
-  var argv = ["fd", "--color=never", "-i", "--no-ignore", "--follow", "--max-results", String(MAX_RESULTS)]
+  // --print0: a file name may contain a newline; NUL cannot occur in one, so
+  // each path arrives whole and no name can pose as another path.
+  var argv = ["fd", "--color=never", "--print0", "-i", "--no-ignore", "--follow", "--max-results", String(MAX_RESULTS)]
   argv.push("--type", forDirs ? "d" : "f")
 
   if (filter.hidden === true) argv.push("--hidden")
@@ -265,9 +267,10 @@ function basename(path) {
 }
 
 // Parses `stat -c '%Y\t%n'` output into { path: mtimeMs }.
+// `stat --printf '%Y\t%n\0'` output: NUL-terminated, like fd's.
 function parseStatLines(text) {
   var map = {}
-  var lines = String(text || "").split("\n")
+  var lines = String(text || "").split("\0")
   for (var i = 0; i < lines.length; i++) {
     var tab = lines[i].indexOf("\t")
     if (tab <= 0) continue
@@ -344,7 +347,7 @@ function isSystemPath(path, home) {
 
 function parseLines(text, isDir, home) {
   var out = []
-  var lines = String(text || "").split("\n")
+  var lines = String(text || "").split("\0")
   for (var i = 0; i < lines.length; i++) {
     // fd marks directories with a trailing slash.
     var path = lines[i].replace(/\/+$/, "")
@@ -447,6 +450,27 @@ function rankResults(items, query, limit, home, mode) {
   return out
 }
 
+// Files that Enter would not so much open as run or install: the default
+// handler for these executes them (a .desktop entry, an AppImage, a script)
+// or installs them. Enter opens their folder instead; the menu also treats
+// any file with the executable bit this way (checked when it is opened).
+var LAUNCHABLE_EXTS = [
+  "desktop", "appimage", "run", "bin", "sh", "bash", "zsh", "fish", "csh", "ksh",
+  "py", "pl", "rb", "jar", "command", "exe", "msi", "bat", "cmd", "com",
+  "ps1", "vbs", "lnk", "flatpak", "flatpakref", "flatpakrepo", "deb", "rpm", "apk", "snap"
+]
+
+// bash -c script for Enter on a file: $1 the file, $2 its folder. A file
+// with the executable bit opens its folder, anything else opens itself.
+var OPEN_FILE_SCRIPT = 'if [ -f "$1" ] && [ -x "$1" ]; then exec gio open "$2"; fi; exec gio open "$1"'
+
+function isLaunchableName(name) {
+  var n = String(name || "").toLowerCase()
+  if (/\.pkg\.tar(\.[a-z0-9]+)?$/.test(n)) return true
+  var dot = n.lastIndexOf(".")
+  return dot > 0 && LAUNCHABLE_EXTS.indexOf(n.slice(dot + 1)) >= 0
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     FILE_FILTERS: FILE_FILTERS,
@@ -465,6 +489,9 @@ if (typeof module !== "undefined") {
     parseStatLines: parseStatLines,
     formatMtime: formatMtime,
     parentDir: parentDir,
+    LAUNCHABLE_EXTS: LAUNCHABLE_EXTS,
+    isLaunchableName: isLaunchableName,
+    OPEN_FILE_SCRIPT: OPEN_FILE_SCRIPT,
     iconFor: iconFor,
     isSystemPath: isSystemPath,
     parseLines: parseLines,

@@ -326,7 +326,8 @@ Panel {
     root.systemEntries = entries
     var script = MenuModel.guardScript(guarded)
     if (script && !guardProc.running) {
-      guardProc.command = ["timeout", "-k", "2", "5", "bash", "-lc", script]
+      // Its output is collected whole: capped at 256 KiB, like the menu's.
+      guardProc.command = ["bash", "-c", 'timeout -k 2 5 bash -lc "$1" | head -c 262144', "bash", script]
       guardProc.running = true
     }
   }

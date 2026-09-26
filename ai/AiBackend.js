@@ -259,7 +259,10 @@ function beginGeneration(promptText) {
   }
   parserState = {}
 
-  var argv = adapter.buildRun(promptText, sessionRef, runtimeConfig)
+  // Every adapter passes the prompt as an argv element; one that starts with
+  // "-" would be parsed as an option. A leading space reads the same to the
+  // model and never as a flag.
+  var argv = adapter.buildRun(/^-/.test(promptText) ? " " + promptText : promptText, sessionRef, runtimeConfig)
   return { generation: gen, argv: wrapForGroup(argv) }
 }
 
@@ -317,7 +320,10 @@ function applyEvent(ev) {
   if (session.state === State.Starting) session.state = State.Running
   switch (ev.type) {
     case "session":
-      if (ev.sessionRef) session.sessionRef = ev.sessionRef
+      // The id goes into the terminal continuation's argv (claude --resume
+      // <id>, codex resume <id>), so only a plain id is taken: one that
+      // starts with "-" would be read as an option there.
+      if (ev.sessionRef && SESSION_REF_PATTERN.test(String(ev.sessionRef))) session.sessionRef = String(ev.sessionRef)
       break
     case "text":
       appendText(ev.text)
@@ -348,6 +354,15 @@ function appendText(delta) {
   // display tick (16ms) since the drain timer runs the whole time.
   session.rawText += delta
   session.pendingText += delta
+}
+
+// A run past its deadline (maxRunSeconds, AiController's timer): shown as an
+// error; the controller then stops the process, and its exit changes nothing.
+function timeOut(gen) {
+  if (isStale(gen)) return null
+  if (session.state !== State.Starting && session.state !== State.Running) return null
+  setError(session.agentLabel + " took longer than " + runtimeConfig.maxRunSeconds + " s and was stopped", "timeout")
+  return snapshot()
 }
 
 function setError(message, kind) {
@@ -582,6 +597,9 @@ function cancelHandoff() {
 //   OUTPUT_MAX       stdout bytes per run; past it the agent is stopped
 //   STDERR_LINE_MAX, STDERR_MAX  the same for stderr, which only feeds error
 //                    classification: past its cap it is read and discarded
+// A session id taken from an agent's output, before it may reach an argv.
+var SESSION_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+
 var OUTPUT_LINE_MAX = 1048576
 var OUTPUT_MAX = 16777216
 var STDERR_LINE_MAX = 16384
@@ -659,9 +677,16 @@ var OUTPUT_GUARD_PROGRAM = [
   'exit(($status & 127) ? 128 + ($status & 127) : $status >> 8);'
 ].join("\n")
 
+// argv behind OUTPUT_GUARD_PROGRAM with the given limits. Also used by the
+// menu for its provider and guard scripts, whose output reaches the same
+// kind of newline-split parser.
+function boundOutput(argv, lineMax, outMax, errLineMax, errMax) {
+  return ["perl", "-e", OUTPUT_GUARD_PROGRAM, "--",
+          String(lineMax), String(outMax), String(errLineMax), String(errMax), "--"].concat(argv)
+}
+
 function wrapForGroup(argv) {
-  return ["setsid", "perl", "-e", OUTPUT_GUARD_PROGRAM, "--",
-          String(OUTPUT_LINE_MAX), String(OUTPUT_MAX), String(STDERR_LINE_MAX), String(STDERR_MAX), "--"].concat(argv)
+  return ["setsid"].concat(boundOutput(argv, OUTPUT_LINE_MAX, OUTPUT_MAX, STDERR_LINE_MAX, STDERR_MAX))
 }
 
 function killArgv(pid, signalName) {

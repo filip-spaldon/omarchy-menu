@@ -155,7 +155,7 @@ Item {
     }
     if (paths.length === 0) return
     statProc.gen = searcher.fileSearchGen
-    statProc.command = ["timeout", "5", "stat", "-c", "%Y\t%n", "--"].concat(paths)
+    statProc.command = ["timeout", "5", "stat", "--printf", "%Y\t%n\\0", "--"].concat(paths)
     statProc.running = true
   }
 
