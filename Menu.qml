@@ -278,6 +278,8 @@ Item {
                                                   : "Type a command after / · Esc clear"
     if (root.activeTab === "apps")
       return "Enter launch · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
+    if (root.activeTab === "windows")
+      return "Enter go to window · type to filter by title, app or workspace · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
       return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · "
         + (fileCtl.hasRoots ? "Ctrl+R where · " : "") + "Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
@@ -297,9 +299,10 @@ Item {
       return "Search the system menu…"
     }
     if (root.activeTab === "apps") return "Search applications…"
+    if (root.activeTab === "windows") return "Search open windows…"
     if (root.activeTab === "files") return "Search files…"
     if (root.activeTab === "folders") return "Search folders…"
-    return "Search apps, files, folders and system…"
+    return "Search apps, windows, files, folders and system…"
   }
 
   function scaledFont(px) {
@@ -385,6 +388,7 @@ Item {
     if (!detail) return false
     if (root.filterText || root.dmenuActive) return true
     return kind === "file" || kind === "folder" || root.activeTab === "files" || root.activeTab === "folders"
+      || root.activeTab === "windows"
   }
 
   // Height the card can devote to rows before running off the screen — or
@@ -1137,6 +1141,7 @@ Item {
     if (id === "system") Qt.callLater(root.enterSystemPanes)
     root.disarmPointer()
     if (id === "apps") root.loadProviderForMenu("apps")
+    if (id === "windows") windowCtl.refresh()
     if (root.filterText.trim()) root.loadProvidersForSearch()
     root.updateSystemMatches()
     root.rebuildDisplay()
@@ -1487,6 +1492,7 @@ Item {
       var id = order[i].id
       if (!root.inAll(id)) continue
       var sectionRows = id === "apps" ? root.appTabRows(query)
+        : id === "windows" ? windowCtl.rows(query)
         : id === "files" ? fileCtl.fileSectionRows(false)
         : id === "folders" ? fileCtl.fileSectionRows(true)
         : root.systemSearchRows(query, "root", false)
@@ -1541,6 +1547,7 @@ Item {
       rows = active === "root" ? [] : root.systemTabRows("", active)
     else if (root.activeTab === "system") rows = root.systemTabRows(query, active)
     else if (root.activeTab === "apps") rows = root.appTabRows(query)
+    else if (root.activeTab === "windows") rows = windowCtl.rows(query)
     else if (root.activeTab === "all") rows = root.allTabRows(query)
     else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
 
@@ -1728,6 +1735,8 @@ Item {
       opened = false
       filterText = ""
       root.launchApp(appId, label)
+    } else if (row.kind === "window") {
+      root.focusWindow(row.target)
     } else if (row.kind === "example") {
       return // read-only hint
     } else if (row.kind === "shell") {
@@ -1780,6 +1789,16 @@ Item {
     opened = false
     filterText = ""
     root.finishRequest(value)
+  }
+
+  // Closes the menu first: the dispatch switches workspace (or raises the
+  // scratchpad) and hands the window keyboard focus, which the menu's layer
+  // would otherwise keep.
+  function focusWindow(address) {
+    applySerial = requestSerial
+    opened = false
+    filterText = ""
+    windowCtl.focus(address)
   }
 
   // SIGTERM rather than SIGKILL: the point is to close something that has
@@ -1929,6 +1948,11 @@ Item {
 
   FileSearchController {
     id: fileCtl
+    menu: root
+  }
+
+  WindowsController {
+    id: windowCtl
     menu: root
   }
 

@@ -27,7 +27,9 @@ BorderSurface {
 
   readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex && row.kind !== "example"
     && (!row.menu.systemTwoPane || row.menu.systemPane === "right")
-  readonly property bool isApp: row.kind === "app"
+  // Window rows borrow their application's icon when a desktop entry
+  // matches the window class, and fall back to a glyph when none does.
+  readonly property bool isApp: row.kind === "app" || (row.kind === "window" && row.appIcon.length > 0)
   readonly property bool hasIcon: row.icon.length > 0 || row.isApp
 
   // Command examples are a read-only hint.

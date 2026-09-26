@@ -13,6 +13,7 @@ const FileSearch = require(path.join(root, "FileSearch.js"))
 const MenuModel = require(path.join(root, "MenuModel.js"))
 const Settings = require(path.join(root, "Settings.js"))
 const Roots = require(path.join(root, "Roots.js"))
+const Windows = require(path.join(root, "Windows.js"))
 
 let pass = 0
 let fail = 0
@@ -32,18 +33,19 @@ function assert(cond, msg) {
 
 // ------------------------------------------------------------------- tabs --
 
-eq(Tabs.TABS.map(t => t.id), ["all", "apps", "system", "files", "folders"], "default tab order")
-eq(Tabs.DEFAULT_ALL_SECTIONS, ["apps", "system", "files", "folders"], "default All section order matches the tabs")
-eq(Tabs.orderTabs(["files", "all"]).map(t => t.id), ["files", "all", "apps", "system", "folders"],
+eq(Tabs.TABS.map(t => t.id), ["all", "apps", "windows", "system", "files", "folders"], "default tab order")
+eq(Tabs.DEFAULT_ALL_SECTIONS, ["apps", "windows", "system", "files", "folders"], "default All section order matches the tabs")
+eq(Tabs.orderTabs(["files", "all"]).map(t => t.id), ["files", "all", "apps", "windows", "system", "folders"],
    "a partial tab order reorders and appends the rest")
-eq(Tabs.orderTabs(["bogus", "apps", "apps", 7]).map(t => t.id), ["apps", "all", "system", "files", "folders"],
+eq(Tabs.orderTabs(["bogus", "apps", "apps", 7]).map(t => t.id), ["apps", "all", "windows", "system", "files", "folders"],
    "unknown and repeated ids are dropped")
 eq(Tabs.orderTabs("not an array").map(t => t.id), Tabs.DEFAULT_TAB_ORDER, "a malformed order falls back to the default")
-eq(Tabs.orderSections(["folders", "apps"]).map(s => s.id), ["folders", "apps", "system", "files"], "All sections reorder")
+eq(Tabs.orderSections(["folders", "apps"]).map(s => s.id), ["folders", "apps", "windows", "system", "files"], "All sections reorder")
 eq(Tabs.cycleTab("all", 1, Tabs.orderTabs(["all", "folders"])), "folders", "Tab follows the order on screen")
 eq(Tabs.tabForRoute("root"), { tab: "all", menu: "root" }, "SUPER+SPACE opens All")
 eq(Tabs.tabForRoute(""), { tab: "all", menu: "root" }, "an empty route opens All")
 eq(Tabs.tabForRoute("apps"), { tab: "apps", menu: "root" }, "SUPER+ALT+SPACE opens Apps")
+eq(Tabs.tabForRoute("windows"), { tab: "windows", menu: "root" }, "the windows route opens Windows")
 eq(Tabs.tabForRoute("capture"), { tab: "system", menu: "capture" }, "other routes open System, drilled in")
 eq(Tabs.tabForRoute("style.theme"), { tab: "system", menu: "style.theme" }, "dotted routes open System, drilled in")
 eq(Tabs.cycleTab("all", 1), "apps", "Tab moves forward")
@@ -54,7 +56,7 @@ assert(Tabs.isTab("files") && !Tabs.isTab("root"), "isTab")
 eq(Tabs.normalizeDisabled(["files", "bogus", "files", "folders"]), ["files", "folders"], "disabledTabs keeps valid ids once")
 eq(Tabs.normalizeDisabled(Tabs.DEFAULT_TAB_ORDER), [], "disabling every tab is ignored")
 eq(Tabs.normalizeDisabled("files"), [], "a malformed disabledTabs is ignored")
-eq(Tabs.visibleTabs(null, ["files", "folders"], "all").map(t => t.id), ["all", "apps", "system"], "disabled tabs leave the bar")
+eq(Tabs.visibleTabs(null, ["windows", "files", "folders"], "all").map(t => t.id), ["all", "apps", "system"], "disabled tabs leave the bar")
 eq(Tabs.visibleTabs(null, ["system"], "system").map(t => t.id), Tabs.DEFAULT_TAB_ORDER,
    "a disabled tab opened by route stays visible while active")
 eq(Tabs.firstEnabledTab(null, ["all"]), "apps", "with All off, the first tab that is on opens")
@@ -421,6 +423,46 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   const dup = FileSearch.parseLines("/home/u/.config/hypr/", true, home).concat(FileSearch.zoxideItems(z, "hypr", home, [], 10))
   eq(FileSearch.rankResults(dup, "hypr", 5, home, "relevance", z).length, 1, "a folder found twice is listed once")
 }
+
+// ---------------------------------------------------------------- windows --
+
+const clients = JSON.stringify([
+  { address: "0xa1", class: "foot", title: "~/src", workspace: { id: 2, name: "2" }, focusHistoryID: 3, mapped: true, hidden: false },
+  { address: "0xa2", class: "zen", title: "TIDAL | Login", workspace: { id: 1, name: "1" }, focusHistoryID: 1, floating: true },
+  { address: "0xa3", class: "foot", title: "Claude Code", workspace: { id: 1, name: "1" }, focusHistoryID: 0 },
+  { address: "0xa4", class: "spotify", title: "Spotify", workspace: { id: -98, name: "special:scratchpad" }, focusHistoryID: 5 },
+  { address: "0xa5", class: "ghost", title: "tab in a group", workspace: { id: 1, name: "1" }, hidden: true },
+  { address: "0xa6", class: "gone", title: "tearing down", workspace: { id: 1, name: "1" }, mapped: false },
+  { address: "not-an-address", class: "evil", title: "x", workspace: { id: 1, name: "1" } },
+  "junk", null
+])
+const wins = Windows.parseClients(clients)
+eq(wins.map(w => w.address), ["0xa1", "0xa2", "0xa3", "0xa4"], "hidden, unmapped and bad-address clients are dropped")
+eq(Windows.parseClients("{not json"), [], "malformed client JSON is an empty list")
+eq(Windows.parseClients('{"a":1}'), [], "a non-array client list is an empty list")
+eq(Windows.workspaceLabel(wins[3]), "Scratchpad", "the scratchpad has a name")
+eq(Windows.workspaceLabel({ special: true, workspaceName: "special:music", workspaceId: -97 }), "music (special)", "other special workspaces are marked")
+eq(Windows.workspaceTrail(wins[0]), "ws 2", "regular workspaces trail as ws N")
+eq(Windows.workspaceTrail(wins[3]), "scratch", "the scratchpad trails as scratch")
+
+const appInfo = cls => cls === "zen" ? { name: "Zen Browser", icon: "zen" } : null
+let rows = Windows.windowRows(wins, "", appInfo)
+eq(rows.map(r => r.target), ["0xa3", "0xa2", "0xa1", "0xa4"], "grouped by workspace, most recent first, scratchpad last")
+eq(rows[1].detail, "Zen Browser · Workspace 1 · floating", "detail names the app, the workspace and floating")
+eq([rows[1].appIcon, rows[1].icon], ["zen", ""], "a matched desktop entry supplies the icon")
+eq([rows[0].appIcon, rows[0].icon], ["", "󰖯"], "an unmatched class falls back to a glyph")
+eq(rows[3].detail, "spotify · Scratchpad", "scratchpad windows say so")
+eq(rows[0].kind, "window", "window rows have their own kind")
+
+eq(Windows.windowRows(wins, "tidal", appInfo).map(r => r.target), ["0xa2"], "the query matches the title")
+eq(Windows.windowRows(wins, "zen", appInfo).map(r => r.target), ["0xa2"], "the query matches the app name")
+eq(Windows.windowRows(wins, "scratch", appInfo).map(r => r.target), ["0xa4"], "the query matches the workspace")
+eq(Windows.windowRows(wins, "foot claude", appInfo).map(r => r.target), ["0xa3"], "every word has to match")
+eq(Windows.windowRows(wins, "nothing-here", appInfo), [], "no match, no rows")
+
+eq(Windows.focusCommand("0xa2"), ["bash", "-c", Windows.focusCommand("0xa2")[2], "omarchy-menu-focus", "0xa2"], "the address travels as an argument")
+eq(Windows.focusCommand("0xa2; rm -rf ~"), null, "anything but an address is refused")
+eq(Windows.focusCommand(""), null, "an empty address is refused")
 
 console.log("")
 console.log(pass + " passed, " + fail + " failed")
