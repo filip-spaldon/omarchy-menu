@@ -345,6 +345,18 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   eq(Roots.parsePicked("/mnt/a\tcifs\0/mnt/b c\t-\0"), [{ path: "/mnt/a", fsType: "cifs" }, { path: "/mnt/b c", fsType: "" }], "picker output parsed")
 }
 
+// ------------------------------------------------------ global shortcuts --
+// Keys bound to hl.dsp.global("omarchy-menu-omni:<name>") reach the shell
+// without starting a process; the names are part of the user's bindings.
+{
+  const fs = require("fs")
+  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  const names = Array.from(menuSource.matchAll(/GlobalShortcut \{\s*appid: "omarchy-menu-omni"\s*name: "([\w-]+)"/g), m => m[1])
+  eq(names, ["toggle", "toggle-apps"], "the menu's global shortcut names")
+  eq(/if \(root\.shell\) \{[\s\S]*?root\.shell\.toggle\("omarchy\.menu"[\s\S]*?Quickshell\.execDetached\(\["omarchy-menu", "toggle", route\]\)/.test(menuSource), true,
+     "a shortcut falls back to omarchy-menu until the shell API is there")
+}
+
 // ---------------------------------------- index, index search, status ----
 {
   const fs = require("fs"), os = require("os"), { spawnSync } = require("child_process")

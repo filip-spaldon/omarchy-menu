@@ -339,6 +339,12 @@ omarchy menu summon
 Custom system actions still come from
 `~/.config/omarchy/extensions/omarchy-menu.jsonc`.
 
+For a faster open, bind `Super+Space` and `Super+Alt+Space` to the global
+shortcuts `omarchy-menu-omni:toggle` and `omarchy-menu-omni:toggle-apps`
+(`hl.dsp.global("omarchy-menu-omni:toggle")` in your Hyprland bindings)
+instead of `omarchy-menu`: the press then reaches the shell without starting
+any process.
+
 ### Update, disable and remove
 
 ```bash
