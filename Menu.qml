@@ -1167,8 +1167,32 @@ Item {
   // Guarded items are hidden when their `when:` evaluates false. Static
   // submenus are also hidden when none of their descendants are visible;
   // provider-backed menus stay visible because their rows load on demand.
+  // What search results are computed from -- the menu tree and the guard
+  // answers -- is always replaced, never changed in place, so a counter
+  // bumped on every replacement keys the memos below. A keystroke rebuilt
+  // the list 3-5 times (once, then as guards and files landed) and
+  // every rebuild searched the whole menu again, re-checking visibility down
+  // each submenu: ~30 ms a pass on the VM, ~150 ms on the first keystroke.
+  property int menuRevision: 0
+  onItemsChanged: root.menuRevision++
+  onItemOrderChanged: root.menuRevision++
+  onWhenResultsChanged: root.menuRevision++
+  onCheckedResultsChanged: root.menuRevision++
+  // Plain fields, mutated: filling a memo must not notify bindings that read
+  // through it (the System categories are a binding).
+  readonly property var searchMemo: ({ visibleRevision: -1, visible: ({}), systemKey: "", systemRows: [], systemDivider: false })
+
   function isVisible(entry) {
-    return MenuModel.isVisible(root.items, root.itemOrder, root.whenResults, entry)
+    if (!entry) return false
+    var memo = root.searchMemo
+    if (memo.visibleRevision !== root.menuRevision) {
+      memo.visibleRevision = root.menuRevision
+      memo.visible = ({})
+    }
+    var id = String(entry.id)
+    if (!memo.visible.hasOwnProperty(id))
+      memo.visible[id] = MenuModel.isVisible(root.items, root.itemOrder, root.whenResults, entry)
+    return memo.visible[id]
   }
 
   // Label with the ✓ marker baked in when `checked:` evaluated truthy.
@@ -1386,7 +1410,28 @@ Item {
   // never part of it: they have their own tab and their own section.
   // `markDrilldown` splits direct children from deeper matches with the
   // divider the System tab has always drawn; All sections them itself.
+  // Memoized on the query, the scope and menuRevision: the rows are the same
+  // until one of them changes. A copy of the list is returned; the rows are
+  // shared, and nothing downstream changes them except sanitizeRow, which is
+  // idempotent.
   function systemSearchRows(query, scope, markDrilldown) {
+    var memo = root.searchMemo
+    var key = root.menuRevision + "\n" + query + "\n" + scope + "\n" + (markDrilldown ? 1 : 0)
+    if (memo.systemKey !== key) {
+      // The divider flag is a side effect of the search; record this
+      // search's own, whatever an earlier call in the same rebuild set.
+      var dividerBefore = root.searchDivider
+      root.searchDivider = false
+      memo.systemRows = root.computeSystemSearchRows(query, scope, markDrilldown)
+      memo.systemDivider = root.searchDivider
+      memo.systemKey = key
+      root.searchDivider = dividerBefore
+    }
+    if (memo.systemDivider) root.searchDivider = true
+    return memo.systemRows.slice()
+  }
+
+  function computeSystemSearchRows(query, scope, markDrilldown) {
     var currentRows = []
     var drilldownRows = []
 

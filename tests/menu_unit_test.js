@@ -262,6 +262,19 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   eq(kill(gone + ":1"), 3, "a pid with no process sends nothing")
 }
 
+// ------------------------------------------------------ keystroke cost --
+// A keystroke rebuilds the list several times; each must reuse what did not
+// change.
+{
+  const fs = require("fs")
+  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  const body = (src, name) => { const i = src.indexOf("function " + name + "("); return i < 0 ? "" : src.slice(i, src.indexOf("\n  function ", i + 1)) }
+  eq(/memo\.systemKey !== key/.test(body(menuSource, "systemSearchRows")), true, "System search results are memoized")
+  eq(/memo\.visibleRevision !== root\.menuRevision/.test(body(menuSource, "isVisible")), true, "visibility is memoized per menu revision")
+  eq(["onItemsChanged", "onItemOrderChanged", "onWhenResultsChanged", "onCheckedResultsChanged"].every(h => new RegExp(h + ": root\\.menuRevision\\+\\+").test(menuSource)), true,
+     "every input of the search bumps menuRevision")
+}
+
 // --------------------------------------------------- opening a file ------
 {
   const fs = require("fs"), os = require("os"), { spawnSync } = require("child_process")
