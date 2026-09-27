@@ -1578,6 +1578,27 @@ Item {
     return rows
   }
 
+  // The list is updated in place rather than cleared and refilled: a
+  // keystroke rebuilds it 3-5 times, and clearing made the ListView destroy
+  // and re-create every row (icon, labels, border) each time, though most
+  // rows came back unchanged. Rows whose roles all match are left alone;
+  // others are set in place, so their delegates are reused.
+  function syncDisplayModel(rows) {
+    var common = Math.min(rows.length, displayModel.count)
+    for (var i = 0; i < common; i++) {
+      var current = displayModel.get(i)
+      var row = rows[i]
+      for (var role in row) {
+        if (current[role] !== row[role]) {
+          displayModel.set(i, row)
+          break
+        }
+      }
+    }
+    if (displayModel.count > rows.length) displayModel.remove(rows.length, displayModel.count - rows.length)
+    for (var j = common; j < rows.length; j++) displayModel.append(rows[j])
+  }
+
   // keepSelection: the list is being rebuilt under an unchanged query (late
   // results, a provider refresh), so the cursor follows its item rather than
   // staying on an index that now holds something else.
@@ -1591,9 +1612,10 @@ Item {
     if (keepSelection && root.selectedIndex >= 0 && root.selectedIndex < displayModel.count)
       previousId = displayModel.get(root.selectedIndex).itemId
 
-    displayModel.clear()
-
-    if (!root.rowsLoaded) return
+    if (!root.rowsLoaded) {
+      displayModel.clear()
+      return
+    }
     if (root.showsSystemRows()) root.ensureGuards()
 
     var active = root.item(root.activeMenu) ? root.activeMenu : "root"
@@ -1628,7 +1650,8 @@ Item {
 
     // Sanitized here rather than in each builder: this is the one place
     // every row passes through on its way to the ListView.
-    for (var k = 0; k < rows.length; k++) displayModel.append(MenuModel.sanitizeRow(rows[k]))
+    for (var k = 0; k < rows.length; k++) MenuModel.sanitizeRow(rows[k])
+    root.syncDisplayModel(rows)
     layoutSerial += 1
 
     var kept = Tabs.indexOfItem(rows, previousId)

@@ -167,6 +167,16 @@ eq(FileSearch.nextDisplayLimit(200), 15, "display limits wrap")
   eq(MenuModel.pathMatchTerms(items, items["update.omarchy"], "update omarchy", false), null, "hidden entries never match")
 }
 
+// ---------------------------------------------------- in-place list sync --
+{
+  const fs = require("fs")
+  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  const body = (src, name) => { const i = src.indexOf("function " + name + "("); return i < 0 ? "" : src.slice(i, src.indexOf("\n  function ", i + 1)) }
+  const rebuild = body(menuSource, "rebuildDisplay")
+  eq((rebuild.match(/displayModel\.clear\(\)/g) || []).length, 1, "rebuildDisplay clears the list only before the menu has loaded")
+  eq(/root\.syncDisplayModel\(rows\)/.test(rebuild), true, "rebuildDisplay updates the list in place")
+}
+
 // --------------------------------------------------------- untrusted text --
 
 const rlo = String.fromCharCode(0x202e)
