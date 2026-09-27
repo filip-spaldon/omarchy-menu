@@ -2267,15 +2267,34 @@ Item {
       if (root.guardsPending) Qt.callLater(function() { root.evaluateGuards() })
     }
   }
+  // The window outlives a close. Hiding a PanelWindow destroys it, and every
+  // open then built a new window and OpenGL context: measured on the VM, the
+  // first frame took ~90 ms. Closed, it shrinks to one
+  // transparent, click-through pixel with no keyboard focus and draws
+  // nothing; opening grows it back over the screen.
   PanelWindow {
     id: panel
-    visible: root.opened && root.rowsLoaded
-    anchors { top: true; bottom: true; left: true; right: true }
+    readonly property bool shown: root.opened && root.rowsLoaded
+    visible: root.rowsLoaded
+    anchors { top: true; left: true; bottom: panel.shown; right: panel.shown }
+    implicitWidth: 1
+    implicitHeight: 1
+    mask: panel.shown ? null : closedMask
     color: "transparent"
     WlrLayershell.namespace: "omarchy-menu"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    WlrLayershell.keyboardFocus: panel.shown ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
+
+    // Empty: nothing on the closed pixel takes input.
+    Region { id: closedMask }
+
+    // What a mapped layer surface no longer gets from Hyprland: its fade-in.
+    // Closing is instant.
+    property real fade: panel.shown ? 1 : 0
+    Behavior on fade { enabled: panel.shown; NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
+    Binding { target: panel.contentItem; property: "visible"; value: panel.shown }
+    Binding { target: panel.contentItem; property: "opacity"; value: panel.fade }
 
     // The card opens centered exactly as always. The first search keystroke
     // or submenu move freezes the top line where it currently sits — from
@@ -2294,12 +2313,12 @@ Item {
       ? launcherTop
       : (cardTop >= 0 ? cardTop : centeredTop)
     function freezeCardTop() {
-      if (visible && cardTop < 0) {
+      if (shown && cardTop < 0) {
         cardTop = effectiveCardTop
         maxRowsHeight = root.visibleRowsHeight
       }
     }
-    onVisibleChanged: if (!visible) { cardTop = -1; maxRowsHeight = -1 }
+    onShownChanged: if (!shown) { cardTop = -1; maxRowsHeight = -1 }
 
     Rectangle {
       anchors.fill: parent

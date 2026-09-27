@@ -277,6 +277,21 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   fs.rmSync(dir, { recursive: true, force: true })
 }
 
+// ---------------------------------------------------- persistent window --
+// Hiding a PanelWindow destroys it: every open then built a new window and
+// OpenGL context (~90 ms first frame). The window stays mapped once loaded; closed,
+// it is one click-through pixel without keyboard focus.
+{
+  const fs = require("fs")
+  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  const panelBlock = (menuSource.match(/  PanelWindow \{\n    id: panel[\s\S]*?\n    exclusionMode:/) || [""])[0]
+  eq(/\n    visible: root\.rowsLoaded\n/.test(panelBlock), true, "the menu window stays mapped between opens")
+  eq(/visible: root\.opened/.test(panelBlock), false, "the menu window's visibility does not follow opened")
+  eq(/keyboardFocus: panel\.shown \? WlrKeyboardFocus\.Exclusive : WlrKeyboardFocus\.None/.test(panelBlock), true, "a closed menu takes no keyboard focus")
+  eq(/mask: panel\.shown \? null : closedMask/.test(panelBlock), true, "a closed menu takes no pointer input")
+  eq(/anchors \{ top: true; left: true; bottom: panel\.shown; right: panel\.shown \}/.test(panelBlock), true, "a closed menu shrinks to one pixel")
+}
+
 // ------------------------------------------------------ search roots ------
 {
   const home = "/home/u"
