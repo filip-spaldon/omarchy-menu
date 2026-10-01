@@ -583,7 +583,9 @@ Item {
     root.items = mergedMenu.items
     root.itemOrder = mergedMenu.itemOrder
     root.rowsLoaded = true
-    root.evaluateGuards()
+    // New sources, new guards: evaluated again the next time System rows
+    // are shown (the rebuild below does it when they are on screen now).
+    root.guardsCurrent = false
     if (root.opened) {
       root.rebuildDisplay()
       if (!root.dmenuActive) {
@@ -1562,6 +1564,7 @@ Item {
     displayModel.clear()
 
     if (!root.rowsLoaded) return
+    if (root.showsSystemRows()) root.ensureGuards()
 
     var active = root.item(root.activeMenu) ? root.activeMenu : "root"
     root.activeMenu = active
@@ -1908,7 +1911,9 @@ Item {
     selectedIndex = 0
     cursorActive = true
     root.disarmPointer()
-    root.evaluateGuards()
+    // Guards are evaluated when System rows are first shown in this open,
+    // not here: see ensureGuards.
+    root.guardsCurrent = false
     opened = true
     rebuildDisplay()
     invalidateVolatileProvider(activeMenu)
@@ -2237,6 +2242,28 @@ Item {
   property var whenResults: ({})       // id → true|false (allow visibility)
   property var checkedResults: ({})    // id → true|false (show ✓)
   property bool guardsPending: false
+  // Whether the guards have been evaluated during this open. The batch runs
+  // every `when:`/`checked:` expression of the menu -- about 180 of them,
+  // some 200 processes -- and only System rows read the results, so it runs
+  // the first time an open shows System rows rather than on every open: the
+  // default open (All, empty until something is typed) and Apps never pay
+  // for it, and the burst of processes no longer lands on the same frames
+  // as the menu appearing.
+  property bool guardsCurrent: false
+
+  // System rows are on screen: the System tab, or All searching with its
+  // System section on.
+  function showsSystemRows() {
+    if (!root.tabsActive || aiCtl.isAiMode || root.commandMode) return false
+    if (root.activeTab === "system") return true
+    return root.activeTab === "all" && root.filterText.trim() !== "" && root.inAll("system")
+  }
+
+  function ensureGuards() {
+    if (root.guardsCurrent) return
+    root.guardsCurrent = true
+    root.evaluateGuards()
+  }
 
   function evaluateGuards() {
     // Process ignores a command change while it is running, and `collected`
