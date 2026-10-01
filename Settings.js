@@ -186,9 +186,9 @@ function toggleDisabled(disabled, id, allIds) {
 // file, owned by the user or root, within the byte ceiling. Path and ceiling
 // arrive as argv; there is no shell and nothing to quote.
 var FILE_READER_PROGRAM = [
-  'use Fcntl;',
+  'use Fcntl; use Errno qw(ENOENT);',
   'my ($path, $max) = @ARGV;',
-  'sysopen(my $fh, $path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or exit 1;',
+  'sysopen(my $fh, $path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or exit($! == ENOENT ? 2 : 1);',
   'my @st = stat($fh) or exit 1;',
   'exit 1 unless -f _;',
   'exit 1 unless $st[4] == $< || $st[4] == 0;',
@@ -204,7 +204,7 @@ var FILE_READER_PROGRAM = [
 ].join("\n")
 
 function readFileCommand(path, maxBytes, seconds) {
-  return ["timeout", String(seconds || 5), "perl", "-e", FILE_READER_PROGRAM, "--", path, String(maxBytes)]
+  return ["timeout", "-k", "1", String(seconds || 5), "perl", "-e", FILE_READER_PROGRAM, "--", path, String(maxBytes)]
 }
 
 // Adds `id` to a list or takes it out.
@@ -216,16 +216,91 @@ function toggleListed(list, id) {
   return out
 }
 
-// Writes a file under `dir` (0600, directory created as needed) through a
-// temporary file and a rename, so a crash mid-write cannot leave half a
-// file; the path and the content reach bash as positional arguments, never
-// as script text. keepExisting: only create, never replace.
-function writeCommand(dir, path, content, keepExisting) {
-  var move = keepExisting ? 'mv -n -- "$t" "$2"' : 'mv -f -- "$t" "$2"'
-  return ["bash", "-c",
-    'umask 077; mkdir -p -- "$1" || exit 1; ' + (keepExisting ? '[ -e "$2" ] && exit 0; ' : '')
-      + 't=$(mktemp -- "$2.XXXXXX") || exit 1; printf %s "$3" > "$t" && ' + move + '; rm -f -- "$t"',
-    "bash", dir, path, content]
+// The reader distinguishes ENOENT from refusal, timeout and I/O failure.
+// Present-but-empty files are invalid JSON, never permission to reset them.
+function readObject(text, exitCode, exitStatus) {
+  if (exitStatus) return { ok: false, error: "Settings read was interrupted" }
+  if (exitCode === 2) return { ok: true, missing: true, data: {} }
+  if (exitCode !== 0) return { ok: false, error: "Could not read settings safely" }
+  var data = String(text || "").trim() ? parseObject(text) : null
+  return data !== null ? { ok: true, missing: false, data: data }
+    : { ok: false, error: "Settings must contain a JSON object" }
+}
+
+function patch(key, value, missingOnly) {
+  var op = { path: Array.isArray(key) ? key : [key] }
+  if (value === undefined) op.remove = true
+  else op.value = value
+  if (missingOnly) op.missingOnly = true
+  return [op]
+}
+
+// Serialize read/modify/rename across the menu and popup. Only requested
+// keys change; unknown keys and concurrent edits to other keys survive.
+// Perl and JSON::PP are supplied by the system, no new runtime dependency.
+var FILE_WRITER_PROGRAM = [
+  "use strict; use warnings;",
+  "use Fcntl qw(:DEFAULT :flock :mode); use Errno qw(ENOENT);",
+  "use JSON::PP; use File::Temp qw(tempfile); use File::Path qw(make_path);",
+  "my ($dir, $path, $max, $patch) = @ARGV;",
+  "my $json = JSON::PP->new->utf8->canonical->indent->indent_length(2)->space_after;",
+  "my $ops = $json->decode($patch); die \"invalid patch\\n\" unless ref($ops) eq \"ARRAY\";",
+  "umask 0077;",
+  "make_path($dir, {mode => 0700}) unless -e $dir;",
+  "my @ds = stat($dir);",
+  "die \"unsafe directory\\n\" unless @ds && S_ISDIR($ds[2]) && $ds[4] == $<;",
+  "chmod(($ds[2] & 07777) & ~0022, $dir) or die \"chmod directory: $!\\n\" if $ds[2] & 0022;",
+  "sysopen(my $lock, \"$path.lock\", O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0600) or die \"open lock: $!\\n\";",
+  "my @ls = stat($lock);",
+  "die \"unsafe lock\\n\" unless @ls && S_ISREG($ls[2]) && $ls[4] == $< && $ls[3] == 1;",
+  "flock($lock, LOCK_EX) or die \"lock: $!\\n\";",
+  "if (opendir(my $dh, $dir)) {",
+  "  for my $name (readdir $dh) {",
+  "    next unless $name =~ /^\\.settings\\.[A-Za-z0-9]{8}$/;",
+  "    my @fs = lstat(\"$dir/$name\");",
+  "    unlink(\"$dir/$name\") if @fs && S_ISREG($fs[2]) && $fs[4] == $< && time - $fs[9] > 60;",
+  "  }",
+  "  closedir($dh);",
+  "}",
+  "my $data = {};",
+  "if (sysopen(my $in, $path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)) {",
+  "  my @st = stat($in);",
+  "  die \"unsafe settings file\\n\" unless @st && S_ISREG($st[2]) && ($st[4] == $< || $st[4] == 0) && $st[7] <= $max;",
+  "  my $raw = \"\";",
+  "  while (length($raw) <= $max) {",
+  "    my $n = sysread($in, my $chunk, $max + 1 - length($raw));",
+  "    die \"read: $!\\n\" unless defined $n;",
+  "    last unless $n; $raw .= $chunk;",
+  "  }",
+  "  die \"settings too large\\n\" if length($raw) > $max;",
+  "  $data = $json->decode($raw);",
+  "  die \"settings must be an object\\n\" unless ref($data) eq \"HASH\";",
+  "} else { die \"open settings: $!\\n\" unless $! == ENOENT }",
+  "OP: for my $op (@$ops) {",
+  "  die \"invalid operation\\n\" unless ref($op) eq \"HASH\" && ref($op->{path}) eq \"ARRAY\" && @{$op->{path}};",
+  "  my @keys = @{$op->{path}}; my $key = pop @keys; my $obj = $data;",
+  "  for my $part (@keys) {",
+  "    next OP if $op->{remove} && !exists $obj->{$part};",
+  "    $obj->{$part} = {} unless exists $obj->{$part};",
+  "    die \"expected object\\n\" unless ref($obj->{$part}) eq \"HASH\";",
+  "    $obj = $obj->{$part};",
+  "  }",
+  "  next if $op->{missingOnly} && exists $obj->{$key};",
+  "  if ($op->{remove}) { delete $obj->{$key} } else { $obj->{$key} = $op->{value} }",
+  "}",
+  "my $content = $json->encode($data);",
+  "die \"settings too large\\n\" if length($content) > $max;",
+  "my ($out, $temp) = tempfile(\".settings.XXXXXXXX\", DIR => $dir, UNLINK => 1);",
+  "chmod 0600, $temp or die \"chmod: $!\\n\";",
+  "print {$out} $content or die \"write: $!\\n\";",
+  "close($out) or die \"close: $!\\n\";",
+  "rename($temp, $path) or die \"rename: $!\\n\";",
+  "print $content;"
+].join("\n")
+
+function writeCommand(dir, path, operations, maxBytes) {
+  return ["timeout", "-k", "1", "5", "perl", "-e", FILE_WRITER_PROGRAM, "--",
+          dir, path, String(maxBytes || STATE_MAX_BYTES), JSON.stringify(operations)]
 }
 
 if (typeof module !== "undefined") {
@@ -254,6 +329,9 @@ if (typeof module !== "undefined") {
     toggleListed: toggleListed,
     FILE_READER_PROGRAM: FILE_READER_PROGRAM,
     readFileCommand: readFileCommand,
+    readObject: readObject,
+    patch: patch,
+    FILE_WRITER_PROGRAM: FILE_WRITER_PROGRAM,
     writeCommand: writeCommand
   }
 }

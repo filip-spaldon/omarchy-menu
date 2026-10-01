@@ -44,6 +44,8 @@ Item {
   property string fileResultsKey: ""
   property string fileResultsScope: ""
   property var fileMtimes: ({})
+  property var fileMtimeReadAt: ({})
+  readonly property int mtimeTtlMs: 30000
   // All only asks fd once the query is this long: one letter matches most of
   // $HOME, and the answer would be noise ranked by path depth.
   readonly property int allFileMinQuery: 2
@@ -234,7 +236,10 @@ Item {
       fileDebounce.stop()
       return
     }
-    if (spec.key === searcher.fileResultsKey && !searcher.fileSearching) return
+    if (spec.key === searcher.fileResultsKey && !searcher.fileSearching) {
+      searcher.fetchFileMtimes()
+      return
+    }
     fileDebounce.restart()
   }
 
@@ -269,7 +274,7 @@ Item {
       dirSearchProc.gen = gen
       dirSearchProc.key = spec.key
       dirSearchProc.scope = spec.scope
-      dirSearchProc.command = ["timeout", "5"].concat(FileSearch.buildArgv(spec.query, spec.filter, true, searcher.menu.homeDir, excludes))
+      dirSearchProc.command = ["timeout", "-k", "1", "5"].concat(FileSearch.buildArgv(spec.query, spec.filter, true, searcher.menu.homeDir, excludes))
       dirSearchProc.running = true
     }
     if (spec.files && home) {
@@ -277,7 +282,7 @@ Item {
       fileSearchProc.gen = gen
       fileSearchProc.key = spec.key
       fileSearchProc.scope = spec.scope
-      fileSearchProc.command = ["timeout", "5"].concat(FileSearch.buildArgv(spec.query, spec.filter, false, searcher.menu.homeDir, excludes))
+      fileSearchProc.command = ["timeout", "-k", "1", "5"].concat(FileSearch.buildArgv(spec.query, spec.filter, false, searcher.menu.homeDir, excludes))
       fileSearchProc.running = true
     }
 
@@ -363,6 +368,16 @@ Item {
   }
 
   function publish(items, key, scope) {
+    // Retain only paths in this result set, never every path searched since login.
+    var kept = ({})
+    var readAt = ({})
+    for (var n = 0; n < items.length; n++) {
+      var path = items[n].path
+      if (searcher.fileMtimes[path] !== undefined) kept[path] = searcher.fileMtimes[path]
+      if (searcher.fileMtimeReadAt[path] !== undefined) readAt[path] = searcher.fileMtimeReadAt[path]
+    }
+    searcher.fileMtimes = kept
+    searcher.fileMtimeReadAt = readAt
     for (var i = 0; i < items.length; i++) {
       var known = searcher.fileMtimes[items[i].path]
       if (known !== undefined) items[i].mtimeMs = known
@@ -379,29 +394,39 @@ Item {
   // that did not answer its status check are left out: stat would only wait
   // on them.
   function fetchFileMtimes() {
-    if (statProc.running || searcher.fileResults.length === 0) return
+    if (!searcher.menu.opened || statProc.running || searcher.fileResults.length === 0) return
     var paths = []
+    var now = Date.now()
     for (var i = 0; i < searcher.fileResults.length && paths.length < 300; i++) {
       var item = searcher.fileResults[i]
-      if (searcher.fileMtimes[item.path] !== undefined) continue
+      if (now - (searcher.fileMtimeReadAt[item.path] || 0) < searcher.mtimeTtlMs) continue
       if (item.rootId && !searcher.rootOnline(item.rootId)) continue
       paths.push(item.path)
     }
     if (paths.length === 0) return
     statProc.gen = searcher.fileSearchGen
-    statProc.command = ["timeout", "5", "stat", "--printf", "%Y\t%n\\0", "--"].concat(paths)
+    statProc.paths = paths
+    statProc.command = ["timeout", "-k", "1", "5", "stat", "--printf", "%Y\t%n\\0", "--"].concat(paths)
     statProc.running = true
   }
 
-  function applyFileMtimes(map) {
+  function applyFileMtimes(map, attempted) {
     var next = ({})
-    for (var known in searcher.fileMtimes) next[known] = searcher.fileMtimes[known]
-    for (var path in map) next[path] = map[path]
-    searcher.fileMtimes = next
+    var readAt = ({})
+    var now = Date.now()
     for (var i = 0; i < searcher.fileResults.length; i++) {
-      var ms = next[searcher.fileResults[i].path]
-      if (ms !== undefined) searcher.fileResults[i].mtimeMs = ms
+      var item = searcher.fileResults[i]
+      var path = item.path
+      var tried = attempted.indexOf(path) >= 0
+      var ms = tried ? map[path] : searcher.fileMtimes[path]
+      if (ms !== undefined) next[path] = ms
+      // Failed stats also back off; a missing file cannot create a retry loop.
+      if (tried) readAt[path] = now
+      else if (searcher.fileMtimeReadAt[path] !== undefined) readAt[path] = searcher.fileMtimeReadAt[path]
+      item.mtimeMs = ms || 0
     }
+    searcher.fileMtimes = next
+    searcher.fileMtimeReadAt = readAt
     searcher.fileResultsVersion += 1
     searcher.menu.rebuildDisplay(true)
   }
@@ -416,6 +441,9 @@ Item {
     if (fileSearchProc.running) fileSearchProc.running = false
     if (indexSearchProc.running) indexSearchProc.running = false
     if (liveSearchProc.running) liveSearchProc.running = false
+    if (statProc.running) statProc.running = false
+    searcher.fileMtimes = ({})
+    searcher.fileMtimeReadAt = ({})
     searcher.fileSearching = false
   }
 
@@ -564,10 +592,11 @@ Item {
   Process {
     id: statProc
     property int gen: 0
+    property var paths: []
     stdout: StdioCollector { id: statOut; waitForEnd: true }
     onExited: {
-      if (statProc.gen === searcher.fileSearchGen) searcher.applyFileMtimes(FileSearch.parseStatLines(statOut.text || ""))
-      else searcher.fetchFileMtimes()
+      if (statProc.gen === searcher.fileSearchGen) searcher.applyFileMtimes(FileSearch.parseStatLines(statOut.text || ""), statProc.paths)
+      Qt.callLater(searcher.fetchFileMtimes)
     }
   }
 

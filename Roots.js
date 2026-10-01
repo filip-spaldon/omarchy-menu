@@ -198,6 +198,46 @@ function indexPath(cacheHome, id) {
   return indexDir(cacheHome) + "/" + id + ".idx"
 }
 
+// Small sidecar keyed by inode/size/timestamps. The regular status poll never
+// reads the index body; pre-upgrade indexes are counted once on first use.
+var INDEX_META_PROGRAM = [
+  "use strict; use warnings; use Fcntl qw(:DEFAULT :flock :mode); use File::Temp qw(tempfile);",
+  "my ($idx, $max, $locked) = @ARGV;",
+  "sysopen(my $in, $idx, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or exit 1;",
+  "my @st = stat($in);",
+  "exit 1 unless @st && S_ISREG($st[2]) && $st[4] == $< && $st[7] <= $max;",
+  "my $signature = join(\":\", @st[0,1,7,9,10]);",
+  "if (sysopen(my $meta, \"$idx.meta\", O_RDONLY | O_NOFOLLOW | O_NONBLOCK)) {",
+  "  my @ms = stat($meta);",
+  "  if (@ms && S_ISREG($ms[2]) && $ms[4] == $< && $ms[7] <= 256) {",
+  "    my $n = sysread($meta, my $text, 257);",
+  "    if (defined($n) && $text =~ /^\\Q$signature\\E\\t(\\d+)\\n$/) { print $1; exit 0 }",
+  "  }",
+  "}",
+  "# Old indexes have no metadata. Count once under the same lock as rebuilds.",
+  "my $lock;",
+  "if (!$locked) {",
+  "  sysopen($lock, \"$idx.lock\", O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0600) or exit 1;",
+  "  my @ls = stat($lock);",
+  "  exit 1 unless @ls && S_ISREG($ls[2]) && $ls[4] == $< && $ls[3] == 1;",
+  "  flock($lock, LOCK_EX | LOCK_NB) or exit 1;",
+  "}",
+  "my ($count, $bytes) = (0, 0);",
+  "while (1) {",
+  "  my $n = sysread($in, my $chunk, 1048576);",
+  "  exit 1 unless defined $n; last unless $n;",
+  "  $bytes += $n; exit 1 if $bytes > $max;",
+  "  $count += ($chunk =~ tr/\\0/\\0/);",
+  "}",
+  "my $dir = $idx; $dir =~ s{/[^/]+$}{};",
+  "umask 0077;",
+  "my ($out, $temp) = tempfile(\".meta.XXXXXXXX\", DIR => $dir, UNLINK => 1);",
+  "print {$out} \"$signature\\t$count\\n\" or die \"write metadata: $!\\n\";",
+  "close($out) or die \"close metadata: $!\\n\";",
+  "rename($temp, \"$idx.meta\") or die \"rename metadata: $!\\n\";",
+  "print $count;"
+].join("\n")
+
 // Rebuilds one root's index: bash -c INDEX_SCRIPT bash DIR OUT ROOT DEPTH
 // MAXBYTES SECONDS [fd exclude args...]. One rebuild per root at a time
 // (flock); a root that does not answer within two seconds is left with its
@@ -207,7 +247,7 @@ function indexPath(cacheHome, id) {
 // fd finished or was cut off by the size cap.
 var INDEX_SCRIPT = [
   'set -u -o pipefail',
-  'dir=$1 out=$2 root=$3 depth=$4 max=$5 secs=$6; shift 6',
+  'dir=$1 out=$2 root=$3 depth=$4 max=$5 secs=$6 meta=$7; shift 7',
   'umask 077',
   'mkdir -p -- "$dir" || exit 3',
   'exec 9>"$out.lock" || exit 3',
@@ -221,12 +261,13 @@ var INDEX_SCRIPT = [
   // of time: either way the paths it got to are worth keeping.
   'case "${codes[0]}" in 0|124|141) ;; *) exit 5 ;; esac',
   'mv -f -- "$tmp" "$out" || exit 3',
-  'trap - EXIT'
+  'trap - EXIT',
+  'perl -e "$meta" -- "$out" "$max" 1 >/dev/null || true'
 ].join("\n")
 
 function indexCommand(cacheHome, root, excludes) {
   var argv = ["bash", "-c", INDEX_SCRIPT, "bash", indexDir(cacheHome), indexPath(cacheHome, root.id), root.path,
-    String(INDEX_MAX_DEPTH), String(INDEX_MAX_BYTES), String(INDEX_SECONDS)]
+    String(INDEX_MAX_DEPTH), String(INDEX_MAX_BYTES), String(INDEX_SECONDS), INDEX_META_PROGRAM]
   for (var i = 0; i < excludes.length; i++) argv.push("-E", excludes[i])
   return argv
 }
@@ -288,7 +329,7 @@ function indexSearchCommand(kinds, hidden, exts, terms, pairs) {
 // with "-" for what is unknown. The source (the mount's device or remote)
 // comes from findmnt and has tabs and newlines replaced.
 var STATUS_SCRIPT = [
-  'dir=$1; shift',
+  'dir=$1 meta=$2 max=$3; shift 3',
   'while [ $# -ge 2 ]; do',
   '  id=$1 p=$2; shift 2',
   '  (',
@@ -302,7 +343,7 @@ var STATUS_SCRIPT = [
   '    idx="$dir/$id.idx"',
   '    if [ -f "$idx" ] && [ ! -L "$idx" ]; then',
   '      at=$(stat -c %Y -- "$idx" 2>/dev/null || echo -)',
-  '      count=$(tr -cd "\\000" < "$idx" | wc -c)',
+  '      count=$(perl -e "$meta" -- "$idx" "$max" 0 2>/dev/null) || count=-',
   '    fi',
   '    printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$id" "$state" "${fs:--}" "$free" "$src" "$at" "$count"',
   '  ) &',
@@ -311,7 +352,7 @@ var STATUS_SCRIPT = [
 ].join("\n")
 
 function statusCommand(cacheHome, roots) {
-  var argv = ["timeout", "-k", "1", "8", "bash", "-c", STATUS_SCRIPT, "bash", indexDir(cacheHome)]
+  var argv = ["timeout", "-k", "1", "8", "bash", "-c", STATUS_SCRIPT, "bash", indexDir(cacheHome), INDEX_META_PROGRAM, String(INDEX_MAX_BYTES)]
   for (var i = 0; i < roots.length; i++) argv.push(roots[i].id, roots[i].path)
   return argv
 }
@@ -372,7 +413,7 @@ function describe(root, status, nowMs) {
     if (parts.length) lines.push(parts.join(" · "))
   }
   if (root.cacheMinutes > 0) {
-    if (status.indexedAt > 0) lines.push(formatCount(status.indexCount) + " paths, indexed " + formatAge(status.indexedAt, nowMs))
+    if (status.indexedAt > 0) lines.push((status.indexCount >= 0 ? formatCount(status.indexCount) + " paths, " : "") + "indexed " + formatAge(status.indexedAt, nowMs))
     else lines.push("not indexed yet")
   }
   return lines.join("\n")
@@ -482,6 +523,7 @@ if (typeof module !== "undefined") {
     homeExcludes: homeExcludes,
     indexDir: indexDir,
     indexPath: indexPath,
+    INDEX_META_PROGRAM: INDEX_META_PROGRAM,
     INDEX_SCRIPT: INDEX_SCRIPT,
     indexCommand: indexCommand,
     INDEX_SEARCH_PROGRAM: INDEX_SEARCH_PROGRAM,

@@ -66,9 +66,13 @@ Panel {
 
   // ---------------------------------------------------------------- values --
 
-  readonly property bool stateValid: stateData !== null
-  readonly property bool styleValid: styleData !== null
-  readonly property bool aiValid: aiData !== null
+  property bool stateReadable: false
+  property bool styleReadable: false
+  property bool aiReadable: false
+  property string settingsError: ""
+  readonly property bool stateValid: stateReadable && stateData !== null
+  readonly property bool styleValid: styleReadable && styleData !== null
+  readonly property bool aiValid: aiReadable && aiData !== null
   readonly property var st: stateData || ({})
   readonly property var sty: styleData || ({})
 
@@ -145,6 +149,7 @@ Panel {
     function item(r) { r.indent = true; row(r) }
 
     row({ key: "settings", label: "Settings", icon: "󰒓", value: settingsOpen ? "⌄" : "›" })
+    if (settingsError) note(settingsError)
     if (settingsOpen) {
       for (var g = 0; g < groups.length; g++) {
         var group = groups[g]
@@ -371,7 +376,8 @@ Panel {
     var id = r.rootId
     removeArmed = ""
     setState("searchRoots", Roots.updateRoot(st.searchRoots, homeDir, id, function() { return null }))
-    Quickshell.execDetached(["rm", "-f", "--", Roots.indexPath(cacheHome, id), Roots.indexPath(cacheHome, id) + ".lock"])
+    Quickshell.execDetached(["rm", "-f", "--", Roots.indexPath(cacheHome, id), Roots.indexPath(cacheHome, id) + ".meta",
+      Roots.indexPath(cacheHome, id) + ".lock"])
     Qt.callLater(function() { root.firstSelectableFrom(root.cursor) })
   }
 
@@ -455,13 +461,13 @@ Panel {
   function setState(key, value) {
     if (!stateValid) return
     stateData = Settings.withKey(stateData, key, value)
-    stateWriter.save(JSON.stringify(stateData, null, 2) + "\n")
+    stateWriter.save(Settings.patch(key, value))
   }
 
   function setStyle(key, value) {
     if (!styleValid) return
     styleData = Settings.withKey(styleData, key, value)
-    styleWriter.save(JSON.stringify(styleData, null, 2) + "\n")
+    styleWriter.save(Settings.patch(key, value))
   }
 
   function setAgentEntry(section, value) {
@@ -469,13 +475,17 @@ Panel {
     var map = aiData[section] && typeof aiData[section] === "object" && !Array.isArray(aiData[section]) ? aiData[section] : ({})
     var next = Settings.withKey(map, aiAgent, value === "" ? undefined : value)
     aiData = Settings.withKey(aiData, section, next)
-    aiWriter.save(JSON.stringify(aiData, null, 2) + "\n")
+    aiWriter.save(Settings.patch([section, aiAgent], value === "" ? undefined : value))
   }
 
   function reload() {
+    stateReadable = false
+    styleReadable = false
+    aiReadable = false
+    settingsError = ""
     stateReader.load(root.statePath, Settings.STATE_MAX_BYTES)
     styleReader.load(root.stylePath, 8192)
-    aiReader.load(root.aiPath, 16384)
+    aiReader.load(root.aiPath, 65536)
     defaultMenuReader.load(root.defaultMenuPath, 1048576)
     userMenuReader.load(root.userMenuPath, 1048576)
     if (!agentProbe.running) {
@@ -550,41 +560,27 @@ Panel {
 
   component FileReader: Process {
     id: reader
-    signal loaded(string text, bool exists)
+    signal loaded(string text, int exitCode, int exitStatus)
     function load(path, maxBytes) {
       if (running) return
       command = Settings.readFileCommand(path, maxBytes, 5)
       running = true
     }
     stdout: StdioCollector { id: out; waitForEnd: true }
-    onExited: function(exitCode) { reader.loaded(out.text, exitCode === 0) }
+    onExited: function(exitCode, exitStatus) { reader.loaded(out.text, exitCode, exitStatus) }
   }
 
-  // A save asked for while one is being written runs as soon as it ends,
-  // with the newest content.
-  component FileWriter: Process {
-    id: writer
-    required property string path
-    property string pending: ""
-    function save(content) {
-      if (running) { pending = content; return }
-      command = Settings.writeCommand(root.stateDir, path, content, false)
-      running = true
-    }
-    onExited: {
-      if (!pending) return
-      var next = pending
-      pending = ""
-      Qt.callLater(function() { writer.save(next) })
-    }
+  function applySettingsRead(kind, text, exitCode, exitStatus) {
+    var result = Settings.readObject(text, exitCode, exitStatus)
+    root[kind + "Readable"] = result.ok
+    if (result.ok) root[kind + "Data"] = result.data
+    else root.settingsError = result.error
   }
 
-  // A read that fails (missing file, or one the reader refuses) counts as
-  // empty: the popup shows defaults and a save creates the file.
   FileReader {
     id: stateReader
-    onLoaded: function(text) {
-      root.stateData = Settings.parseObject(text)
+    onLoaded: function(text, exitCode, exitStatus) {
+      root.applySettingsRead("state", text, exitCode, exitStatus)
       if (root.opened) root.refreshRootStatus()
     }
   }
@@ -610,8 +606,8 @@ Panel {
     stdout: StdioCollector { id: pickOut; waitForEnd: true }
     onExited: function(exitCode) { if (exitCode === 0) root.addPicked(String(pickOut.text || "").slice(0, 65536)) }
   }
-  FileReader { id: styleReader; onLoaded: function(text) { root.styleData = Settings.parseObject(text) } }
-  FileReader { id: aiReader; onLoaded: function(text) { root.aiData = Settings.parseObject(text) } }
+  FileReader { id: styleReader; onLoaded: function(text, exitCode, exitStatus) { root.applySettingsRead("style", text, exitCode, exitStatus) } }
+  FileReader { id: aiReader; onLoaded: function(text, exitCode, exitStatus) { root.applySettingsRead("ai", text, exitCode, exitStatus) } }
   FileReader {
     id: defaultMenuReader
     onLoaded: function(text) { root.defaultMenuItems = MenuModel.parseMenuJsonc(text); root.rebuildSystemEntries() }
@@ -621,9 +617,21 @@ Panel {
     onLoaded: function(text) { root.userMenuItems = MenuModel.parseMenuJsonc(text); root.rebuildSystemEntries() }
   }
 
-  FileWriter { id: stateWriter; path: root.statePath }
-  FileWriter { id: styleWriter; path: root.stylePath }
-  FileWriter { id: aiWriter; path: root.aiPath }
+  SettingsWriter {
+    id: stateWriter; directory: root.stateDir; path: root.statePath
+    onSaved: function(text) { root.stateData = Settings.parseObject(text) }
+    onFailed: function(message) { root.settingsError = message; root.stateReadable = false }
+  }
+  SettingsWriter {
+    id: styleWriter; directory: root.stateDir; path: root.stylePath; maxBytes: 8192
+    onSaved: function(text) { root.styleData = Settings.parseObject(text) }
+    onFailed: function(message) { root.settingsError = message; root.styleReadable = false }
+  }
+  SettingsWriter {
+    id: aiWriter; directory: root.stateDir; path: root.aiPath
+    onSaved: function(text) { root.aiData = Settings.parseObject(text) }
+    onFailed: function(message) { root.settingsError = message; root.aiReadable = false }
+  }
 
   Process {
     id: guardProc

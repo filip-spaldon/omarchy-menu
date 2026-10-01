@@ -331,19 +331,31 @@ Item {
   readonly property int launcherBodyHeight: Math.max(root.baseRowHeight * 3, Math.round(panel.height * root.launcherBodyFraction))
   // A fitted body still takes the full height for the grid and AI answers,
   // whose size is not a row count.
-  property int visibleRowsHeight: root.dmenuActive
-    ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText)
-    : (root.compact ? 0
-      : (root.launcherFixedHeight || root.gridActive || aiCtl.isAiMode || root.systemTwoPane
+  readonly property int desiredRowsHeight: root.compact ? 0
+    : (root.launcherFixedHeight || root.gridActive || aiCtl.isAiMode || root.systemTwoPane
         ? root.launcherBodyHeight
         : Math.min(root.launcherBodyHeight, Math.max(root.baseRowHeight * 3,
-            rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider)))))
+            rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider))))
+  readonly property int launcherChromeHeight: contentMargin * 2 + headerHeight
+    + (tabBar.visible ? contentSpacing + tabBar.height : 0)
+    + (fileBar.visible ? contentSpacing + fileBar.height : 0)
+    + (desiredRowsHeight > 0 ? contentSpacing : 0)
+    + (footer.visible ? contentSpacing + footer.implicitHeight : 0)
+  MenuGeometry {
+    id: launcherGeometry
+    viewportHeight: panel.height
+    gap: Style.gapsOut
+    requestedTop: root.launcherTopFraction >= 0 ? panel.height * root.launcherTopFraction : panel.cardTop
+    desiredBodyHeight: root.desiredRowsHeight
+    minimumBodyHeight: root.baseRowHeight * 3
+    chromeHeight: root.launcherChromeHeight
+  }
+  property int visibleRowsHeight: root.dmenuActive
+    ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText)
+    : launcherGeometry.bodyHeight
   property int cardHeight: root.dmenuActive
     ? Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
-    : Math.min(contentMargin * 2 + headerHeight + contentSpacing + tabBar.height
-        + (fileBar.visible ? contentSpacing + fileBar.height : 0)
-        + (root.compact ? 0 : contentSpacing + visibleRowsHeight)
-        + (footer.visible ? contentSpacing + footer.implicitHeight : 0), panel.height - Style.gapsOut * 2)
+    : launcherGeometry.cardHeight
 
   function finishRequest(selection) {
     if (!root.requestActive || !root.doneFile) {
@@ -511,7 +523,7 @@ Item {
 
   function boundedCommand(script, seconds, maxBytes) {
     return ["bash", "-c",
-      'timeout ' + (seconds > 0 ? seconds : root.helperDeadline)
+      'timeout -k 1 ' + (seconds > 0 ? seconds : root.helperDeadline)
       + ' bash -c ' + Util.shellQuote(script)
       + ' | head -c ' + (maxBytes > 0 ? maxBytes : root.helperOutputCeiling)]
   }
@@ -999,8 +1011,9 @@ Item {
   }
 
   function toggleAppsView() {
-    root.appsView = root.appsView === "grid" ? "list" : "grid"
-    settingsStore.saveState()
+    var next = root.appsView === "grid" ? "list" : "grid"
+    if (!settingsStore.saveState("appsView", next)) return
+    root.appsView = next
     Qt.callLater(function() { if (displayModel.count > 0) root.revealCursor() })
   }
 
@@ -2067,7 +2080,7 @@ Item {
   // What the controllers reach for through `menu`.
   readonly property var stateData: settingsStore.stateData
   readonly property string aiAgent: aiCtl.aiAgent
-  function saveState() { settingsStore.saveState() }
+  function saveState(key, value) { return settingsStore.saveState(key, value) }
   function requestFileSearch() { fileCtl.requestFileSearch() }
   function queryRows(query) { return root.plainAnswerRows(query) }
 
@@ -2439,8 +2452,8 @@ Item {
     // growing from the compact prompt into a full card only ever extends
     // downward. A dmenu picker keeps the centered, freeze-on-type behaviour.
     readonly property int launcherTop: Math.round(height * root.launcherTopFraction)
-    readonly property int effectiveCardTop: root.tabsActive && root.launcherTopFraction >= 0
-      ? launcherTop
+    readonly property int effectiveCardTop: root.tabsActive
+      ? Math.round(launcherGeometry.cardTop)
       : (cardTop >= 0 ? cardTop : centeredTop)
     function freezeCardTop() {
       if (visible && cardTop < 0) {
@@ -2656,432 +2669,439 @@ Item {
         }
       }
 
-      Column {
+      Flickable {
+        id: cardContent
+        clip: true
+        contentWidth: width
+        contentHeight: contentColumn.implicitHeight
+        interactive: contentHeight > height + 1
+        boundsBehavior: Flickable.StopAtBounds
         anchors.fill: parent
         anchors.topMargin: card.contentTopInset
         anchors.rightMargin: card.contentRightInset
         anchors.bottomMargin: card.contentBottomInset
         anchors.leftMargin: card.contentLeftInset
-        spacing: root.contentSpacing
 
-        Rectangle {
-          width: parent.width
-          height: root.headerHeight
-          radius: root.cornerRadius
-          color: "transparent"
+        Column {
+          id: contentColumn
+          width: cardContent.width
+          spacing: root.contentSpacing
 
-          Text {
-            id: viewToggle
-            textFormat: Text.PlainText
-            visible: root.tabsActive && root.activeTab === "apps"
-            text: root.appsView === "grid" ? "󰕰" : "󰈚"
-            color: root.foreground
-            opacity: viewToggleMouse.containsMouse ? 0.9 : 0.5
-            font.family: root.fontFamily
-            font.pixelSize: root.scaledFont(Style.font.iconLarge)
-            anchors.right: parent.right
-            anchors.rightMargin: Style.space(4)
-            anchors.verticalCenter: parent.verticalCenter
+          Rectangle {
+            width: parent.width
+            height: root.headerHeight
+            radius: root.cornerRadius
+            color: "transparent"
 
-            MouseArea {
-              id: viewToggleMouse
-              anchors.fill: parent
-              anchors.margins: -Style.space(6)
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: {
-                root.toggleAppsView()
-                Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+            Text {
+              id: viewToggle
+              textFormat: Text.PlainText
+              visible: root.tabsActive && root.activeTab === "apps"
+              text: root.appsView === "grid" ? "󰕰" : "󰈚"
+              color: root.foreground
+              opacity: viewToggleMouse.containsMouse ? 0.9 : 0.5
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.iconLarge)
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(4)
+              anchors.verticalCenter: parent.verticalCenter
+
+              MouseArea {
+                id: viewToggleMouse
+                anchors.fill: parent
+                anchors.margins: -Style.space(6)
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  root.toggleAppsView()
+                  Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+                }
               }
+            }
+
+            Text {
+              id: searchGlyph
+              textFormat: Text.PlainText
+              visible: root.tabsActive
+              text: "󰍉"
+              color: root.foreground
+              opacity: 0.6
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.iconLarge)
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(4)
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            // Terminal-style cursor at the end of the query; with nothing typed
+            // it sits on the first letter of the placeholder, as a terminal's
+            // does on the first cell. Style and blinking come from state.json:
+            // cursorStyle "block" | "beam" | "underline" | "outline" | "none",
+            // cursorBlink true | false, cursorWhenEmpty true | false (false
+            // hides it while nothing is typed). It holds solid while typing.
+            Item {
+              id: searchCursor
+              readonly property real textEnd: searchText.x + (root.filterText ? Math.min(searchText.contentWidth, searchText.width) : 0)
+              readonly property int cellWidth: Math.max(2, Math.round(searchText.font.pixelSize * 0.55))
+              visible: root.opened && root.cursorStyle !== "none" && (root.cursorWhenEmpty || root.filterText !== "")
+              width: root.cursorStyle === "beam" ? Math.max(2, Math.round(searchText.font.pixelSize / 8)) : cellWidth
+              height: Math.round(searchText.font.pixelSize * 1.15)
+              x: root.filterText ? textEnd + 1 : searchText.x
+              anchors.verticalCenter: parent.verticalCenter
+              // Over the placeholder a filled block stays see-through enough
+              // to leave its letter readable.
+              opacity: (!root.cursorBlink || cursorBlink.on)
+                ? (!root.filterText && (root.cursorStyle === "block") ? 0.5 : 0.85) : 0
+
+              Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: root.cursorStyle === "underline" ? Math.max(2, Math.round(parent.height / 8)) : parent.height
+                color: root.cursorStyle === "outline" ? "transparent" : root.foreground
+                border.width: root.cursorStyle === "outline" ? 1 : 0
+                border.color: root.foreground
+              }
+
+              CursorBlink {
+                id: cursorBlink
+                active: searchCursor.visible && root.cursorBlink
+              }
+              Connections {
+                target: root
+                function onFilterTextChanged() { cursorBlink.pulse() }
+              }
+            }
+
+            Text {
+              id: searchText
+              textFormat: Text.PlainText
+              anchors.left: root.tabsActive ? searchGlyph.right : parent.left
+              // Empty: the placeholder starts after the cursor block.
+              anchors.leftMargin: root.tabsActive ? Style.space(10) : 0
+              anchors.right: viewToggle.visible ? viewToggle.left : parent.right
+              anchors.rightMargin: viewToggle.visible ? Style.space(8) : 0
+              anchors.verticalCenter: parent.verticalCenter
+              // Bounded like the rows: the prompt comes from whoever invoked
+              // the dmenu, and the title from the JSONC.
+              text: MenuModel.sanitizeText(root.filterText || root.promptText())
+              color: root.foreground
+              opacity: root.filterText ? 1 : 0.58
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.heading)
+              elide: Text.ElideRight
+            }
+
+          }
+
+          TabBar {
+            id: tabBar
+            // Hidden in command mode: the tabs choose where to search, and a
+            // command does not search.
+            visible: root.tabsActive && !root.commandMode
+            height: visible ? implicitHeight : 0
+            tabs: aiCtl.isAiMode ? aiCtl.aiAgentTabs : root.orderedTabs
+            activeTab: aiCtl.isAiMode ? aiCtl.aiAgent : root.activeTab
+            fontFamily: root.fontFamily
+            foreground: root.foreground
+            accent: Color.accent
+            fontSize: root.scaledFont(Style.font.body)
+            anim: root.tabAnim
+            onTabClicked: function(id) {
+              if (aiCtl.isAiMode) aiCtl.setAiAgent(id)
+              else root.setTab(id)
+              Qt.callLater(function() { keyCatcher.forceActiveFocus() })
             }
           }
 
-          Text {
-            id: searchGlyph
-            textFormat: Text.PlainText
-            visible: root.tabsActive
-            text: "󰍉"
-            color: root.foreground
-            opacity: 0.6
-            font.family: root.fontFamily
-            font.pixelSize: root.scaledFont(Style.font.iconLarge)
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(4)
-            anchors.verticalCenter: parent.verticalCenter
+          Item {
+            id: fileBar
+            visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && (root.activeTab === "files" || root.activeTab === "folders")
+            width: parent.width
+            height: visible ? fileFilterChips.implicitHeight
+              + (scopeChips.visible ? Style.space(6) + scopeChips.implicitHeight : 0) : 0
+
+            TabBar {
+              id: fileFilterChips
+              anchors.left: parent.left
+              width: parent.width - fileSortLabel.implicitWidth - Style.space(12)
+              tabs: FileSearch.filtersFor(root.activeTab).map(function(f) { return { id: f.id, label: f.label, icon: "" } })
+              activeTab: fileCtl.fileFilterFor(root.activeTab).id
+              fontFamily: root.fontFamily
+              foreground: root.foreground
+              accent: Color.accent
+              fontSize: root.scaledFont(Style.font.caption)
+              anim: root.tabAnim
+              onTabClicked: function(id) {
+                fileCtl.setFileFilter(id)
+                Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+              }
+            }
+
+            // Where to look: everywhere, $HOME only, or one search root
+            // (Ctrl+R). Only there when a root is.
+            TabBar {
+              id: scopeChips
+              visible: fileCtl.hasRoots
+              anchors.left: parent.left
+              anchors.top: fileFilterChips.bottom
+              anchors.topMargin: Style.space(6)
+              width: parent.width
+              tabs: fileCtl.scopeChoices
+              activeTab: fileCtl.currentScope()
+              fontFamily: root.fontFamily
+              foreground: root.foreground
+              accent: Color.accent
+              fontSize: root.scaledFont(Style.font.caption)
+              onTabClicked: function(id) {
+                fileCtl.setRootScope(id)
+                Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+              }
+            }
+
+            Text {
+              id: fileSortLabel
+              textFormat: Text.PlainText
+              anchors.right: parent.right
+              anchors.top: parent.top
+              text: (fileCtl.fileSearching ? "searching… · " : "")
+                + FileSearch.sortMode(fileCtl.fileSortMode).icon + " " + FileSearch.sortMode(fileCtl.fileSortMode).label
+                + " · " + displayModel.count + "/" + fileCtl.fileDisplayLimit
+              color: root.foreground
+              opacity: 0.5
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.caption)
+            }
           }
 
-          // Terminal-style cursor at the end of the query; with nothing typed
-          // it sits on the first letter of the placeholder, as a terminal's
-          // does on the first cell. Style and blinking come from state.json:
-          // cursorStyle "block" | "beam" | "underline" | "outline" | "none",
-          // cursorBlink true | false, cursorWhenEmpty true | false (false
-          // hides it while nothing is typed). It holds solid while typing.
           Item {
-            id: searchCursor
-            readonly property real textEnd: searchText.x + (root.filterText ? Math.min(searchText.contentWidth, searchText.width) : 0)
-            readonly property int cellWidth: Math.max(2, Math.round(searchText.font.pixelSize * 0.55))
-            visible: root.opened && root.cursorStyle !== "none" && (root.cursorWhenEmpty || root.filterText !== "")
-            width: root.cursorStyle === "beam" ? Math.max(2, Math.round(searchText.font.pixelSize / 8)) : cellWidth
-            height: Math.round(searchText.font.pixelSize * 1.15)
-            x: root.filterText ? textEnd + 1 : searchText.x
-            anchors.verticalCenter: parent.verticalCenter
-            // Over the placeholder a filled block stays see-through enough
-            // to leave its letter readable.
-            opacity: (!root.cursorBlink || cursorBlink.on)
-              ? (!root.filterText && (root.cursorStyle === "block") ? 0.5 : 0.85) : 0
+            width: parent.width
+            height: root.visibleRowsHeight
+            visible: height > 0
+
+            AiPanel {
+              id: aiPanel
+              menu: root
+              ai: aiCtl
+              anchors.fill: parent
+              visible: aiCtl.isAiMode
+            }
+
+            AppGrid {
+              id: appGrid
+              menu: root
+              // As wide as the whole columns that fit, and centred: the leftover
+              // part of a column sits evenly on both sides instead of all at the
+              // right edge.
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              anchors.horizontalCenter: parent.horizontalCenter
+              width: Math.max(cellWidth, Math.floor(parent.width / cellWidth) * cellWidth)
+              visible: root.gridActive && !aiCtl.isAiMode
+              model: root.gridActive ? displayModel : null
+            }
+
+            // System's left pane: the top-level categories.
+            ListView {
+              id: systemCategoryList
+              visible: root.systemTwoPane
+              width: visible ? Math.round(parent.width * 0.34) : 0
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              anchors.left: parent.left
+              clip: true
+              spacing: root.rowSpacing
+              boundsBehavior: Flickable.StopAtBounds
+              model: root.systemCategories
+              currentIndex: root.systemCategoryIndex
+
+              delegate: SystemCategoryItem { menu: root }
+            }
+
+            Rectangle {
+              id: systemPaneDivider
+              visible: root.systemTwoPane
+              width: visible ? Style.spacing.hairline : 0
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              anchors.left: systemCategoryList.right
+              anchors.leftMargin: visible ? Style.space(8) : 0
+              color: Util.alpha(root.foreground, 0.15)
+            }
+
+            // A category that is an action (About) has nothing to preview.
+            Text {
+              visible: root.systemTwoPane && displayModel.count === 0
+              anchors.centerIn: resultList
+              textFormat: Text.PlainText
+              text: "Enter to open"
+              color: root.foreground
+              opacity: 0.45
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.body)
+            }
+
+            // Right pane heading: where in the menu the list below is.
+            Text {
+              id: systemPaneTitle
+              visible: root.systemTwoPane
+              // Fixed from the font rather than implicitHeight: an elided Text's
+              // implicit height depends on its own size, a binding loop.
+              height: visible ? root.scaledFont(Style.font.caption) + Style.space(12) : 0
+              verticalAlignment: Text.AlignTop
+              anchors.top: parent.top
+              anchors.left: systemPaneDivider.right
+              anchors.leftMargin: visible ? Style.space(12) : 0
+              anchors.right: parent.right
+              textFormat: Text.PlainText
+              text: (root.activeMenu === "root" ? "" : MenuModel.sanitizeText(root.pathFor(root.activeMenu)).toUpperCase())
+                + (root.systemMatches.length > 0
+                   ? "   ·   MATCH " + (root.systemMatchIndex + 1) + "/" + root.systemMatches.length
+                     + (root.systemMatches.length > 1 ? "  CTRL+↑↓" : "")
+                   : "")
+              color: root.foreground
+              opacity: 0.45
+              elide: Text.ElideLeft
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.caption)
+              font.weight: Font.DemiBold
+              font.letterSpacing: 1
+            }
+
+            ListView {
+              id: resultList
+              anchors.top: systemPaneTitle.bottom
+              anchors.bottom: parent.bottom
+              anchors.left: systemPaneDivider.right
+              anchors.leftMargin: root.systemTwoPane ? Style.space(8) : 0
+              anchors.right: parent.right
+              visible: !root.gridActive && !aiCtl.isAiMode
+              model: displayModel
+              clip: true
+              spacing: root.rowSpacing
+              boundsBehavior: Flickable.StopAtBounds
+
+              section.property: "section"
+              section.criteria: ViewSection.FullString
+              section.delegate: Item {
+                required property string section
+                readonly property bool isHeader: Tabs.isHeaderSection(section)
+
+                width: ListView.view.width
+                height: section === "drilldown" ? root.dividerHeight : (isHeader ? root.sectionHeaderHeight : 0)
+                visible: section === "drilldown" || isHeader
+
+                Text {
+                  visible: parent.isHeader
+                  textFormat: Text.PlainText
+                  text: Tabs.headerTitle(parent.section).toUpperCase()
+                  color: root.foreground
+                  opacity: 0.45
+                  font.family: root.fontFamily
+                  font.pixelSize: root.scaledFont(Style.font.caption)
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 1
+                  anchors.left: parent.left
+                  anchors.leftMargin: root.rowReservedBorderLeft + Style.space(10)
+                  anchors.bottom: parent.bottom
+                  anchors.bottomMargin: Style.space(4)
+                }
+
+                Rectangle {
+                  visible: parent.section === "drilldown"
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(4)
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(4)
+                  anchors.verticalCenter: parent.verticalCenter
+                  height: Style.spacing.hairline
+                  color: Util.alpha(root.foreground, 0.2)
+                }
+              }
+
+              delegate: ResultRow { menu: root }
+            }
+
+            // Scroll scrims. The clipped row already marks the fold at rest;
+            // these keep both edges honest once the list has been scrolled,
+            // when content hides above the card top as well as below. Strength
+            // tracks the distance still hidden past each edge rather than
+            // animating on a clock, so a programmatic jump — wrapping from the
+            // last row back to the first — lands with the fade already applied.
+            Rectangle {
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              height: Math.min(Style.space(28), parent.height / 2)
+              visible: opacity > 0
+              opacity: resultList.contentHeight > resultList.height
+                ? Math.max(0, Math.min(1, (resultList.contentY - resultList.originY) / height))
+                : 0
+              gradient: Gradient {
+                GradientStop { position: 0; color: root.background }
+                GradientStop { position: 1; color: Util.alpha(root.background, 0) }
+              }
+            }
 
             Rectangle {
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.bottom: parent.bottom
-              height: root.cursorStyle === "underline" ? Math.max(2, Math.round(parent.height / 8)) : parent.height
-              color: root.cursorStyle === "outline" ? "transparent" : root.foreground
-              border.width: root.cursorStyle === "outline" ? 1 : 0
-              border.color: root.foreground
+              height: Math.min(Style.space(28), parent.height / 2)
+              visible: opacity > 0
+              opacity: resultList.contentHeight > resultList.height
+                ? Math.max(0, Math.min(1, (resultList.originY + resultList.contentHeight - resultList.height - resultList.contentY) / height))
+                : 0
+              gradient: Gradient {
+                GradientStop { position: 0; color: Util.alpha(root.background, 0) }
+                GradientStop { position: 1; color: root.background }
+              }
             }
 
-            Timer {
-              id: cursorBlink
-              property bool on: true
-              interval: 530
-              repeat: true
-              running: searchCursor.visible && root.cursorBlink
-              onTriggered: on = !on
-            }
-            Connections {
-              target: root
-              function onFilterTextChanged() { cursorBlink.on = true; cursorBlink.restart() }
-            }
-          }
-
-          Text {
-            id: searchText
-            textFormat: Text.PlainText
-            anchors.left: root.tabsActive ? searchGlyph.right : parent.left
-            // Empty: the placeholder starts after the cursor block.
-            anchors.leftMargin: root.tabsActive ? Style.space(10) : 0
-            anchors.right: viewToggle.visible ? viewToggle.left : parent.right
-            anchors.rightMargin: viewToggle.visible ? Style.space(8) : 0
-            anchors.verticalCenter: parent.verticalCenter
-            // Bounded like the rows: the prompt comes from whoever invoked
-            // the dmenu, and the title from the JSONC.
-            text: MenuModel.sanitizeText(root.filterText || root.promptText())
-            color: root.foreground
-            opacity: root.filterText ? 1 : 0.58
-            font.family: root.fontFamily
-            font.pixelSize: root.scaledFont(Style.font.heading)
-            elide: Text.ElideRight
-          }
-
-        }
-
-        TabBar {
-          id: tabBar
-          // Hidden in command mode: the tabs choose where to search, and a
-          // command does not search.
-          visible: root.tabsActive && !root.commandMode
-          height: visible ? implicitHeight : 0
-          tabs: aiCtl.isAiMode ? aiCtl.aiAgentTabs : root.orderedTabs
-          activeTab: aiCtl.isAiMode ? aiCtl.aiAgent : root.activeTab
-          fontFamily: root.fontFamily
-          foreground: root.foreground
-          accent: Color.accent
-          fontSize: root.scaledFont(Style.font.body)
-          anim: root.tabAnim
-          onTabClicked: function(id) {
-            if (aiCtl.isAiMode) aiCtl.setAiAgent(id)
-            else root.setTab(id)
-            Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-          }
-        }
-
-        Item {
-          id: fileBar
-          visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && (root.activeTab === "files" || root.activeTab === "folders")
-          width: parent.width
-          height: visible ? fileFilterChips.implicitHeight
-            + (scopeChips.visible ? Style.space(6) + scopeChips.implicitHeight : 0) : 0
-
-          TabBar {
-            id: fileFilterChips
-            anchors.left: parent.left
-            width: parent.width - fileSortLabel.implicitWidth - Style.space(12)
-            tabs: FileSearch.filtersFor(root.activeTab).map(function(f) { return { id: f.id, label: f.label, icon: "" } })
-            activeTab: fileCtl.fileFilterFor(root.activeTab).id
-            fontFamily: root.fontFamily
-            foreground: root.foreground
-            accent: Color.accent
-            fontSize: root.scaledFont(Style.font.caption)
-            anim: root.tabAnim
-            onTabClicked: function(id) {
-              fileCtl.setFileFilter(id)
-              Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-            }
-          }
-
-          // Where to look: everywhere, $HOME only, or one search root
-          // (Ctrl+R). Only there when a root is.
-          TabBar {
-            id: scopeChips
-            visible: fileCtl.hasRoots
-            anchors.left: parent.left
-            anchors.top: fileFilterChips.bottom
-            anchors.topMargin: Style.space(6)
-            width: parent.width
-            tabs: fileCtl.scopeChoices
-            activeTab: fileCtl.currentScope()
-            fontFamily: root.fontFamily
-            foreground: root.foreground
-            accent: Color.accent
-            fontSize: root.scaledFont(Style.font.caption)
-            onTabClicked: function(id) {
-              fileCtl.setRootScope(id)
-              Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-            }
-          }
-
-          Text {
-            id: fileSortLabel
-            textFormat: Text.PlainText
-            anchors.right: parent.right
-            anchors.top: parent.top
-            text: (fileCtl.fileSearching ? "searching… · " : "")
-              + FileSearch.sortMode(fileCtl.fileSortMode).icon + " " + FileSearch.sortMode(fileCtl.fileSortMode).label
-              + " · " + displayModel.count + "/" + fileCtl.fileDisplayLimit
-            color: root.foreground
-            opacity: 0.5
-            font.family: root.fontFamily
-            font.pixelSize: root.scaledFont(Style.font.caption)
-          }
-        }
-
-        Item {
-          width: parent.width
-          height: root.visibleRowsHeight
-          visible: height > 0
-
-          AiPanel {
-            id: aiPanel
-            menu: root
-            ai: aiCtl
-            anchors.fill: parent
-            visible: aiCtl.isAiMode
-          }
-
-          AppGrid {
-            id: appGrid
-            menu: root
-            // As wide as the whole columns that fit, and centred: the leftover
-            // part of a column sits evenly on both sides instead of all at the
-            // right edge.
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: Math.max(cellWidth, Math.floor(parent.width / cellWidth) * cellWidth)
-            visible: root.gridActive && !aiCtl.isAiMode
-            model: root.gridActive ? displayModel : null
-          }
-
-          // System's left pane: the top-level categories.
-          ListView {
-            id: systemCategoryList
-            visible: root.systemTwoPane
-            width: visible ? Math.round(parent.width * 0.34) : 0
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.left: parent.left
-            clip: true
-            spacing: root.rowSpacing
-            boundsBehavior: Flickable.StopAtBounds
-            model: root.systemCategories
-            currentIndex: root.systemCategoryIndex
-
-            delegate: SystemCategoryItem { menu: root }
-          }
-
-          Rectangle {
-            id: systemPaneDivider
-            visible: root.systemTwoPane
-            width: visible ? Style.spacing.hairline : 0
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.left: systemCategoryList.right
-            anchors.leftMargin: visible ? Style.space(8) : 0
-            color: Util.alpha(root.foreground, 0.15)
-          }
-
-          // A category that is an action (About) has nothing to preview.
-          Text {
-            visible: root.systemTwoPane && displayModel.count === 0
-            anchors.centerIn: resultList
-            textFormat: Text.PlainText
-            text: "Enter to open"
-            color: root.foreground
-            opacity: 0.45
-            font.family: root.fontFamily
-            font.pixelSize: root.scaledFont(Style.font.body)
-          }
-
-          // Right pane heading: where in the menu the list below is.
-          Text {
-            id: systemPaneTitle
-            visible: root.systemTwoPane
-            // Fixed from the font rather than implicitHeight: an elided Text's
-            // implicit height depends on its own size, a binding loop.
-            height: visible ? root.scaledFont(Style.font.caption) + Style.space(12) : 0
-            verticalAlignment: Text.AlignTop
-            anchors.top: parent.top
-            anchors.left: systemPaneDivider.right
-            anchors.leftMargin: visible ? Style.space(12) : 0
-            anchors.right: parent.right
-            textFormat: Text.PlainText
-            text: (root.activeMenu === "root" ? "" : MenuModel.sanitizeText(root.pathFor(root.activeMenu)).toUpperCase())
-              + (root.systemMatches.length > 0
-                 ? "   ·   MATCH " + (root.systemMatchIndex + 1) + "/" + root.systemMatches.length
-                   + (root.systemMatches.length > 1 ? "  CTRL+↑↓" : "")
-                 : "")
-            color: root.foreground
-            opacity: 0.45
-            elide: Text.ElideLeft
-            font.family: root.fontFamily
-            font.pixelSize: root.scaledFont(Style.font.caption)
-            font.weight: Font.DemiBold
-            font.letterSpacing: 1
-          }
-
-          ListView {
-            id: resultList
-            anchors.top: systemPaneTitle.bottom
-            anchors.bottom: parent.bottom
-            anchors.left: systemPaneDivider.right
-            anchors.leftMargin: root.systemTwoPane ? Style.space(8) : 0
-            anchors.right: parent.right
-            visible: !root.gridActive && !aiCtl.isAiMode
-            model: displayModel
-            clip: true
-            spacing: root.rowSpacing
-            boundsBehavior: Flickable.StopAtBounds
-
-            section.property: "section"
-            section.criteria: ViewSection.FullString
-            section.delegate: Item {
-              required property string section
-              readonly property bool isHeader: Tabs.isHeaderSection(section)
-
-              width: ListView.view.width
-              height: section === "drilldown" ? root.dividerHeight : (isHeader ? root.sectionHeaderHeight : 0)
-              visible: section === "drilldown" || isHeader
+            Column {
+              anchors.centerIn: parent
+              spacing: Style.space(8)
+              visible: displayModel.count === 0 && root.mode !== "input" && !aiCtl.isAiMode && !root.systemTwoPane
 
               Text {
-                visible: parent.isHeader
                 textFormat: Text.PlainText
-                text: Tabs.headerTitle(parent.section).toUpperCase()
-                color: root.foreground
-                opacity: 0.45
+                text: "󰈉"
+                color: root.selectedText
+                opacity: 0.8
                 font.family: root.fontFamily
-                font.pixelSize: root.scaledFont(Style.font.caption)
-                font.weight: Font.DemiBold
-                font.letterSpacing: 1
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(10)
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: Style.space(4)
+                font.pixelSize: root.scaledFont(Style.font.displayLarge)
+                horizontalAlignment: Text.AlignHCenter
+                width: Style.space(320)
               }
 
-              Rectangle {
-                visible: parent.section === "drilldown"
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(4)
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(4)
-                anchors.verticalCenter: parent.verticalCenter
-                height: Style.spacing.hairline
-                color: Util.alpha(root.foreground, 0.2)
+              Text {
+                textFormat: Text.PlainText
+                text: root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
+                  : fileCtl.fileSearching ? "Searching…"
+                  : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
+                color: root.foreground
+                opacity: 0.7
+                font.family: root.fontFamily
+                font.pixelSize: root.scaledFont(Style.font.title)
+                horizontalAlignment: Text.AlignHCenter
+                width: Style.space(320)
               }
             }
-
-            delegate: ResultRow { menu: root }
           }
 
-          // Scroll scrims. The clipped row already marks the fold at rest;
-          // these keep both edges honest once the list has been scrolled,
-          // when content hides above the card top as well as below. Strength
-          // tracks the distance still hidden past each edge rather than
-          // animating on a clock, so a programmatic jump — wrapping from the
-          // last row back to the first — lands with the fade already applied.
-          Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            height: Math.min(Style.space(28), parent.height / 2)
-            visible: opacity > 0
-            opacity: resultList.contentHeight > resultList.height
-              ? Math.max(0, Math.min(1, (resultList.contentY - resultList.originY) / height))
-              : 0
-            gradient: Gradient {
-              GradientStop { position: 0; color: root.background }
-              GradientStop { position: 1; color: Util.alpha(root.background, 0) }
-            }
+          Text {
+            id: footer
+            visible: !root.dmenuActive && (settingsStore.error !== "" || (root.tabsActive && !root.compact && !aiCtl.isAiMode))
+            width: parent.width
+            textFormat: Text.PlainText
+            text: settingsStore.error || root.footerHints()
+            color: root.foreground
+            opacity: 0.4
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            font.family: root.fontFamily
+            font.pixelSize: root.scaledFont(Style.font.caption)
           }
-
-          Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            height: Math.min(Style.space(28), parent.height / 2)
-            visible: opacity > 0
-            opacity: resultList.contentHeight > resultList.height
-              ? Math.max(0, Math.min(1, (resultList.originY + resultList.contentHeight - resultList.height - resultList.contentY) / height))
-              : 0
-            gradient: Gradient {
-              GradientStop { position: 0; color: Util.alpha(root.background, 0) }
-              GradientStop { position: 1; color: root.background }
-            }
-          }
-
-          Column {
-            anchors.centerIn: parent
-            spacing: Style.space(8)
-            visible: displayModel.count === 0 && root.mode !== "input" && !aiCtl.isAiMode && !root.systemTwoPane
-
-            Text {
-              textFormat: Text.PlainText
-              text: "󰈉"
-              color: root.selectedText
-              opacity: 0.8
-              font.family: root.fontFamily
-              font.pixelSize: root.scaledFont(Style.font.displayLarge)
-              horizontalAlignment: Text.AlignHCenter
-              width: Style.space(320)
-            }
-
-            Text {
-              textFormat: Text.PlainText
-              text: root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
-                : fileCtl.fileSearching ? "Searching…"
-                : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
-              color: root.foreground
-              opacity: 0.7
-              font.family: root.fontFamily
-              font.pixelSize: root.scaledFont(Style.font.title)
-              horizontalAlignment: Text.AlignHCenter
-              width: Style.space(320)
-            }
-          }
-        }
-
-        Text {
-          id: footer
-          visible: root.tabsActive && !root.compact && !aiCtl.isAiMode
-          width: parent.width
-          textFormat: Text.PlainText
-          text: root.footerHints()
-          color: root.foreground
-          opacity: 0.4
-          horizontalAlignment: Text.AlignHCenter
-          wrapMode: Text.Wrap
-          font.family: root.fontFamily
-          font.pixelSize: root.scaledFont(Style.font.caption)
         }
       }
     }

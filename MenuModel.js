@@ -40,9 +40,50 @@ function sanitizeRow(row) {
 }
 
 function stripJsonc(raw) {
-  return String(raw || "")
-    .replace(/^\s*\/\/[^\n]*(\n|$)/gm, "")
-    .replace(/,(\s*[}\]])/g, "$1")
+  var text = String(raw || "")
+  var out = ""
+  var quoted = false
+  var escaped = false
+  // Remove comments without interpreting anything inside a JSON string.
+  for (var i = 0; i < text.length; i++) {
+    var ch = text[i]
+    if (quoted) {
+      out += ch
+      if (escaped) escaped = false
+      else if (ch === "\\") escaped = true
+      else if (ch === '"') quoted = false
+    } else if (ch === '"') {
+      quoted = true
+      out += ch
+    } else if (ch === "/" && text[i + 1] === "/") {
+      while (i + 1 < text.length && text[i + 1] !== "\n") i++
+      out += " "
+    } else if (ch === "/" && text[i + 1] === "*") {
+      var end = text.indexOf("*/", i + 2)
+      if (end < 0) return text // Leave malformed JSONC for JSON.parse to reject.
+      out += text.slice(i, end + 2).replace(/[^\r\n]/g, " ")
+      i = end + 1
+    } else out += ch
+  }
+  text = out
+  out = ""
+  quoted = false
+  escaped = false
+  for (var j = 0; j < text.length; j++) {
+    var c = text[j]
+    if (quoted) {
+      out += c
+      if (escaped) escaped = false
+      else if (c === "\\") escaped = true
+      else if (c === '"') quoted = false
+    } else if (c === '"') { quoted = true; out += c }
+    else if (c === ",") {
+      var next = j + 1
+      while (next < text.length && /\s/.test(text[next])) next++
+      if (text[next] !== "}" && text[next] !== "]") out += c
+    } else out += c
+  }
+  return out
 }
 
 function normalizeAliases(value) {

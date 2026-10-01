@@ -21,6 +21,10 @@ Item {
   // Everything the file held when last read, unknown keys included, so a
   // save writes back what it did not change instead of dropping it.
   property var stateData: ({})
+  property bool stateWritable: false
+  property string stateError: ""
+  property string styleError: ""
+  readonly property string error: stateError || styleError
 
   readonly property string stylePath: store.menu.stateDir + "/style.json"
 
@@ -48,15 +52,11 @@ Item {
     styleReadProc.running = true
   }
 
-  function applyStyle(text, exists) {
-    var style = null
-    var raw = String(text || "").trim()
-    if (raw) {
-      try { style = JSON.parse(raw) } catch (e) {
-        console.warn("[omarchy-menu-omni] style.json is not valid JSON; using defaults")
-      }
-    }
-    if (!style || typeof style !== "object" || Array.isArray(style)) style = ({})
+  function applyStyle(text, exitCode, exitStatus) {
+    var result = Settings.readObject(text, exitCode, exitStatus)
+    if (!result.ok) { store.styleError = result.error; return }
+    store.styleError = ""
+    var style = result.missing ? store.styleDefaults : result.data
     store.menu.menuFontScale = Settings.styleNumber(style, "fontScale")
     store.menu.launcherCardWidth = Math.round(Settings.styleNumber(style, "cardWidth"))
     store.menu.launcherBodyFraction = Settings.styleNumber(style, "bodyHeight")
@@ -64,24 +64,16 @@ Item {
     store.menu.launcherFixedHeight = typeof style.fixedHeight === "boolean" ? style.fixedHeight : store.styleDefaults.fixedHeight
     store.menu.launcherTopFraction = Settings.styleTop(style)
     store.menu.tabAnim = Settings.tabAnim(style)
-    if (!exists) store.writeStyleDefaults()
-  }
-
-  function writeStyleDefaults() {
-    if (styleWriteProc.running) return
-    styleWriteProc.command = store.stateFileWriteCommand(store.stylePath,
-      JSON.stringify(store.styleDefaults, null, 2) + "\n", true)
-    styleWriteProc.running = true
-  }
-
-  // See Settings.writeCommand: temporary file and rename, 0600, the path
-  // and content passed as arguments. keepExisting: only create.
-  function stateFileWriteCommand(path, content, keepExisting) {
-    return Settings.writeCommand(store.menu.stateDir, path, content, keepExisting)
+    if (result.missing) {
+      var ops = []
+      for (var key in store.styleDefaults) ops = ops.concat(Settings.patch(key, store.styleDefaults[key], true))
+      styleWriteProc.save(ops)
+    }
   }
 
   function loadState() {
-    if (stateReadProc.running || !stateWatch.stale) return
+    if (stateReadProc.running || stateWriteProc.running || stateWriteProc.pending.length || !stateWatch.stale) return
+    store.stateWritable = false
     stateWatch.beginRead()
     stateReadProc.command = store.menu.readFileCommand(store.statePath, Settings.STATE_MAX_BYTES)
     stateReadProc.running = true
@@ -89,18 +81,12 @@ Item {
 
   // A missing file, or one without the ordering keys, is written back with
   // the defaults filled in: the options are then there to be edited.
-  function applyState(text) {
-    var state = null
-    var raw = String(text || "").trim()
-    if (raw) {
-      try { state = JSON.parse(raw) } catch (e) {
-        // Leave a file that does not parse alone rather than overwrite what
-        // may be a half-finished edit.
-        console.warn("[omarchy-menu-omni] state.json is not valid JSON; using defaults")
-        return
-      }
-    }
-    if (!state || typeof state !== "object" || Array.isArray(state)) state = ({})
+  function applyState(text, exitCode, exitStatus) {
+    var result = Settings.readObject(text, exitCode, exitStatus)
+    store.stateWritable = result.ok
+    if (!result.ok) { store.stateError = result.error; return }
+    store.stateError = ""
+    var state = result.data
     store.stateData = state
 
     if (state.appsView === "grid" || state.appsView === "list") store.menu.appsView = state.appsView
@@ -130,40 +116,40 @@ Item {
       store.menu.requestFileSearch()
     }
 
-    if (!Array.isArray(state.tabOrder) || !Array.isArray(state.allSections)
-        || !Array.isArray(state.disabledTabs) || !Array.isArray(state.allSectionsOff) || !state.appsView
-        || state.cursorStyle === undefined || state.cursorBlink === undefined || state.cursorWhenEmpty === undefined
-        || state.commandsWithoutSlash === undefined || !Array.isArray(state.searchRoots)
-        || state.zoxide === undefined || state.zoxideAdd === undefined) store.saveState()
+    // Missing keys are filled under the writer's lock.
+    var defaults = {
+      appsView: store.menu.appsView, tabOrder: store.menu.tabOrder,
+      allSections: store.menu.allSectionOrder, disabledTabs: store.menu.disabledTabs,
+      allSectionsOff: store.menu.allSectionsOff, cursorStyle: store.menu.cursorStyle,
+      cursorBlink: store.menu.cursorBlink, cursorWhenEmpty: store.menu.cursorWhenEmpty,
+      commandsWithoutSlash: store.menu.commandsWithoutSlash, searchRoots: [],
+      zoxide: store.menu.zoxideMode, zoxideAdd: store.menu.zoxideAdd
+    }
+    // Wrong-typed keys are replaced by the default, as before; absent ones
+    // only filled in.
+    var valid = {
+      appsView: state.appsView === "grid" || state.appsView === "list",
+      tabOrder: Array.isArray(state.tabOrder), allSections: Array.isArray(state.allSections),
+      disabledTabs: Array.isArray(state.disabledTabs), allSectionsOff: Array.isArray(state.allSectionsOff),
+      cursorStyle: Settings.CURSOR_STYLES.indexOf(state.cursorStyle) >= 0,
+      cursorBlink: typeof state.cursorBlink === "boolean",
+      cursorWhenEmpty: typeof state.cursorWhenEmpty === "boolean",
+      commandsWithoutSlash: typeof state.commandsWithoutSlash === "boolean",
+      searchRoots: Array.isArray(state.searchRoots),
+      zoxide: Settings.ZOXIDE_MODES.indexOf(state.zoxide) >= 0,
+      zoxideAdd: typeof state.zoxideAdd === "boolean"
+    }
+    var ops = []
+    for (var key in defaults)
+      if (!valid[key]) ops = ops.concat(Settings.patch(key, defaults[key], state[key] === undefined))
+    if (ops.length) stateWriteProc.save(ops)
   }
 
-  // Written to a temporary file and renamed over the old one, so a crash
-  // mid-write cannot leave half a file; the path and the JSON reach the
-  // shell as positional arguments, never as script text.
-  function saveState() {
-    if (stateWriteProc.running) {
-      store.stateSavePending = true
-      return
-    }
-    var next = ({})
-    for (var key in store.stateData) next[key] = store.stateData[key]
-    next.appsView = store.menu.appsView
-    next.tabOrder = store.menu.tabOrder
-    next.allSections = store.menu.allSectionOrder
-    next.disabledTabs = store.menu.disabledTabs
-    next.allSectionsOff = store.menu.allSectionsOff
-    next.cursorStyle = store.menu.cursorStyle
-    next.cursorBlink = store.menu.cursorBlink
-    next.cursorWhenEmpty = store.menu.cursorWhenEmpty
-    next.commandsWithoutSlash = store.menu.commandsWithoutSlash
-    // The roots are the popup's to edit; only a missing list is created.
-    if (!Array.isArray(next.searchRoots)) next.searchRoots = []
-    next.zoxide = store.menu.zoxideMode
-    next.zoxideAdd = store.menu.zoxideAdd
-    if (store.menu.aiAgent) next.aiAgent = store.menu.aiAgent
-    store.stateData = next
-    stateWriteProc.command = store.stateFileWriteCommand(store.statePath, JSON.stringify(next, null, 2) + "\n", false)
-    stateWriteProc.running = true
+  function saveState(key, value) {
+    if (!store.stateWritable) return false
+    store.stateData = Settings.withKey(store.stateData, key, value)
+    stateWriteProc.save(Settings.patch(key, value))
+    return true
   }
 
   // Only re-read on open when changed (FileWatch has the rules).
@@ -173,33 +159,38 @@ Item {
   Process {
     id: styleReadProc
     stdout: StdioCollector { id: styleReadOut; waitForEnd: true }
-    onExited: function(exitCode) {
+    onExited: function(exitCode, exitStatus) {
       if (exitCode !== 0) styleWatch.readFailed(exitCode)
-      store.applyStyle(styleReadOut.text, exitCode === 0)
+      store.applyStyle(styleReadOut.text, exitCode, exitStatus)
     }
   }
 
   Process {
     id: stateReadProc
     stdout: StdioCollector { id: stateReadOut; waitForEnd: true }
-    onExited: function(exitCode) {
+    onExited: function(exitCode, exitStatus) {
       if (exitCode !== 0) stateWatch.readFailed(exitCode)
-      store.applyState(stateReadOut.text)
+      store.applyState(stateReadOut.text, exitCode, exitStatus)
     }
   }
 
-  Process { id: styleWriteProc }
+  SettingsWriter {
+    id: styleWriteProc
+    directory: store.menu.stateDir
+    path: store.stylePath
+    maxBytes: 8192
+    onFailed: function(message) { store.styleError = message; styleWatch.stale = true }
+  }
 
-  // A save asked for while one is being written is not dropped: it runs as
-  // soon as the first finishes.
-  property bool stateSavePending: false
-
-  Process {
+  SettingsWriter {
     id: stateWriteProc
-    onExited: {
-      if (!store.stateSavePending) return
-      store.stateSavePending = false
-      Qt.callLater(store.saveState)
+    directory: store.menu.stateDir
+    path: store.statePath
+    onSaved: function(text) { store.stateData = Settings.parseObject(text) || store.stateData }
+    onFailed: function(message) {
+      store.stateError = message
+      store.stateWritable = false
+      stateWatch.stale = true
     }
   }
 }

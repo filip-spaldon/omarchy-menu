@@ -239,9 +239,9 @@ eq(Tabs.normalizeSectionsOff(["files", "bogus", "files", "apps", "system", "fold
 eq(Tabs.normalizeSectionsOff("files"), [], "allSectionsOff must be a list")
 assert(Settings.MODEL_PATTERN.test("openai-codex/gpt-6-luna"), "model names with a provider are accepted")
 assert(!Settings.MODEL_PATTERN.test("x; rm -rf ~"), "model names with shell syntax are refused")
-const write = Settings.writeCommand("/d", "/d/f.json", "$(boom)", false)
-eq(write.slice(-3), ["/d", "/d/f.json", "$(boom)"], "written content reaches bash as an argument")
-assert(write[2].indexOf("boom") === -1, "written content never enters the script text")
+const write = Settings.writeCommand("/d", "/d/f.json", Settings.patch("label", "$(boom)"), 1000)
+eq(write.slice(-4), ["/d", "/d/f.json", "1000", JSON.stringify(Settings.patch("label", "$(boom)"))], "written values reach the helper as arguments")
+assert(write[6].indexOf("boom") === -1, "written content never enters the script text")
 eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read path reaches perl as an argument")
 
 // ------------------------------------------------------- open-time cost --

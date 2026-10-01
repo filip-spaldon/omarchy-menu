@@ -26,13 +26,13 @@ Item {
     watch.stale = false
   }
 
-  // Exit 1 from the guarded reader is the file's own state: missing, a
+  // Exit 2 means missing; exit 1 means a refused or unreadable file: a
   // symlink, the wrong owner, too large. That only changes when the file
   // does, and the watch reports it -- including a missing file being
   // created, since FileView watches the directory for it (checked on 0.3.1).
   // Anything else (124 is a timeout) is retried on the next open.
   function readFailed(exitCode) {
-    if (exitCode !== 1) watch.stale = true
+    if (exitCode !== 2) watch.stale = true
   }
 
   FileView {

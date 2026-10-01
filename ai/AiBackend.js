@@ -581,11 +581,10 @@ function cancelHandoff() {
 
 // -------------------------------------------------------- process utils ---
 
-// Wraps argv so the agent CLI becomes its own session/process-group leader
-// (setsid execs in place — same PID, no fork/wait semantics to worry
-// about — verified empirically against this machine's util-linux setsid).
-// That lets killArgv() below signal the whole group with one negative-PID
-// kill instead of only the direct child.
+// wrapForGroup() below makes the guard the leader of its own session and
+// process group (setsid execs in place: same PID). The guard puts the agent in
+// a group of its own and signals that whole group itself, so one TERM to the
+// guard is all a caller ever sends.
 // Output bounds. The agent's stdout and stderr reach the shell through
 // newline-split parsers in the long-lived shell process, and what they carry
 // is shaped by the model and by web pages it read, so nothing may arrive
@@ -613,68 +612,99 @@ var STDERR_TEXT_MAX = 65536
 // line within the bounds above (see the constants). Perl is a dependency of
 // the omarchy package itself. Limits and argv arrive as arguments; there is
 // no shell and nothing to quote. The program is the process-group leader
-// (setsid), so the group kill in killArgv still reaches the agent and
-// anything it started. Exits with the agent's status (128 + signal).
+// (setsid). Its child owns a separate group, which the guard cleans before
+// reaping the child. A single TERM to the guard is enough; no detached kills
+// or QML fallback timers can outlive the process identity.
+// SIGCHLD only sets a flag (the child stays unreaped, so its PID, which is
+// also its pgid, cannot be reused before the group kill). It can interrupt a
+// blocked syswrite, so emit retries EINTR/EAGAIN unless a stop is pending.
+// Stops exit with the codes the old guard produced via the agent's TERM:
+// 143 for cancel and for the output cap, 124 for the guard's own timeout.
 var OUTPUT_GUARD_PROGRAM = [
-  'use strict; use warnings; use POSIX ();',
-  'my ($line_max, $out_max, $err_line_max, $err_max) = splice(@ARGV, 0, 4);',
-  'shift @ARGV if @ARGV && $ARGV[0] eq "--";',
-  '@ARGV or exit 2;',
-  'pipe(my $or, my $ow) or exit 2;',
-  'pipe(my $er, my $ew) or exit 2;',
-  'my $pid = fork() // exit 2;',
-  'if ($pid == 0) {',
-  '  close $or; close $er;',
-  '  open(STDOUT, ">&", $ow) or POSIX::_exit(127);',
-  '  open(STDERR, ">&", $ew) or POSIX::_exit(127);',
-  '  close $ow; close $ew;',
-  '  { no warnings "exec"; exec { $ARGV[0] } @ARGV; }',
-  '  print STDERR "omarchy-menu-omni: cannot run $ARGV[0]: $!\\n";',
-  '  POSIX::_exit(127);',
-  '}',
-  'close $ow; close $ew;',
-  'binmode $_ for ($or, $er, *STDOUT, *STDERR);',
-  'sub emit { my ($fh, $d) = @_; my $o = 0; while ($o < length $d) {',
-  '  my $n = syswrite($fh, $d, length($d) - $o, $o); return unless defined $n; $o += $n } }',
-  'my $noted = 0;',
-  'sub note { emit(*STDERR, "omarchy-menu-omni: $_[0]\\n") }',
-  'my @s = (',
-  '  { fh => $or, to => *STDOUT, line => $line_max, max => $out_max, stop => 1 },',
-  '  { fh => $er, to => *STDERR, line => $err_line_max, max => $err_max, stop => 0 });',
-  '$_->{buf} = "", $_->{drop} = 0, $_->{total} = 0, $_->{open} = 1 for @s;',
-  'sub feed { my ($st, $chunk) = @_;',
-  '  $st->{buf} .= $chunk;',
-  '  while ((my $i = index($st->{buf}, "\\n")) >= 0) {',
-  '    my $l = substr($st->{buf}, 0, $i + 1, "");',
-  '    if ($st->{drop}) { $st->{drop} = 0; next }',
-  '    if (length($l) > $st->{line} + 1) { note("dropped an output line over $st->{line} bytes") unless $noted++; next }',
-  '    emit($st->{to}, $l) }',
-  '  if (length($st->{buf}) > $st->{line}) {',
-  '    $st->{buf} = "";',
-  '    note("dropped an output line over $st->{line} bytes") unless $st->{drop} || $noted++;',
-  '    $st->{drop} = 1 } }',
-  'while (grep { $_->{open} } @s) {',
-  '  my $rin = ""; vec($rin, fileno($_->{fh}), 1) = 1 for grep { $_->{open} } @s;',
-  '  my $n = select(my $rout = $rin, undef, undef, undef);',
-  '  if ($n < 0) { next if $!{EINTR}; last }',
-  '  for my $st (grep { $_->{open} && vec($rout, fileno($_->{fh}), 1) } @s) {',
-  '    my $r = sysread($st->{fh}, my $chunk, 65536);',
-  '    if (!defined $r) { next if $!{EINTR} || $!{EAGAIN}; $r = 0 }',
-  '    if ($r == 0) { $st->{open} = 0; close $st->{fh}; next }',
-  '    next if $st->{total} >= $st->{max};',
-  '    $st->{total} += $r;',
-  '    if ($st->{total} > $st->{max}) {',
-  '      feed($st, substr($chunk, 0, $r - ($st->{total} - $st->{max})));',
-  '      $st->{buf} = ""; $st->{drop} = 1;',
-  '      next unless $st->{stop};',
-  '      note("output passed $st->{max} bytes; stopping the agent");',
-  '      kill "TERM", $pid; $_->{open} = 0, close $_->{fh} for grep { $_->{open} } @s;',
-  '      last }',
-  '    feed($st, $chunk) } }',
-  'for my $st (@s) { emit($st->{to}, $st->{buf}) if !$st->{drop} && length $st->{buf} }',
-  '$SIG{ALRM} = sub { kill "KILL", $pid }; alarm 5;',
-  'waitpid($pid, 0); my $status = $?;',
-  'exit(($status & 127) ? 128 + ($status & 127) : $status >> 8);'
+  "use strict; use warnings; use POSIX (); use Time::HiRes qw(time sleep);",
+  "my ($line_max, $out_max, $err_line_max, $err_max) = splice(@ARGV, 0, 4);",
+  "shift @ARGV if @ARGV && $ARGV[0] eq \"--\";",
+  "@ARGV or exit 2;",
+  "my ($stop, $child_done) = (0, 0);",
+  "$SIG{TERM} = sub { $stop = 143 }; $SIG{INT} = sub { $stop = 130 };",
+  "$SIG{CHLD} = sub { $child_done = 1 };",
+  "pipe(my $or, my $ow) or exit 2;",
+  "pipe(my $er, my $ew) or exit 2;",
+  "my $pid = fork() // exit 2;",
+  "if ($pid == 0) {",
+  "  $SIG{TERM} = $SIG{INT} = $SIG{CHLD} = \"DEFAULT\";",
+  "  POSIX::setpgid(0, 0) == 0 or POSIX::_exit(127);",
+  "  close $or; close $er;",
+  "  open(STDOUT, \">&\", $ow) or POSIX::_exit(127);",
+  "  open(STDERR, \">&\", $ew) or POSIX::_exit(127);",
+  "  close $ow; close $ew;",
+  "  { no warnings \"exec\"; exec { $ARGV[0] } @ARGV; }",
+  "  print STDERR \"omarchy-menu-omni: cannot run $ARGV[0]: $!\\n\";",
+  "  POSIX::_exit(127);",
+  "}",
+  "# Also set it from the parent, so cancellation cannot beat the child's setup.",
+  "POSIX::setpgid($pid, $pid);",
+  "close $ow; close $ew;",
+  "binmode $_ for ($or, $er, *STDOUT, *STDERR);",
+  "sub emit { my ($fh, $d) = @_; my $o = 0; while ($o < length $d) {",
+  "  my $n = syswrite($fh, $d, length($d) - $o, $o);",
+  "  if (!defined $n) { next if $!{EINTR} && !$stop; next if $!{EAGAIN} && !$stop && !sleep(0.01); return }",
+  "  $o += $n } }",
+  "my $noted = 0;",
+  "sub note { emit(*STDERR, \"omarchy-menu-omni: $_[0]\\n\") }",
+  "my @s = (",
+  "  { fh => $or, to => *STDOUT, line => $line_max, max => $out_max, stop => 1 },",
+  "  { fh => $er, to => *STDERR, line => $err_line_max, max => $err_max, stop => 0 });",
+  "$_->{buf} = \"\", $_->{drop} = 0, $_->{total} = 0, $_->{open} = 1 for @s;",
+  "sub feed { my ($st, $chunk) = @_;",
+  "  $st->{buf} .= $chunk;",
+  "  while ((my $i = index($st->{buf}, \"\\n\")) >= 0) {",
+  "    my $l = substr($st->{buf}, 0, $i + 1, \"\");",
+  "    if ($st->{drop}) { $st->{drop} = 0; next }",
+  "    if (length($l) > $st->{line} + 1) { note(\"dropped an output line over $st->{line} bytes\") unless $noted++; next }",
+  "    emit($st->{to}, $l) }",
+  "  if (length($st->{buf}) > $st->{line}) {",
+  "    $st->{buf} = \"\";",
+  "    note(\"dropped an output line over $st->{line} bytes\") unless $st->{drop} || $noted++;",
+  "    $st->{drop} = 1 } }",
+  "my $finished_at;",
+  "while (!$stop && grep { $_->{open} } @s) {",
+  "  $finished_at //= time if $child_done;",
+  "  # Drain a finished child's buffered output, without waiting on inherited pipes.",
+  "  last if defined($finished_at) && time - $finished_at > 0.1;",
+  "  my $rin = \"\"; vec($rin, fileno($_->{fh}), 1) = 1 for grep { $_->{open} } @s;",
+  "  my $n = select(my $rout = $rin, undef, undef, 0.05);",
+  "  if ($n < 0) { next if $!{EINTR}; $stop = 1; last }",
+  "  for my $st (grep { $_->{open} && vec($rout, fileno($_->{fh}), 1) } @s) {",
+  "    my $r = sysread($st->{fh}, my $chunk, 65536);",
+  "    if (!defined $r) { next if $!{EINTR} || $!{EAGAIN}; $r = 0 }",
+  "    if ($r == 0) { $st->{open} = 0; close $st->{fh}; next }",
+  "    my $remaining = $st->{max} - $st->{total};",
+  "    if ($r > $remaining) {",
+  "      feed($st, substr($chunk, 0, $remaining)) if $remaining > 0;",
+  "      $st->{total} = $st->{max}; $st->{buf} = \"\"; $st->{drop} = 1;",
+  "      next unless $st->{stop};",
+  "      note(\"output passed $st->{max} bytes; stopping the agent\");",
+  "      $stop = 143; last;",
+  "    }",
+  "    $st->{total} += $r;",
+  "    feed($st, $chunk);",
+  "  }",
+  "}",
+  "for my $st (@s) { emit($st->{to}, $st->{buf}) if !$stop && !$st->{drop} && length $st->{buf} }",
+  "# Keep the child unreaped until its group is gone: its PID cannot be reused.",
+  "my $wait_until = time + 5;",
+  "while (!$child_done && !$stop && time < $wait_until) { sleep 0.01 }",
+  "$stop = 124 if !$child_done && !$stop;",
+  "if ($stop) {",
+  "  kill \"TERM\", -$pid;",
+  "  my $until = time + 0.5;",
+  "  while (time < $until) { sleep 0.01 }",
+  "}",
+  "kill \"KILL\", -$pid;",
+  "while (waitpid($pid, 0) < 0) { last unless $!{EINTR} }",
+  "my $status = $?;",
+  "exit($stop || (($status & 127) ? 128 + ($status & 127) : $status >> 8));"
 ].join("\n")
 
 // argv behind OUTPUT_GUARD_PROGRAM with the given limits. Also used by the
@@ -687,8 +717,4 @@ function boundOutput(argv, lineMax, outMax, errLineMax, errMax) {
 
 function wrapForGroup(argv) {
   return ["setsid"].concat(boundOutput(argv, OUTPUT_LINE_MAX, OUTPUT_MAX, STDERR_LINE_MAX, STDERR_MAX))
-}
-
-function killArgv(pid, signalName) {
-  return ["kill", "-" + (signalName || "TERM"), "-" + String(pid)]
 }

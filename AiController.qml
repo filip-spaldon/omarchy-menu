@@ -156,7 +156,7 @@ Item {
         ai.ensureAiBinaryChecked()
       }
     }
-    if (remember !== false && ai.menu.stateData.aiAgent !== id) ai.menu.saveState()
+    if (remember !== false && ai.menu.stateData.aiAgent !== id) ai.menu.saveState("aiAgent", id)
   }
 
   function cycleAiAgent(delta) {
@@ -183,15 +183,10 @@ Item {
     aiBinaryCheck.running = true
   }
 
-  function aiKillProcessIfRunning(proc, fallbackTimer) {
-    if (!proc.running) return
-    var pid = proc.processId
-    proc.running = false
-    if (pid) {
-      Quickshell.execDetached(AiBackend.killArgv(pid, "TERM"))
-      fallbackTimer.targetPid = pid
-      fallbackTimer.restart()
-    }
+  function aiKillProcessIfRunning(proc) {
+    // The output supervisor owns TERM/KILL escalation and remains alive
+    // until its child group is gone. Do not race it with a detached kill.
+    if (proc.running) proc.running = false
   }
 
   // Never touches a Process whose `running` is still true; see omarchy-find
@@ -241,8 +236,8 @@ Item {
   function aiCancel(invalidateHandoff) {
     aiDeadlineTimer.stop()
     ai.aiPendingSpawn = null
-    ai.aiKillProcessIfRunning(aiProcA, aiKillFallbackTimerA)
-    ai.aiKillProcessIfRunning(aiProcB, aiKillFallbackTimerB)
+    ai.aiKillProcessIfRunning(aiProcA)
+    ai.aiKillProcessIfRunning(aiProcB)
     if (invalidateHandoff !== false) ai.aiHandoffAttempt++
     aiHandoffGrace.stop()
     AiBackend.cancel()
@@ -425,8 +420,8 @@ Item {
       var snap = AiBackend.timeOut(aiDeadlineTimer.gen)
       if (!snap) return
       ai.aiSession = snap
-      if (aiProcA.gen === aiDeadlineTimer.gen) ai.aiKillProcessIfRunning(aiProcA, aiKillFallbackTimerA)
-      if (aiProcB.gen === aiDeadlineTimer.gen) ai.aiKillProcessIfRunning(aiProcB, aiKillFallbackTimerB)
+      if (aiProcA.gen === aiDeadlineTimer.gen) ai.aiKillProcessIfRunning(aiProcA)
+      if (aiProcB.gen === aiDeadlineTimer.gen) ai.aiKillProcessIfRunning(aiProcB)
     }
   }
 
@@ -437,8 +432,6 @@ Item {
     stdout: SplitParser { onRead: function(line) { ai.onAiLine(aiProcA.gen, line) } }
     stderr: SplitParser { onRead: function(line) { ai.onAiStderr(aiProcA.gen, line) } }
     onExited: function(exitCode) {
-      aiKillFallbackTimerA.stop()
-      aiKillFallbackTimerA.targetPid = null
       ai.onAiExit(aiProcA.gen, exitCode)
       Qt.callLater(ai.aiTryDispatchPending)
     }
@@ -451,42 +444,11 @@ Item {
     stdout: SplitParser { onRead: function(line) { ai.onAiLine(aiProcB.gen, line) } }
     stderr: SplitParser { onRead: function(line) { ai.onAiStderr(aiProcB.gen, line) } }
     onExited: function(exitCode) {
-      aiKillFallbackTimerB.stop()
-      aiKillFallbackTimerB.targetPid = null
       ai.onAiExit(aiProcB.gen, exitCode)
       Qt.callLater(ai.aiTryDispatchPending)
     }
   }
 
-  // The agent runs in its own process group behind the output guard
-  // (setsid + OUTPUT_GUARD_PROGRAM, AiBackend.wrapForGroup), so every line
-  // the SplitParsers above receive is already bounded. Anything in the group
-  // still alive half a second after SIGTERM gets SIGKILL.
-  Timer {
-    id: aiKillFallbackTimerA
-    property var targetPid: null
-    interval: 500
-    onTriggered: {
-      if (aiKillFallbackTimerA.targetPid) {
-        Quickshell.execDetached(AiBackend.killArgv(aiKillFallbackTimerA.targetPid, "KILL"))
-        aiKillFallbackTimerA.targetPid = null
-      }
-    }
-  }
-
-  Timer {
-    id: aiKillFallbackTimerB
-    property var targetPid: null
-    interval: 500
-    onTriggered: {
-      if (aiKillFallbackTimerB.targetPid) {
-        Quickshell.execDetached(AiBackend.killArgv(aiKillFallbackTimerB.targetPid, "KILL"))
-        aiKillFallbackTimerB.targetPid = null
-      }
-    }
-  }
-
-  // The paced "typewriter" reveal; runs only while an answer is streaming.
   Timer {
     id: aiDrainTimer
     interval: Math.max(8, ai.aiStreamFlushMs)

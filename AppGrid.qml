@@ -13,7 +13,7 @@ GridView {
 
   readonly property int columns: Math.max(1, Math.floor(width / cellWidth))
 
-  cellWidth: Math.round(Style.space(112) * grid.menu.menuFontScale)
+  cellWidth: Math.max(1, Math.min(Math.round(Style.space(112) * grid.menu.menuFontScale), parent ? parent.width : 100000))
   cellHeight: Math.round(Style.space(104) * grid.menu.menuFontScale)
   clip: true
   boundsBehavior: Flickable.StopAtBounds
