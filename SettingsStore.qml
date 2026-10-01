@@ -43,11 +43,27 @@ Item {
   //                 the opt-in keys that tune them)
   //   top           "center" (stock menu) or a share of the screen, e.g. 0.2
   //   pickerHeight  most of the screen a dmenu picker's list may take
+  //   position      opt-in, written by Alt+arrows and the bar popup: the edge
+  //                 the card is pinned to and how far from it (see
+  //                 Settings.stylePosition); wins over "top" when set
   readonly property var styleDefaults: Settings.STYLE_DEFAULTS
+
+  // Position saves asked for and finished, and what the read in flight saw
+  // when it started. A read that began before the last save finished may hold
+  // the older position, so it leaves the menu's newer value alone.
+  property int positionSaves: 0
+  property int positionSavesDone: 0
+  property int styleReadSaves: -1
+
+  function savePosition(position) {
+    store.positionSaves++
+    styleWriteProc.save(Settings.positionPatch(position))
+  }
 
   function loadStyle() {
     if (styleReadProc.running || !styleWatch.stale) return
     styleWatch.beginRead()
+    store.styleReadSaves = store.positionSaves === store.positionSavesDone ? store.positionSaves : -1
     styleReadProc.command = store.menu.readFileCommand(store.stylePath, 8192)
     styleReadProc.running = true
   }
@@ -62,8 +78,9 @@ Item {
     store.menu.launcherBodyFraction = Settings.styleNumber(style, "bodyHeight")
     store.menu.menuHeightFraction = Settings.styleNumber(style, "pickerHeight")
     store.menu.launcherFixedHeight = typeof style.fixedHeight === "boolean" ? style.fixedHeight : store.styleDefaults.fixedHeight
-    store.menu.launcherTopFraction = Settings.styleTop(style)
     store.menu.tabAnim = Settings.tabAnim(style)
+    store.menu.moveAnim = Settings.moveAnim(style)
+    if (store.styleReadSaves === store.positionSaves) store.menu.launcherPosition = Settings.stylePosition(style)
     if (result.missing) {
       var ops = []
       for (var key in store.styleDefaults) ops = ops.concat(Settings.patch(key, store.styleDefaults[key], true))
@@ -179,7 +196,12 @@ Item {
     directory: store.menu.stateDir
     path: store.stylePath
     maxBytes: 8192
-    onFailed: function(message) { store.styleError = message; styleWatch.stale = true }
+    onSaved: store.positionSavesDone = store.positionSaves
+    onFailed: function(message) {
+      store.positionSavesDone = store.positionSaves
+      store.styleError = message
+      styleWatch.stale = true
+    }
   }
 
   SettingsWriter {

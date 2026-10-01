@@ -5,6 +5,11 @@ QtObject {
   property real viewportHeight: 0
   property real gap: 0
   property real requestedTop: -1
+  // The card's bottom edge, when it is pinned to the bottom of the screen
+  // (>= 0 wins over requestedTop): the card then grows upward from it.
+  property real requestedBottom: -1
+  // How far a centred card is moved down (negative: up) from the centre.
+  property real centerShift: 0
   property real desiredBodyHeight: 0
   property real minimumBodyHeight: 0
   property real chromeHeight: 0
@@ -19,14 +24,20 @@ QtObject {
     ? chromeHeight + Math.min(desiredBodyHeight, minimumBodyHeight)
     : chromeHeight + reserveHeight + minimumBodyHeight)
   readonly property real centeredHeight: Math.min(maximumHeight, chromeHeight + desiredBodyHeight)
-  readonly property real cardTop: requestedTop < 0
-    ? Math.max(gap, (viewportHeight - centeredHeight) / 2)
-    : Math.max(gap, Math.min(requestedTop, viewportHeight - gap - minimumHeight))
+  readonly property bool bottomAnchored: requestedBottom >= 0
+  // Pinned to the bottom: the edge the card grows up from, raised if needed
+  // so the smallest full card still fits above it.
+  readonly property real bottomEdge: Math.min(viewportHeight - gap, Math.max(requestedBottom, gap + minimumHeight))
+  readonly property real cardTop: bottomAnchored
+    ? Math.max(gap, bottomEdge - contentHeight)
+    : requestedTop < 0
+      ? Math.max(gap, Math.min((viewportHeight - centeredHeight) / 2 + centerShift, viewportHeight - gap - centeredHeight))
+      : Math.max(gap, Math.min(requestedTop, viewportHeight - gap - minimumHeight))
   // If even the controls and a row cannot fit, the outer Flickable scrolls
   // the whole content. Results remain reachable rather than disappearing.
   readonly property real bodyHeight: desiredBodyHeight <= 0 ? 0
     : Math.max(Math.min(desiredBodyHeight, minimumBodyHeight),
-        Math.min(desiredBodyHeight, viewportHeight - gap - cardTop - chromeHeight))
+        Math.min(desiredBodyHeight, (bottomAnchored ? bottomEdge - gap : viewportHeight - gap - cardTop) - chromeHeight))
   readonly property real contentHeight: chromeHeight + bodyHeight
   readonly property real cardHeight: Math.max(0, Math.min(contentHeight, viewportHeight - gap - cardTop))
 }
