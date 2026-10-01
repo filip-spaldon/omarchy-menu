@@ -194,6 +194,48 @@ console.log(JSON.stringify({first,expired,cache:searcher.fileMtimes,readAt:searc
         self.assertEqual(result["readAt"], {"/a": 100000, "/b": 100000})
         self.assertFalse(result["closedStarted"])
 
+    def test_mtime_refreshes_after_ttl_retrigger_and_reopen(self):
+        # The live scenarios: a file changes on disk; the same query is asked
+        # again after the TTL, and after closing and reopening the menu.
+        result = js(r'''
+const fs=require('fs'),vm=require('vm');
+const src=fs.readFileSync('FileSearchController.qml','utf8');
+const fn=name=>src.match(new RegExp('^  function '+name+'\\([^]*?^  }','m'))[0];
+const FileSearch=require(process.cwd()+'/FileSearch.js');
+let now=1e12, disk={'/p':100}, stats=0;
+const searcher={menu:{opened:true,rebuildDisplay(){}},fileResults:[],fileMtimes:{},fileMtimeReadAt:{},mtimeTtlMs:30000,
+  fileSearchGen:3,fileResultsVersion:0,fileResultsKey:'',fileSearching:false,fileRerunPending:false,liveNext:null,livePending:false,
+  rootOnline(){return true},fileSearchSpec(){return {key:'q'}}};
+const proc=()=>({running:false});
+const statProc=proc();
+const c={searcher,statProc,FileSearch,Date:{now:()=>now},fileDebounce:{stop(){},restart(){}},
+  dirSearchProc:proc(),fileSearchProc:proc(),indexSearchProc:proc(),liveSearchProc:proc()};
+vm.createContext(c);
+for(const n of ['requestFileSearch','publish','fetchFileMtimes','applyFileMtimes','cancelFileSearch']){
+  vm.runInContext(fn(n),c);searcher[n]=c[n];}
+// A stat run that reads the fake disk when it "exits".
+function finishStat(){ if(!statProc.running) return; stats++;
+  const out=statProc.paths.map(p=>disk[p]+'\t'+p+'\0').join('');
+  statProc.running=false;
+  if(statProc.gen===searcher.fileSearchGen) c.applyFileMtimes(FileSearch.parseStatLines(out),statProc.paths);
+  c.fetchFileMtimes(); finishStat(); }
+const shown=()=>searcher.fileResults[0].mtimeMs;
+c.publish([{path:'/p'}],'q','s'); finishStat(); const first=shown();
+disk['/p']=200; now+=10000; c.requestFileSearch(); finishStat(); const withinTtl=shown();
+now+=25000; c.requestFileSearch(); finishStat(); const afterTtl=shown();
+// Close and reopen: results and cache are gone, the next search asks again.
+disk['/p']=300; searcher.menu.opened=false; c.cancelFileSearch(); searcher.fileResults=[]; searcher.fileResultsKey='';
+const cleared=[Object.keys(searcher.fileMtimes).length,Object.keys(searcher.fileMtimeReadAt).length];
+searcher.menu.opened=true; c.publish([{path:'/p'}],'q','s'); finishStat(); const reopened=shown();
+console.log(JSON.stringify({first,withinTtl,afterTtl,cleared,reopened,stats}));
+''')
+        self.assertEqual(result["first"], 100000)
+        self.assertEqual(result["withinTtl"], 100000)
+        self.assertEqual(result["afterTtl"], 200000)
+        self.assertEqual(result["cleared"], [0, 0])
+        self.assertEqual(result["reopened"], 300000)
+        self.assertEqual(result["stats"], 3)
+
 
 class IndexTests(unittest.TestCase):
     def test_metadata_reuse_and_index_replacement(self):

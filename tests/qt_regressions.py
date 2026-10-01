@@ -81,6 +81,43 @@ class QtRegressionTests(unittest.TestCase):
                                 scenarios += 1
         self.assertEqual(scenarios, 162)
 
+    def geometry(self, **values):
+        g = self.component("MenuGeometry.qml")
+        for key, value in values.items():
+            g.setProperty(key, value)
+        return g
+
+    def test_low_top_keeps_footer_and_usable_results(self):
+        # HDMI-A-1: 2304 logical px, top 0.9 / 0.6, body 0.95, fixed height.
+        height, gap, chrome, footer, minimum = 2304, 10, 180, 22, 240
+        for top in (0.6, 0.9):
+            with self.subTest(top=top):
+                g = self.geometry(viewportHeight=height, gap=gap, requestedTop=height * top, chromeHeight=chrome,
+                                  desiredBodyHeight=height * .95, minimumBodyHeight=minimum, reserveHeight=8 + footer)
+                self.assertGreaterEqual(g.property("bodyHeight"), minimum)
+                self.assertAlmostEqual(g.property("cardTop") + g.property("cardHeight"), height - gap)
+                self.assertAlmostEqual(g.property("contentHeight"), g.property("cardHeight"))
+
+    def test_requested_top_unchanged_when_card_fits(self):
+        g = self.geometry(viewportHeight=2304, gap=10, requestedTop=230.4, chromeHeight=180,
+                          desiredBodyHeight=600, minimumBodyHeight=240, reserveHeight=30)
+        self.assertAlmostEqual(g.property("cardTop"), 230.4)
+        self.assertAlmostEqual(g.property("bodyHeight"), 600)
+
+    def test_compact_prompt_grows_without_moving_or_leaving_screen(self):
+        height, gap, minimum, reserve = 2304, 10, 240, 30
+        g = self.geometry(viewportHeight=height, gap=gap, requestedTop=height * .9, chromeHeight=150,
+                          desiredBodyHeight=0, minimumBodyHeight=minimum, reserveHeight=reserve)
+        compact_top = g.property("cardTop")
+        self.assertEqual(g.property("bodyHeight"), 0)
+        # Typing: spacing, footer and the full body join the card.
+        g.setProperty("chromeHeight", 150 + reserve)
+        g.setProperty("desiredBodyHeight", height * .95)
+        self.assertAlmostEqual(g.property("cardTop"), compact_top)
+        self.assertGreaterEqual(g.property("bodyHeight"), minimum)
+        self.assertLessEqual(g.property("cardTop") + g.property("cardHeight"), height - gap + .01)
+        self.assertAlmostEqual(g.property("contentHeight"), g.property("cardHeight"))
+
 
 if __name__ == "__main__":
     unittest.main()

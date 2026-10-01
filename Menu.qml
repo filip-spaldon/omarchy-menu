@@ -336,19 +336,25 @@ Item {
         ? root.launcherBodyHeight
         : Math.min(root.launcherBodyHeight, Math.max(root.baseRowHeight * 3,
             rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider))))
-  readonly property int launcherChromeHeight: contentMargin * 2 + headerHeight
+  // The card's border and padding: what its Flickable is inset by, so what the
+  // rows and footer must leave room for.
+  readonly property real cardInsets: card.contentTopInset + card.contentBottomInset
+  readonly property int launcherChromeHeight: Math.ceil(cardInsets) + headerHeight
     + (tabBar.visible ? contentSpacing + tabBar.height : 0)
     + (fileBar.visible ? contentSpacing + fileBar.height : 0)
     + (desiredRowsHeight > 0 ? contentSpacing : 0)
-    + (footer.visible ? contentSpacing + footer.implicitHeight : 0)
+    + (footer.visible ? contentSpacing + Math.ceil(footer.implicitHeight) : 0)
   MenuGeometry {
     id: launcherGeometry
     viewportHeight: panel.height
     gap: Style.gapsOut
     requestedTop: root.launcherTopFraction >= 0 ? panel.height * root.launcherTopFraction : panel.cardTop
     desiredBodyHeight: root.desiredRowsHeight
-    minimumBodyHeight: root.baseRowHeight * 3
+    // Enough for a few two-line rows and a section divider: the top the card
+    // was asked for gives way before the results shrink below this.
+    minimumBodyHeight: Math.max(root.baseRowHeight * 3, root.detailRowHeight * 4 + root.rowSpacing * 3 + root.dividerHeight)
     chromeHeight: root.launcherChromeHeight
+    reserveHeight: root.contentSpacing + Math.ceil(footer.implicitHeight)
   }
   property int visibleRowsHeight: root.dmenuActive
     ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText)
