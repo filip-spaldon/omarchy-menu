@@ -305,7 +305,7 @@ Item {
     if (root.activeTab === "windows") return "Search open windows…"
     if (root.activeTab === "files") return "Search files…"
     if (root.activeTab === "folders") return "Search folders…"
-    return "Search apps, windows, files, folders and system…"
+    return "Search everything…"
   }
 
   function scaledFont(px) {
