@@ -523,12 +523,15 @@ Item {
       AiBackend.boundOutput(["bash", "-lc", script], root.helperLineCeiling, root.helperOutputCeiling, 4096, 16384))
   }
 
+  // Re-read on open, but only the files that changed (FileWatch).
   function loadMenuSources() {
-    if (!defaultMenuProc.running) {
+    if (!defaultMenuProc.running && defaultMenuWatch.stale) {
+      defaultMenuWatch.beginRead()
       defaultMenuProc.command = root.readFileCommand(root.defaultMenuPath, root.menuFileCeiling)
       defaultMenuProc.running = true
     }
-    if (!userMenuProc.running) {
+    if (!userMenuProc.running && userMenuWatch.stale) {
+      userMenuWatch.beginRead()
       userMenuProc.command = root.readFileCommand(root.userMenuPath, root.menuFileCeiling)
       userMenuProc.running = true
     }
@@ -2123,12 +2126,16 @@ Item {
   // out of the directory, blocks forever on a FIFO, and reads a device or a
   // multi-gigabyte file to the end, all on the path that draws the menu.
   //
-  // Re-read on every open() instead of watched, and the raw text is compared
-  // before anything is rebuilt, so a live edit still takes effect the next
-  // time the menu is opened without paying for a guard batch when nothing
-  // changed.
+  // Re-read on the next open() after FileWatch saw a change (FileWatch only
+  // watches; it never loads the file), and the raw text is compared before
+  // anything is rebuilt, so a live edit still takes effect the next time the
+  // menu is opened without paying for a guard batch when nothing changed.
+  FileWatch { id: defaultMenuWatch; path: root.defaultMenuPath }
+  FileWatch { id: userMenuWatch; path: root.userMenuPath }
+
   Process {
     id: defaultMenuProc
+    onExited: function(exitCode) { if (exitCode !== 0) defaultMenuWatch.readFailed(exitCode) }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -2145,6 +2152,7 @@ Item {
   // the helper exits non-zero and the collector finishes with no text.
   Process {
     id: userMenuProc
+    onExited: function(exitCode) { if (exitCode !== 0) userMenuWatch.readFailed(exitCode) }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
