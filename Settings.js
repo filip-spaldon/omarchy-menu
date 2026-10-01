@@ -5,7 +5,8 @@
 
 // style.json: the card's geometry. See SettingsStore.qml for what each does.
 var STYLE_DEFAULTS = {
-  fontScale: 1.0, cardWidth: 560, bodyHeight: 0.6, fixedHeight: false, top: 0.2, pickerHeight: 0.7
+  fontScale: 1.0, cardWidth: 560, bodyHeight: 0.6, fixedHeight: false, top: 0.2, pickerHeight: 0.7,
+  tabSlide: true
 }
 
 // Numeric style.json keys: accepted range and the step the popup moves by.
@@ -17,8 +18,11 @@ var STYLE_RANGES = {
   top: { min: 0, max: 0.9, step: 0.02 }
 }
 
-// The tab highlight's slide (TabBar.qml). Opt-in style.json keys, not written
-// to a new file, so they are there to experiment with but stay out of the way:
+// The tab highlight's slide (TabBar.qml). tabSlide is a style default (the
+// Tab animation switch under Look in the settings popup); false turns every tab animation
+// off, whatever the keys below say. The rest are opt-in style.json keys, not
+// written to a new file, so they are there to experiment with but stay out of
+// the way:
 //   tabSlideMs    slide length in ms; 0 jumps
 //   tabEasing     one of TAB_EASINGS (Qt easing curve names)
 //   tabOvershoot  how far the Back curves overshoot (Qt's default 1.70158)
@@ -27,7 +31,7 @@ var STYLE_RANGES = {
 //                 tabEasing; a y above 1 overshoots. x in 0..1, y in -1..3
 //   tabSweep      true: the accent text colour travels with the pill, lighting
 //                 whatever it covers; false: each label fades on its own
-var TAB_ANIM_DEFAULTS = { tabSlideMs: 120, tabEasing: "OutCubic", tabOvershoot: 1.70158, tabPop: 0, tabBezier: null, tabSweep: true }
+var TAB_ANIM_DEFAULTS = { tabSlide: STYLE_DEFAULTS.tabSlide, tabSlideMs: 120, tabEasing: "OutCubic", tabOvershoot: 1.70158, tabPop: 0, tabBezier: null, tabSweep: true }
 var TAB_ANIM_RANGES = {
   tabSlideMs: { min: 0, max: 1000 },
   tabOvershoot: { min: 0, max: 5 },
@@ -55,11 +59,15 @@ function tabAnim(style) {
   for (var key in TAB_ANIM_DEFAULTS) {
     var range = TAB_ANIM_RANGES[key]
     var v = style ? style[key] : undefined
-    if (key === "tabSweep") out[key] = typeof v === "boolean" ? v : TAB_ANIM_DEFAULTS[key]
+    if (key === "tabSweep" || key === "tabSlide") out[key] = typeof v === "boolean" ? v : TAB_ANIM_DEFAULTS[key]
     else if (key === "tabBezier") out[key] = validBezier(v) ? v.map(Number) : null
     else if (!range) out[key] = TAB_EASINGS.indexOf(v) >= 0 ? v : TAB_ANIM_DEFAULTS[key]
     else out[key] = v !== undefined && v !== null && isFinite(Number(v)) && Number(v) >= range.min && Number(v) <= range.max
       ? Number(v) : TAB_ANIM_DEFAULTS[key]
+  }
+  if (!out.tabSlide) {
+    out.tabSlideMs = 0
+    out.tabPop = 0
   }
   return out
 }

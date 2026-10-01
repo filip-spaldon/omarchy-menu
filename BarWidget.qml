@@ -87,6 +87,7 @@ Panel {
   readonly property string zoxideMode: Settings.ZOXIDE_MODES.indexOf(st.zoxide) >= 0 ? st.zoxide : "rank"
   readonly property bool zoxideAdd: typeof st.zoxideAdd === "boolean" ? st.zoxideAdd : true
   readonly property bool fixedHeight: typeof sty.fixedHeight === "boolean" ? sty.fixedHeight : Settings.STYLE_DEFAULTS.fixedHeight
+  readonly property bool tabSlideOn: typeof sty.tabSlide === "boolean" ? sty.tabSlide : Settings.STYLE_DEFAULTS.tabSlide
 
   // The agent the launcher starts on: the remembered pick, else ai.json's
   // agent, else the first installed one (the menu picks it the same way).
@@ -201,6 +202,7 @@ Panel {
       var top = Settings.styleTop(sty)
       row({ key: "style:top", label: "Distance from top", value: top < 0 ? "Centred" : percent(top), adjust: true, enabled: styleValid })
       row({ key: "style:pickerHeight", label: "Picker height", value: percent(Settings.styleNumber(sty, "pickerHeight")), adjust: true, enabled: styleValid })
+      row({ key: "style:tabSlide", label: "Tab animation", value: onOff(tabSlideOn), toggle: true, enabled: styleValid })
     } else if (id === "ai") {
       if (!aiValid) note("ai.json is not valid JSON")
       row({ key: "ai:agent", label: "Agent", value: aiAgent ? agentLabel(aiAgent) : "None installed", adjust: true,
@@ -334,6 +336,7 @@ Panel {
     else if (key === "cursorWhenEmpty") setState("cursorWhenEmpty", !cursorWhenEmpty)
     else if (key === "commandsWithoutSlash") setState("commandsWithoutSlash", !commandsWithoutSlash)
     else if (key === "style:fixedHeight") setStyle("fixedHeight", !fixedHeight)
+    else if (key === "style:tabSlide") setStyle("tabSlide", !tabSlideOn)
     else if (key === "zoxide:add") setState("zoxideAdd", !zoxideAdd)
     else if (key === "root:add") pickFolders()
     else if (key.indexOf("root:") === 0 && r.rootId)
