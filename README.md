@@ -194,7 +194,8 @@ Add it to the bar with the bar's widget picker, or put
   - **Search in All**: switch each result section on or off, and change
     their order. A section that is off leaves All only, its tab stays
     (`allSectionsOff` in `state.json`).
-  - **Look**: the `style.json` geometry.
+  - **Look**: the `style.json` geometry, and tab animations on or off
+    (`tabSlide`).
   - **Search roots**: folders searched besides your home, and how
     (see [Search roots](#search-roots-nas-cloud-drives-other-disks)).
   - **Zoxide**: ranking by visited folders, and learning from the launcher.
@@ -412,7 +413,8 @@ defaults and re-read every time the menu opens:
   "bodyHeight": 0.6,
   "fixedHeight": false,
   "top": 0.2,
-  "pickerHeight": 0.7
+  "pickerHeight": 0.7,
+  "tabSlide": true
 }
 ```
 
@@ -429,6 +431,15 @@ the top so the card grows downward. The stock menu itself is
 | `fixedHeight` | `false` | `false` fits the rows; `true` keeps one size while typing and switching tabs |
 | `top` | `0.2` | `"center"`, or the top edge as a share of the screen |
 | `pickerHeight` | `0.7` | Maximum list height of dmenu pickers |
+| `tabSlide` | `true` | Tab animations; `false` turns them off, whatever the keys below say |
+| `tabSlideMs` | `120` | How long the active-tab highlight slides between tabs (0–1000 ms, 0 jumps) |
+| `tabEasing` | `"OutCubic"` | The slide's Qt easing curve; `tabOvershoot` (`1.70158`) applies to the Back curves |
+| `tabBezier` | — | `[x1, y1, x2, y2]` for a custom cubic-bezier slide, overriding `tabEasing` |
+| `tabPop` | `0` | A small scale pop when the highlight lands (0–1) |
+| `tabSweep` | `true` | The accent text colour sweeps along with the highlight |
+
+`tabSlideMs`, `tabEasing`, `tabBezier`, `tabPop` and `tabSweep` are not written
+to a new `style.json`; add them to tune the tab animation.
 
 Missing or out-of-range values fall back to the defaults above. Some combinations
 to try:

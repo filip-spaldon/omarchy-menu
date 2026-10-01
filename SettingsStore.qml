@@ -35,6 +35,8 @@ Item {
   //   cardWidth     launcher width in Style.space() units (stock menu: 300)
   //   bodyHeight    results area, share of the screen height (stock menu: 0.7)
   //   fixedHeight   true keeps the card one size; false fits the rows
+  //   tabSlide      false turns the tab animations off (Settings.tabAnim has
+  //                 the opt-in keys that tune them)
   //   top           "center" (stock menu) or a share of the screen, e.g. 0.2
   //   pickerHeight  most of the screen a dmenu picker's list may take
   readonly property var styleDefaults: Settings.STYLE_DEFAULTS
@@ -61,6 +63,7 @@ Item {
     store.menu.menuHeightFraction = Settings.styleNumber(style, "pickerHeight")
     store.menu.launcherFixedHeight = typeof style.fixedHeight === "boolean" ? style.fixedHeight : store.styleDefaults.fixedHeight
     store.menu.launcherTopFraction = Settings.styleTop(style)
+    store.menu.tabAnim = Settings.tabAnim(style)
     if (!exists) store.writeStyleDefaults()
   }
 

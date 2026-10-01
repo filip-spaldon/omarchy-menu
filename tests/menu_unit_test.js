@@ -213,6 +213,20 @@ eq(Settings.stepTop(-1, 1), 0, "stepping up from centred starts at 0")
 eq(Settings.stepTop(0, -1), -1, "stepping below 0 centres")
 eq(Settings.stepTop(0.12, 1), 0.14, "top steps by 0.02")
 eq(Settings.styleNumber({ bodyHeight: 5 }, "bodyHeight"), Settings.STYLE_DEFAULTS.bodyHeight, "an out-of-range value falls back")
+eq(Settings.tabAnim({}), Settings.TAB_ANIM_DEFAULTS, "tab animation falls back to its defaults")
+eq(Settings.tabAnim({ tabSlideMs: 200, tabEasing: "OutBack", tabPop: 0 }).tabEasing, "OutBack", "a known easing is kept")
+eq(Settings.tabAnim({ tabEasing: "Wobbly", tabSlideMs: -5 }), Settings.TAB_ANIM_DEFAULTS, "unknown easing and out-of-range ms fall back")
+assert(!("tabSlideMs" in Settings.STYLE_DEFAULTS), "tab animation keys are opt-in")
+eq(Settings.tabAnim({ tabBezier: [0.2, 1.5, 0.35, 1] }).tabBezier, [0.2, 1.5, 0.35, 1], "a bezier curve is kept")
+eq(Settings.tabAnim({ tabBezier: [1.5, 1, 0.35, 1] }).tabBezier, null, "a bezier x outside 0..1 is refused")
+eq(Settings.tabAnim({ tabBezier: [0.2, "1.5", 0.35, 1] }).tabBezier, null, "a bezier with a non-number is refused")
+eq(Settings.tabAnim({ tabBezier: [0.2, 1.5] }).tabBezier, null, "a short bezier is refused")
+eq(Settings.tabAnim({ tabSweep: false }).tabSweep, false, "the sweep can be turned off")
+eq(Settings.tabAnim({ tabSweep: "no" }).tabSweep, true, "a non-boolean sweep falls back")
+eq(Settings.STYLE_DEFAULTS.tabSlide, true, "the tab switch is a style default, on")
+eq(Settings.tabAnim({ tabSlide: false, tabSlideMs: 300, tabPop: 0.5 }).tabSlideMs, 0, "switching tab animations off makes the slide jump")
+eq(Settings.tabAnim({ tabSlide: false, tabSlideMs: 300, tabPop: 0.5 }).tabPop, 0, "switching tab animations off drops the pop")
+eq(Settings.tabAnim({ tabSlide: "off", tabSlideMs: 300 }).tabSlideMs, 300, "a non-boolean switch falls back to on")
 eq(Settings.moveInOrder(["a", "b", "c"], "b", -1), ["b", "a", "c"], "moveInOrder moves left")
 eq(Settings.moveInOrder(["a", "b", "c"], "c", 1), ["a", "b", "c"], "moveInOrder stops at the end")
 eq(Settings.toggleDisabled([], "files", ["all", "files"]), ["files"], "a tab switches off")
@@ -457,6 +471,17 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   assert(status[root.id].online && status[root.id].indexedAt > 0 && status[root.id].indexCount === 1, "status of a reachable, indexed root")
   eq(status.r00000001.online, false, "status of an unreachable root")
   fs.rmSync(dir, { recursive: true, force: true })
+}
+
+// ---------------------------------------------------------- tab highlight --
+// repeater.itemAt() is not a binding dependency; the pill has to re-read it
+// whenever chips are created or destroyed, or it stays on a dead chip (the
+// highlight was missing on 7 of 8 first opens after a restart).
+{
+  const fs = require("fs")
+  const bar = fs.readFileSync(path.join(root, "TabBar.qml"), "utf8")
+  eq(/readonly property Item activeChip: bar\.chipsVersion >= 0 &&/.test(bar), true, "the active chip is re-read when chips change")
+  eq(/onItemAdded: bar\.chipsVersion\+\+/.test(bar) && /onItemRemoved: bar\.chipsVersion\+\+/.test(bar), true, "adding or removing a chip bumps chipsVersion")
 }
 
 // ----------------------------------------------------- roots in results ---
