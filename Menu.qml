@@ -181,6 +181,10 @@ Item {
   property var deleteTarget: null
   onOpenedChanged: {
     if (opened) return
+    if (root.launcherPositionMoved) {
+      root.launcherPositionMoved = false
+      settingsStore.savePosition(root.launcherPosition)
+    }
     deleteConfirmOpen = false
     deleteTarget = null
     answerEngine.utilityAnswers = ({})
@@ -218,7 +222,8 @@ Item {
   //   menuHeightFraction   most of the screen a dmenu picker's list may take
   //   launcherCardWidth    launcher width, in Style.space() units
   //   launcherBodyFraction launcher results area, as a share of the screen
-  //   launcherTopFraction  where the launcher's top edge sits on the screen
+  //   launcherPosition     where the launcher card sits (style.json "position",
+  //                        or the older "top"; Alt+arrows move it)
   //
   // The launcher (every non-dmenu open) is a fixed-size card, so switching
   // tabs or typing never makes it jump; only the compact All prompt is
@@ -230,14 +235,71 @@ Item {
   property real menuHeightFraction: 0.7
   property int launcherCardWidth: 560
   property real launcherBodyFraction: 0.6
-  // < 0 centres the card, as the stock menu does; >= 0 pins its top edge.
-  property real launcherTopFraction: 0.2
+  // Where the launcher card sits (Settings.stylePosition): the screen edge it
+  // is pinned to, or the centre, and how far from it. Moved with the
+  // keyboard and saved on close.
+  property var launcherPosition: Settings.DEFAULT_POSITION
+  property bool launcherPositionMoved: false
   // false: the results area fits its rows (up to launcherBodyFraction), as the
   // stock menu does; true: it always takes launcherBodyFraction, so the card
   // never changes size while typing or switching tabs.
   property bool launcherFixedHeight: false
   // The tab highlight's slide and pop (Settings.tabAnim has the keys).
   property var tabAnim: Settings.TAB_ANIM_DEFAULTS
+
+  // Alt+arrows snap the launcher across a 3x3 grid, Alt+Shift+arrows nudge
+  // it, Alt+0 or Alt+Home puts it back; saved when the menu closes. The
+  // launcher only: a dmenu picker stays centred.
+  function moveLauncher(event) {
+    if (!root.tabsActive || !(event.modifiers & Qt.AltModifier)) return false
+    var next = null
+    if (event.key === Qt.Key_0 || event.key === Qt.Key_Home) {
+      next = Settings.DEFAULT_POSITION
+    } else {
+      var dx = event.key === Qt.Key_Left ? -1 : event.key === Qt.Key_Right ? 1 : 0
+      var dy = event.key === Qt.Key_Up ? -1 : event.key === Qt.Key_Down ? 1 : 0
+      if (!dx && !dy) return false
+      next = (event.modifiers & Qt.ShiftModifier)
+        ? Settings.nudgePosition(root.launcherPosition, dx, dy)
+        : Settings.snapPosition(root.launcherPosition, dx, dy)
+    }
+    // A centred card frozen mid-search would otherwise hold its old line.
+    panel.cardTop = -1
+    root.launcherMoving = true
+    launcherMoveEnd.restart()
+    root.launcherPosition = next
+    root.launcherPositionMoved = true
+    root.positionHint = Settings.positionLabel(next) + " · Alt+0 resets"
+    positionHintEnd.restart()
+    return true
+  }
+
+  // true for the moment a key move runs, so only that slides the card:
+  // opening, typing and resizing keep placing it straight away.
+  property bool launcherMoving: false
+  // style.json "moveMs" / "moveEasing" (Settings.moveAnim).
+  property var moveAnim: Settings.MOVE_DEFAULTS
+  readonly property int launcherMoveMs: root.moveAnim.moveMs
+  readonly property int launcherMoveEasing: ({
+    OutCubic: Easing.OutCubic, OutQuad: Easing.OutQuad, OutQuart: Easing.OutQuart,
+    OutQuint: Easing.OutQuint, OutExpo: Easing.OutExpo, OutSine: Easing.OutSine,
+    OutCirc: Easing.OutCirc, InOutQuad: Easing.InOutQuad, InOutCubic: Easing.InOutCubic,
+    InOutSine: Easing.InOutSine, OutBack: Easing.OutBack, Linear: Easing.Linear
+  })[root.moveAnim.moveEasing] ?? Easing.InOutQuad
+  // Where the card went, shown in place of the prompt or footer for a moment.
+  property string positionHint: ""
+
+  Timer {
+    id: launcherMoveEnd
+    interval: root.launcherMoveMs + 60
+    onTriggered: root.launcherMoving = false
+  }
+
+  Timer {
+    id: positionHintEnd
+    interval: 1500
+    onTriggered: root.positionHint = ""
+  }
 
   // Row height follows the font: the stock minimums (50 and 58) were sized for
   // full-size text and would otherwise hold the rows tall while the labels
@@ -348,7 +410,13 @@ Item {
     id: launcherGeometry
     viewportHeight: panel.height
     gap: Style.gapsOut
-    requestedTop: root.launcherTopFraction >= 0 ? panel.height * root.launcherTopFraction : panel.cardTop
+    // Pinned to the top or bottom edge, the card grows away from it; in the
+    // middle it is centred until the first keystroke freezes its top line,
+    // as the stock menu does (panel.cardTop).
+    readonly property var vertical: Settings.cardVertical(root.launcherPosition, panel.height, Style.gapsOut)
+    requestedTop: vertical.top >= 0 ? vertical.top : (vertical.bottom >= 0 ? -1 : panel.cardTop)
+    requestedBottom: vertical.bottom
+    centerShift: panel.cardTop >= 0 ? 0 : vertical.shift
     desiredBodyHeight: root.desiredRowsHeight
     // Enough for a few two-line rows and a section divider: the top the card
     // was asked for gives way before the results shrink below this.
@@ -416,9 +484,14 @@ Item {
   // past the frozen top edge once a search has pinned the card in place.
   // Uses panel.cardTop rather than effectiveCardTop: the centered top is
   // derived from the card height, which this value feeds.
+  // A launcher pinned to the bottom grows upward, so its rows may take the
+  // room from the top gap down to its bottom edge, whatever line the card
+  // froze at (requestedBottom: bottomEdge would feed back into this value).
   function availableRowsHeight() {
-    var top = panel.cardTop >= 0 ? panel.cardTop : Style.gapsOut
-    var available = panel.height - top - Style.gapsOut - root.contentMargin * 2 - root.headerHeight - root.contentSpacing
+    var fromBottom = root.tabsActive && launcherGeometry.bottomAnchored
+    var top = panel.cardTop >= 0 && !fromBottom ? panel.cardTop : Style.gapsOut
+    var bottom = fromBottom ? Math.min(panel.height - Style.gapsOut, launcherGeometry.requestedBottom) : panel.height - Style.gapsOut
+    var available = bottom - top - root.contentMargin * 2 - root.headerHeight - root.contentSpacing
     // The starting menu sets the ceiling along with the offset: drilling into
     // a longer submenu scrolls behind the fold instead of growing the card.
     // (dmenu pickers only: the launcher opens compact, so its starting height
@@ -2454,13 +2527,14 @@ Item {
     property int cardTop: -1
     property int maxRowsHeight: -1
     readonly property int centeredTop: Math.max(Style.gapsOut, Math.round((height - root.cardHeight) / 2))
-    // The launcher opens at a fixed line near the top, Spotlight-style, so
-    // growing from the compact prompt into a full card only ever extends
-    // downward. A dmenu picker keeps the centered, freeze-on-type behaviour.
-    readonly property int launcherTop: Math.round(height * root.launcherTopFraction)
+    // The launcher is placed by launcherGeometry (root.launcherPosition); a
+    // dmenu picker keeps the centered, freeze-on-type behaviour.
     readonly property int effectiveCardTop: root.tabsActive
       ? Math.round(launcherGeometry.cardTop)
       : (cardTop >= 0 ? cardTop : centeredTop)
+    readonly property int effectiveCardLeft: root.tabsActive
+      ? Settings.cardLeft(root.launcherPosition, width, root.cardWidth, Style.gapsOut)
+      : Math.round((width - root.cardWidth) / 2)
     function freezeCardTop() {
       if (visible && cardTop < 0) {
         cardTop = effectiveCardTop
@@ -2484,8 +2558,11 @@ Item {
       width: root.cardWidth
       height: Math.min(root.cardHeight, panel.height - Style.gapsOut - panel.effectiveCardTop)
       radius: root.cornerRadius
-      anchors.horizontalCenter: parent.horizontalCenter
+      x: panel.effectiveCardLeft
       y: panel.effectiveCardTop
+      // Curve and length from style.json (root.moveAnim).
+      Behavior on x { enabled: root.launcherMoving; NumberAnimation { duration: root.launcherMoveMs; easing.type: root.launcherMoveEasing } }
+      Behavior on y { enabled: root.launcherMoving; NumberAnimation { duration: root.launcherMoveMs; easing.type: root.launcherMoveEasing } }
       color: root.background
       borderSpec: root.borderSpec
       padding: root.contentMargin
@@ -2502,6 +2579,11 @@ Item {
         Keys.onPressed: function(event) {
           if (root.deleteConfirmOpen) {
             if (deleteConfirm.handleKey(event)) event.accepted = true
+            return
+          }
+
+          if (root.moveLauncher(event)) {
+            event.accepted = true
             return
           }
 
@@ -2790,7 +2872,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               // Bounded like the rows: the prompt comes from whoever invoked
               // the dmenu, and the title from the JSONC.
-              text: MenuModel.sanitizeText(root.filterText || root.promptText())
+              text: MenuModel.sanitizeText(root.filterText || root.positionHint || root.promptText())
               color: root.foreground
               opacity: root.filterText ? 1 : 0.58
               font.family: root.fontFamily
@@ -3100,7 +3182,7 @@ Item {
             visible: !root.dmenuActive && (settingsStore.error !== "" || (root.tabsActive && !root.compact && !aiCtl.isAiMode))
             width: parent.width
             textFormat: Text.PlainText
-            text: settingsStore.error || root.footerHints()
+            text: settingsStore.error || root.positionHint || root.footerHints()
             color: root.foreground
             opacity: 0.4
             horizontalAlignment: Text.AlignHCenter

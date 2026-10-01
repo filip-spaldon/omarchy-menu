@@ -151,6 +151,152 @@ function stepTop(top, direction) {
   return stepNumber(top, STYLE_RANGES.top, direction)
 }
 
+// style.json "position": where the launcher card sits. anchorX/anchorY name
+// the screen edge it is pinned to (or the centre), and offsetX/offsetY how far
+// from it, as a share of the screen. From an edge the offset runs inward
+// (0..0.9); from the centre it is a signed shift (-0.45..0.45). Pinned to
+// the bottom, the card grows upward, so it never runs off the screen.
+var POSITION_ANCHORS_X = ["left", "center", "right"]
+var POSITION_ANCHORS_Y = ["top", "middle", "bottom"]
+var DEFAULT_POSITION = { anchorX: "center", anchorY: "top", offsetX: 0, offsetY: 0.2 }
+// Where a snap lands from each edge: a little in from the side, and far
+// enough down from the top or up from the bottom to clear the bar.
+var POSITION_SNAP_OFFSET = { x: 0.03, y: 0.12 }
+var POSITION_NUDGE_STEP = 0.02
+
+function positionOffsetRange(anchor) {
+  return anchor === "center" || anchor === "middle" ? { min: -0.45, max: 0.45 } : { min: 0, max: 0.9 }
+}
+
+function clampOffset(value, anchor) {
+  var range = positionOffsetRange(anchor)
+  return Math.round(Math.min(range.max, Math.max(range.min, value)) * 1000) / 1000
+}
+
+// The card's position from a parsed style.json: its "position" object when
+// valid, else the older "top" (a share of the screen, or centred).
+function stylePosition(style) {
+  var p = style ? style.position : undefined
+  if (p && typeof p === "object" && !Array.isArray(p)
+      && POSITION_ANCHORS_X.indexOf(p.anchorX) >= 0 && POSITION_ANCHORS_Y.indexOf(p.anchorY) >= 0) {
+    var ox = typeof p.offsetX === "number" && isFinite(p.offsetX) ? p.offsetX : 0
+    var oy = typeof p.offsetY === "number" && isFinite(p.offsetY) ? p.offsetY : 0
+    return { anchorX: p.anchorX, anchorY: p.anchorY, offsetX: clampOffset(ox, p.anchorX), offsetY: clampOffset(oy, p.anchorY) }
+  }
+  var top = styleTop(style)
+  return top < 0
+    ? { anchorX: "center", anchorY: "middle", offsetX: 0, offsetY: 0 }
+    : { anchorX: "center", anchorY: "top", offsetX: 0, offsetY: top }
+}
+
+function snapAxis(anchors, anchor, offset, delta, snapOffset) {
+  var i = Math.min(anchors.length - 1, Math.max(0, anchors.indexOf(anchor) + delta))
+  if (delta === 0 || anchors[i] === anchor) return { anchor: anchor, offset: offset }
+  return { anchor: anchors[i], offset: i === 1 ? 0 : snapOffset }
+}
+
+// One step across the 3x3 grid: dx -1 left / +1 right, dy -1 up / +1 down.
+// Already at the edge, that axis stays where it is.
+function snapPosition(pos, dx, dy) {
+  var x = snapAxis(POSITION_ANCHORS_X, pos.anchorX, pos.offsetX, dx, POSITION_SNAP_OFFSET.x)
+  var y = snapAxis(POSITION_ANCHORS_Y, pos.anchorY, pos.offsetY, dy, POSITION_SNAP_OFFSET.y)
+  return { anchorX: x.anchor, anchorY: y.anchor, offsetX: x.offset, offsetY: y.offset }
+}
+
+// A small move in screen terms (dx +1 = right, dy +1 = down), kept on the
+// same anchor: from the right or bottom edge the offset runs the other way.
+function nudgePosition(pos, dx, dy, step) {
+  var s = step === undefined ? POSITION_NUDGE_STEP : step
+  var sx = pos.anchorX === "right" ? -1 : 1
+  var sy = pos.anchorY === "bottom" ? -1 : 1
+  return {
+    anchorX: pos.anchorX, anchorY: pos.anchorY,
+    offsetX: clampOffset(pos.offsetX + sx * dx * s, pos.anchorX),
+    offsetY: clampOffset(pos.offsetY + sy * dy * s, pos.anchorY)
+  }
+}
+
+// How the card slides on a key move. Opt-in style.json keys:
+//   moveMs      slide length in ms (0 jumps)
+//   moveEasing  one of MOVE_EASINGS. InOutQuad eases in and out, smooth over
+//               long distances; OutBack overshoots a little and settles, for
+//               a livelier move
+var MOVE_DEFAULTS = { moveMs: 140, moveEasing: "InOutQuad" }
+var MOVE_EASINGS = [
+  "OutCubic", "OutQuad", "OutQuart", "OutQuint", "OutExpo", "OutSine", "OutCirc",
+  "InOutQuad", "InOutCubic", "InOutSine", "OutBack", "Linear"
+]
+
+function moveAnim(style) {
+  var ms = style ? style.moveMs : undefined
+  var easing = style ? style.moveEasing : undefined
+  return {
+    moveMs: typeof ms === "number" && isFinite(ms) && ms >= 0 && ms <= 1000 ? ms : MOVE_DEFAULTS.moveMs,
+    moveEasing: MOVE_EASINGS.indexOf(easing) >= 0 ? easing : MOVE_DEFAULTS.moveEasing
+  }
+}
+
+// The bar popup's "Position" row: the 3x3 grid in reading order, each cell
+// at its snap offsets, except top centre, which is the default.
+function positionPresets() {
+  var out = []
+  for (var y = 0; y < 3; y++)
+    for (var x = 0; x < 3; x++) {
+      var ax = POSITION_ANCHORS_X[x], ay = POSITION_ANCHORS_Y[y]
+      out.push(ax === DEFAULT_POSITION.anchorX && ay === DEFAULT_POSITION.anchorY ? DEFAULT_POSITION
+        : { anchorX: ax, anchorY: ay, offsetX: x === 1 ? 0 : POSITION_SNAP_OFFSET.x, offsetY: y === 1 ? 0 : POSITION_SNAP_OFFSET.y })
+    }
+  return out
+}
+
+// The next (+1) or previous (-1) preset from wherever the card is now,
+// matched by its anchors, wrapping around.
+function cyclePosition(pos, direction) {
+  var presets = positionPresets()
+  var i = 0
+  for (var k = 0; k < presets.length; k++)
+    if (presets[k].anchorX === pos.anchorX && presets[k].anchorY === pos.anchorY) i = k
+  return presets[(i + direction + presets.length) % presets.length]
+}
+
+// A short name for where the card is, with an arrow pointing there:
+// "↘ bottom right", "↑ top", "● centre".
+function positionLabel(pos) {
+  var arrows = {
+    "top left": "↖", "top": "↑", "top right": "↗",
+    "left": "←", "centre": "●", "right": "→",
+    "bottom left": "↙", "bottom": "↓", "bottom right": "↘"
+  }
+  var v = pos.anchorY === "middle" ? "" : pos.anchorY
+  var h = pos.anchorX === "center" ? "" : pos.anchorX
+  var name = (v + " " + h).trim() || "centre"
+  return arrows[name] + " " + name
+}
+
+// The card's left edge on a screen w wide, kept `margin` from the sides.
+function cardLeft(pos, w, cardW, margin) {
+  var x = pos.anchorX === "left" ? margin + pos.offsetX * w
+    : pos.anchorX === "right" ? w - margin - pos.offsetX * w - cardW
+    : (w - cardW) / 2 + pos.offsetX * w
+  return Math.round(Math.max(margin, Math.min(x, w - margin - cardW)))
+}
+
+// What MenuGeometry needs to place the card vertically on a screen h tall:
+// pinned to the top, the top edge it asks for (the card grows downward);
+// pinned to the bottom, the bottom edge (it grows upward); in the middle,
+// neither, and the share of the screen it is shifted by from the centre.
+function cardVertical(pos, h, margin) {
+  if (pos.anchorY === "top") return { top: pos.offsetY * h, bottom: -1, shift: 0 }
+  if (pos.anchorY === "bottom") return { top: -1, bottom: h - margin - pos.offsetY * h, shift: 0 }
+  return { top: -1, bottom: -1, shift: pos.offsetY * h }
+}
+
+// The style.json write for a moved card: the "position" key alone, so a
+// save never touches the keys around it.
+function positionPatch(pos) {
+  return patch("position", { anchorX: pos.anchorX, anchorY: pos.anchorY, offsetX: pos.offsetX, offsetY: pos.offsetY })
+}
+
 // A numeric style.json value as the menu reads it: the file's value when it
 // is in range, the default otherwise.
 function styleNumber(style, key) {
@@ -322,6 +468,20 @@ if (typeof module !== "undefined") {
     cycle: cycle,
     stepNumber: stepNumber,
     styleTop: styleTop,
+    DEFAULT_POSITION: DEFAULT_POSITION,
+    POSITION_SNAP_OFFSET: POSITION_SNAP_OFFSET,
+    stylePosition: stylePosition,
+    snapPosition: snapPosition,
+    nudgePosition: nudgePosition,
+    cardLeft: cardLeft,
+    cardVertical: cardVertical,
+    positionPatch: positionPatch,
+    positionLabel: positionLabel,
+    positionPresets: positionPresets,
+    cyclePosition: cyclePosition,
+    MOVE_DEFAULTS: MOVE_DEFAULTS,
+    MOVE_EASINGS: MOVE_EASINGS,
+    moveAnim: moveAnim,
     stepTop: stepTop,
     styleNumber: styleNumber,
     moveInOrder: moveInOrder,
