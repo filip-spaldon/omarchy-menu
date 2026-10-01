@@ -561,6 +561,16 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   }
 }
 
+// The window list is read the first time something in an open shows it,
+// not on every open.
+{
+  const fs = require("fs")
+  const tracker = fs.readFileSync(path.join(root, "WindowsController.qml"), "utf8")
+  const onOpened = (tracker.match(/function onOpenedChanged\(\) \{[\s\S]*?\n    \}/) || [""])[0]
+  eq(/refresh\(\)/.test(onOpened), false, "opening the menu does not read the window list")
+  eq(/onWindowsNeededChanged[\s\S]*?tracker\.refresh\(\)/.test(tracker), true, "the window list is read once something shows it")
+}
+
 console.log("")
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

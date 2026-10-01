@@ -37,6 +37,21 @@ Item {
     "changefloatingmode"
   ]
 
+  // Something on screen uses the window list: the Windows tab, All's
+  // search (its Windows section, and the running marker on its app rows),
+  // or Apps (the running marker). The default open -- All, empty until
+  // something is typed -- uses none of it, so the list is read the first
+  // time it is needed in an open rather than on every open.
+  readonly property bool windowsNeeded: tracker.menu.opened && !tracker.menu.dmenuActive
+    && (tracker.menu.activeTab === "windows" || tracker.menu.activeTab === "apps"
+        || (tracker.menu.activeTab === "all" && tracker.menu.filterText.trim() !== ""))
+  property bool readThisOpen: false
+  onWindowsNeededChanged: {
+    if (!tracker.windowsNeeded || tracker.readThisOpen) return
+    tracker.readThisOpen = true
+    tracker.refresh()
+  }
+
   readonly property bool windowRowsOnScreen: tracker.menu.opened && !tracker.menu.dmenuActive
     && (tracker.menu.activeTab === "windows"
         || (tracker.menu.activeTab === "all" && tracker.menu.inAll("windows")))
@@ -112,7 +127,7 @@ Item {
   Connections {
     target: tracker.menu
     function onOpenedChanged() {
-      if (tracker.menu.opened) tracker.refresh()
+      if (!tracker.menu.opened) tracker.readThisOpen = false
     }
   }
 
@@ -125,7 +140,7 @@ Item {
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (!tracker.menu.opened) return
+      if (!tracker.readThisOpen) return
       const eventName = String((event && event.name) || "")
       if (tracker.refreshEvents.includes(eventName)) refreshTimer.restart()
     }

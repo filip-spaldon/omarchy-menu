@@ -1141,7 +1141,6 @@ Item {
     if (id === "system") Qt.callLater(root.enterSystemPanes)
     root.disarmPointer()
     if (id === "apps") root.loadProviderForMenu("apps")
-    if (id === "windows") windowCtl.refresh()
     if (root.filterText.trim()) root.loadProvidersForSearch()
     root.updateSystemMatches()
     root.rebuildDisplay()
