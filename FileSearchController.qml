@@ -58,6 +58,9 @@ Item {
   }
   // Roots.parseStatus of the last check: { id: { online, indexedAt, ... } }.
   property var rootStatus: ({})
+  // A root going offline or coming back changes the rows ("· offline"), not
+  // the results: count it as a change so memoized rows are rebuilt.
+  onRootStatusChanged: searcher.fileResultsVersion += 1
   // Index rebuilds that failed, by root id: when, so they wait before retrying.
   property var indexFailedAt: ({})
   // The live lane: whether its results are still to come for this search.
@@ -124,6 +127,7 @@ Item {
 
   // zoxide's folder scores, { path: score }, read on every open.
   property var frecency: ({})
+  onFrecencyChanged: searcher.fileResultsVersion += 1
 
   function loadZoxide() {
     if (searcher.menu.zoxideMode === "off") {
@@ -398,6 +402,7 @@ Item {
       var ms = next[searcher.fileResults[i].path]
       if (ms !== undefined) searcher.fileResults[i].mtimeMs = ms
     }
+    searcher.fileResultsVersion += 1
     searcher.menu.rebuildDisplay(true)
   }
 
@@ -418,8 +423,28 @@ Item {
   // the previous results are re-ranked against it instead of vanishing: fd
   // matches the full path, so typing further only ever narrows them, and the
   // list settles in place rather than blinking empty on every keystroke.
+  // Ranking up to 1000 results is the costly part, and every rebuild asked
+  // for it twice (Files and Folders both split one ranking) while a
+  // keystroke rebuilds 3-5 times. The rows only change with the query, the
+  // results (fileResultsVersion, bumped on new results, mtimes and zoxide
+  // scores), the sort, zoxide's mode, the limit, and -- for "Yesterday
+  // 16:27" -- the minute.
+  property int fileResultsVersion: 0
+  onFileResultsChanged: searcher.fileResultsVersion += 1
+  readonly property var rowsMemo: ({ key: "", rows: [] })
+
   function fileRows(spec, limit) {
     if (!spec || spec.scope !== searcher.fileResultsScope) return []
+    var key = [spec.key, searcher.fileResultsScope, searcher.fileResultsVersion, searcher.fileSortMode,
+               searcher.menu.zoxideMode, limit, Math.floor(Date.now() / 60000)].join("\n")
+    if (searcher.rowsMemo.key !== key) {
+      searcher.rowsMemo.rows = searcher.computeFileRows(spec, limit)
+      searcher.rowsMemo.key = key
+    }
+    return searcher.rowsMemo.rows.slice()
+  }
+
+  function computeFileRows(spec, limit) {
     var items = searcher.fileResults
     // "results": the folders zoxide knows join the candidates.
     if (spec.dirs && searcher.menu.zoxideMode === "results" && !spec.filter.systemFolders) {

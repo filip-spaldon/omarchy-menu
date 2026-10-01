@@ -135,6 +135,19 @@ eq(FileSearch.formatMtime(new Date(2025, 0, 2, 9, 5).getTime(), new Date(2026, 8
 eq(FileSearch.nextSortMode("name_desc"), "relevance", "sort modes wrap")
 eq(FileSearch.nextDisplayLimit(200), 15, "display limits wrap")
 
+// ------------------------------------------------------ file rows memo --
+{
+  const fs = require("fs")
+  const files = fs.readFileSync(path.join(root, "FileSearchController.qml"), "utf8")
+  const body = (src, name) => { const i = src.indexOf("function " + name + "("); return i < 0 ? "" : src.slice(i, src.indexOf("\n  function ", i + 1)) }
+  const rows = body(files, "fileRows")
+  eq(/searcher\.rowsMemo\.key !== key/.test(rows), true, "ranked file rows are memoized")
+  eq(/zoxideMode/.test(rows), true, "the file rows memo is keyed on zoxide's mode")
+  eq(/onFileResultsChanged: searcher\.fileResultsVersion \+= 1/.test(files), true, "new results bump the file results version")
+  eq(/onFrecencyChanged: searcher\.fileResultsVersion \+= 1/.test(files), true, "new zoxide scores bump the file results version")
+  eq(/fileResultsVersion \+= 1/.test(body(files, "applyFileMtimes")), true, "new mtimes bump the file results version")
+}
+
 // ----------------------------------------------------- path-aware search --
 {
   const items = {
