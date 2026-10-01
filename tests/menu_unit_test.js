@@ -174,6 +174,22 @@ assert(row.detail.indexOf("\n") === -1, "line breaks are stripped from details")
 eq(MenuModel.displayRow({}, [], {}, { id: "x", kind: "action", label: "X" }, "", 0, "").trailText, "",
    "menu rows declare the trailText role")
 
+// Re-reading every source on every open cost six guarded processes; the
+// reads now wait for a change (FileWatch).
+{
+  const fs = require("fs")
+  const read = file => fs.readFileSync(path.join(root, file), "utf8")
+  const menuSource = read("Menu.qml")
+  const loadSources = menuSource.slice(menuSource.indexOf("function loadMenuSources("), menuSource.indexOf("\n  }\n", menuSource.indexOf("function loadMenuSources(")))
+  eq(/defaultMenuWatch\.stale/.test(loadSources) && /userMenuWatch\.stale/.test(loadSources), true, "menu sources are re-read only when changed")
+  const store = read("SettingsStore.qml")
+  eq(/!styleWatch\.stale/.test(store) && /!stateWatch\.stale/.test(store), true, "style.json and state.json are re-read only when changed")
+  const ai = read("AiController.qml")
+  eq(/!aiConfigWatch\.stale && !aiAgentWatch\.stale/.test(ai), true, "the AI config is re-read only when changed")
+  const watch = read("FileWatch.qml")
+  eq(/preload: false/.test(watch) && /watchChanges: true/.test(watch), true, "FileWatch watches without loading the file")
+}
+
 // ------------------------------------------------------ settings popup --
 
 eq(Settings.parseObject(""), {}, "a missing settings file reads as empty")

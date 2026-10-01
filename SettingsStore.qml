@@ -40,7 +40,8 @@ Item {
   readonly property var styleDefaults: Settings.STYLE_DEFAULTS
 
   function loadStyle() {
-    if (styleReadProc.running) return
+    if (styleReadProc.running || !styleWatch.stale) return
+    styleWatch.beginRead()
     styleReadProc.command = store.menu.readFileCommand(store.stylePath, 8192)
     styleReadProc.running = true
   }
@@ -77,7 +78,8 @@ Item {
   }
 
   function loadState() {
-    if (stateReadProc.running) return
+    if (stateReadProc.running || !stateWatch.stale) return
+    stateWatch.beginRead()
     stateReadProc.command = store.menu.readFileCommand(store.statePath, Settings.STATE_MAX_BYTES)
     stateReadProc.running = true
   }
@@ -161,16 +163,26 @@ Item {
     stateWriteProc.running = true
   }
 
+  // Only re-read on open when changed (FileWatch has the rules).
+  FileWatch { id: styleWatch; path: store.stylePath }
+  FileWatch { id: stateWatch; path: store.statePath }
+
   Process {
     id: styleReadProc
     stdout: StdioCollector { id: styleReadOut; waitForEnd: true }
-    onExited: function(exitCode) { store.applyStyle(styleReadOut.text, exitCode === 0) }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) styleWatch.readFailed(exitCode)
+      store.applyStyle(styleReadOut.text, exitCode === 0)
+    }
   }
 
   Process {
     id: stateReadProc
     stdout: StdioCollector { id: stateReadOut; waitForEnd: true }
-    onExited: store.applyState(stateReadOut.text)
+    onExited: function(exitCode) {
+      if (exitCode !== 0) stateWatch.readFailed(exitCode)
+      store.applyState(stateReadOut.text)
+    }
   }
 
   Process { id: styleWriteProc }

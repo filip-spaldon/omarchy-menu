@@ -84,10 +84,14 @@ Item {
   // streaming pace all live in ai/*.js. Ported from omarchy-find's Find.qml,
   // whose comments explain the process-slot and handoff invariants kept here.
 
-  // Both config sources are re-read on every open, through the same guarded
-  // reader as the menu JSONC, rather than watched.
+  // Both config sources are read through the same guarded reader as the
+  // menu JSONC, on an open after either changed (FileWatch); the pair is
+  // always read together, as the handoff below expects.
   function loadAiConfig() {
     if (aiConfigProc.running || aiAgentProc.running) return
+    if (!aiConfigWatch.stale && !aiAgentWatch.stale) return
+    aiConfigWatch.beginRead()
+    aiAgentWatch.beginRead()
     aiConfigProc.command = ai.menu.readFileCommand(ai.aiConfigPath, 65536)
     aiConfigProc.running = true
   }
@@ -369,10 +373,14 @@ Item {
 
   // ai.json, then the Omarchy default agent; applied once both are in. A
   // missing file reads as empty, which AiConfig treats as "use defaults".
+  FileWatch { id: aiConfigWatch; path: ai.aiConfigPath }
+  FileWatch { id: aiAgentWatch; path: ai.omarchyAgentPath }
+
   Process {
     id: aiConfigProc
     stdout: StdioCollector { id: aiConfigOut; waitForEnd: true }
     onExited: function(exitCode) {
+      if (exitCode !== 0) aiConfigWatch.readFailed(exitCode)
       ai.aiConfigPendingRaw = exitCode === 0 ? String(aiConfigOut.text || "") : null
       aiAgentProc.command = ai.menu.readFileCommand(ai.omarchyAgentPath, 4096)
       aiAgentProc.running = true
@@ -383,6 +391,7 @@ Item {
     id: aiAgentProc
     stdout: StdioCollector { id: aiAgentOut; waitForEnd: true }
     onExited: function(exitCode) {
+      if (exitCode !== 0) aiAgentWatch.readFailed(exitCode)
       ai.applyAiConfig(ai.aiConfigPendingRaw, exitCode === 0 ? String(aiAgentOut.text || "") : "")
     }
   }
