@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/51d2cada-dd4d-4596-9a6c-2e71191caf62
 ## Open and navigate
 
 `Super+Space` opens the compact search prompt. Start typing, click a tab, use
-Tab / Shift+Tab to cycle, or Ctrl+1…5 to select a visible tab by position.
+Tab / Shift+Tab to cycle, or Ctrl+1…6 to select a visible tab by position.
 Switching tabs preserves the query. Arrow keys select a result; Enter activates
 it. Esc clears the query, then closes the menu; Left or Backspace on an empty
 query goes back a level in System.
@@ -30,6 +30,7 @@ query goes back a level in System.
 | **System** | Omarchy actions in two panes: categories on the left, their items on the right |
 | **Files** | File name search under your home directory, with type, sort and result-limit controls |
 | **Folders** | Folder search, including a separate System folders filter for configuration directories |
+| **Windows** | Every open window across workspaces; Enter focuses it, switching workspace or raising the scratchpad as needed |
 
 The System tab keeps the category list visible while you browse its items.
 Use Up/Down to select, Right or Enter to open, and Left to go back. Typing
@@ -38,6 +39,13 @@ selects Update › Omarchy. Ctrl+Up/Down jumps between matches. If no system
 entry matches, the tab shows instant answers such as the calculator.
 
 ![System categories and actions](docs/media/system.png)
+
+Windows lists every open window with its app icon, title, app name and
+workspace, grouped by workspace (special workspaces last) and most recently
+focused first. Typing filters by title, app name, class or workspace. Apps
+marks applications that already have windows, and Enter on one switches to it
+instead of starting a second copy. `omarchy-menu toggle windows` opens the tab
+directly.
 
 `Super+Alt+Space` opens Apps directly. Existing routes such as
 `omarchy menu summon style.theme` open the corresponding System submenu.
@@ -443,10 +451,11 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `AnswerEngine.qml` | Instant answers (calculator, conversions, time, generators, kill, URL, shell, web search) and the data they fetch |
 | `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes over $HOME and the search roots, root status and background indexing, zoxide scores, results and ranking into rows |
 | `AiController.qml` | AI mode: config, agent discovery and switching, generation processes, terminal handoff |
+| `WindowsController.qml` | Windows tab: the Hyprland window list, refreshed while shown, and focusing a window |
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
-| `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `ai/*.js` | Pure logic, tested with Node |
+| `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
+| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.

@@ -7,6 +7,7 @@
 var TABS = [
   { id: "all", label: "All", icon: "󰍉" },
   { id: "apps", label: "Apps", icon: "󰀻" },
+  { id: "windows", label: "Windows", icon: "󰖯" },
   { id: "system", label: "System", icon: "󰒓" },
   { id: "files", label: "Files", icon: "󰈔" },
   { id: "folders", label: "Folders", icon: "󰉋" }
@@ -16,6 +17,7 @@ var TABS = [
 // in state.json ("allSections").
 var ALL_SECTIONS = [
   { id: "apps", title: "Apps" },
+  { id: "windows", title: "Windows" },
   { id: "system", title: "System" },
   { id: "files", title: "Files" },
   { id: "folders", title: "Folders" }
@@ -128,12 +130,13 @@ function cycleTab(id, delta, tabs) {
 
 // A resolved route id to { tab, menu }. The bare summon (SUPER + SPACE) is
 // "root" and opens the launcher on All; "apps" (SUPER + ALT + SPACE) opens the
-// Apps tab. Every other route -- `capture`, `style.theme`, `system` -- is a
+// Apps tab and "windows" the Windows tab. Every other route -- `capture`, `style.theme`, `system` -- is a
 // place in the system menu, so it opens System already drilled into it.
 function tabForRoute(id) {
   var route = String(id || "")
   if (!route || route === "root") return { tab: "all", menu: "root" }
   if (route === "apps") return { tab: "apps", menu: "root" }
+  if (route === "windows") return { tab: "windows", menu: "root" }
   return { tab: "system", menu: route }
 }
 

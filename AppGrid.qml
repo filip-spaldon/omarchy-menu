@@ -25,6 +25,7 @@ GridView {
     required property string label
     required property string appIcon
     required property string kind
+    required property string appId
 
     readonly property bool hasCursor: grid.menu.cursorActive && tile.index === grid.menu.selectedIndex
 
@@ -47,6 +48,14 @@ GridView {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.top: parent.top
       anchors.topMargin: Style.space(10)
+    }
+
+    RunningBadge {
+      count: tile.kind === "app" ? grid.menu.appWindowCount(tile.appId) : 0
+      sizeScale: grid.menu.menuFontScale
+      ring: tile.hasCursor ? grid.menu.selectedBackground : grid.menu.background
+      x: tileIcon.x + tileIcon.width - width * 0.6
+      y: tileIcon.y + tileIcon.height - height * 0.6
     }
 
     Text {

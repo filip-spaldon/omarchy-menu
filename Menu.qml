@@ -278,7 +278,9 @@ Item {
     if (root.commandMode) return root.answerQuery ? "Answers only · Enter use · Ctrl+R new value · Esc clear"
                                                   : "Type a command after / · Esc clear"
     if (root.activeTab === "apps")
-      return "Enter launch · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
+      return "Enter open/switch · Shift+Enter new · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
+    if (root.activeTab === "windows")
+      return "Enter go to window · type to filter by title, app or workspace · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
       return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · "
         + (fileCtl.hasRoots ? "Ctrl+R where · " : "") + "Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
@@ -298,9 +300,10 @@ Item {
       return "Search the system menu…"
     }
     if (root.activeTab === "apps") return "Search applications…"
+    if (root.activeTab === "windows") return "Search open windows…"
     if (root.activeTab === "files") return "Search files…"
     if (root.activeTab === "folders") return "Search folders…"
-    return "Search apps, files, folders and system…"
+    return "Search apps, windows, files, folders and system…"
   }
 
   function scaledFont(px) {
@@ -386,6 +389,7 @@ Item {
     if (!detail) return false
     if (root.filterText || root.dmenuActive) return true
     return kind === "file" || kind === "folder" || root.activeTab === "files" || root.activeTab === "folders"
+      || root.activeTab === "windows"
   }
 
   // Height the card can devote to rows before running off the screen — or
@@ -1538,6 +1542,7 @@ Item {
       var id = order[i].id
       if (!root.inAll(id)) continue
       var sectionRows = id === "apps" ? root.appTabRows(query)
+        : id === "windows" ? windowCtl.windowRows(query)
         : id === "files" ? fileCtl.fileSectionRows(false)
         : id === "folders" ? fileCtl.fileSectionRows(true)
         : root.systemSearchRows(query, "root", false)
@@ -1593,6 +1598,7 @@ Item {
       rows = active === "root" ? [] : root.systemTabRows("", active)
     else if (root.activeTab === "system") rows = root.systemTabRows(query, active)
     else if (root.activeTab === "apps") rows = root.appTabRows(query)
+    else if (root.activeTab === "windows") rows = windowCtl.windowRows(query)
     else if (root.activeTab === "all") rows = root.allTabRows(query)
     else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
 
@@ -1749,7 +1755,9 @@ Item {
     return true
   }
 
-  function activateIndex(index, fromPointer) {
+  // launchNew: Shift+Enter on an application starts another instance even
+  // when it already has a window open.
+  function activateIndex(index, fromPointer, launchNew) {
     if (root.deleteConfirmOpen) return
     if (root.dmenuActive) {
       if (root.mode === "input") {
@@ -1776,10 +1784,19 @@ Item {
     } else if (row.kind === "app") {
       var appId = row.appId
       var label = row.label
+      // A running application is switched to, the way a dock does; Shift
+      // opens another one.
+      var openWindow = launchNew ? "" : windowCtl.latestWindowOf(appId)
+      if (openWindow) {
+        root.focusWindow(openWindow)
+        return
+      }
       applySerial = requestSerial
       opened = false
       filterText = ""
       root.launchApp(appId, label)
+    } else if (row.kind === "window") {
+      root.focusWindow(row.target)
     } else if (row.kind === "example") {
       return // read-only hint
     } else if (row.kind === "shell") {
@@ -1832,6 +1849,23 @@ Item {
     opened = false
     filterText = ""
     root.finishRequest(value)
+  }
+
+  // How many windows an application has open, for the running marker on its
+  // row or tile. Reads windowCtl.windowsByAppId, so bindings on it update as
+  // windows open and close.
+  function appWindowCount(appId) {
+    return windowCtl.windowCountOf(appId)
+  }
+
+  // Closes the menu first: the dispatch switches workspace (or raises the
+  // scratchpad) and hands the window keyboard focus, which the menu's layer
+  // would otherwise keep.
+  function focusWindow(address) {
+    applySerial = requestSerial
+    opened = false
+    filterText = ""
+    windowCtl.focusWindow(address)
   }
 
   // SIGTERM rather than SIGKILL: the point is to close something that has
@@ -1983,6 +2017,11 @@ Item {
 
   FileSearchController {
     id: fileCtl
+    menu: root
+  }
+
+  WindowsController {
+    id: windowCtl
     menu: root
   }
 
@@ -2586,7 +2625,7 @@ Item {
             if (root.dmenuActive) {
               if (root.mode === "input") root.applyDmenuSelection(root.filterText)
               else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
-            } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
+            } else if (root.cursorActive) root.activateIndex(root.selectedIndex, false, (event.modifiers & Qt.ShiftModifier) !== 0)
             else if (displayModel.count > 0 && !root.showingCommandHints) root.cursorActive = true
             event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
