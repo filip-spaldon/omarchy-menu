@@ -415,6 +415,11 @@ the top so the card grows downward. The stock menu itself is
 | `fixedHeight` | `false` | `false` fits the rows; `true` keeps one size while typing and switching tabs |
 | `top` | `0.2` | `"center"`, or the top edge as a share of the screen |
 | `pickerHeight` | `0.7` | Maximum list height of dmenu pickers |
+| `tabSlideMs` | `120` | How long the active-tab highlight slides between tabs (0–1000 ms, 0 jumps) |
+| `tabEasing` | `"OutCubic"` | The slide's Qt easing curve; `tabOvershoot` (`1.70158`) applies to the Back curves |
+| `tabBezier` | — | `[x1, y1, x2, y2]` for a custom cubic-bezier slide, overriding `tabEasing` |
+| `tabPop` | `0` | A small scale pop when the highlight lands (0–1) |
+| `tabSweep` | `true` | The accent text colour sweeps along with the highlight |
 
 Missing or out-of-range values fall back to the defaults above. Some combinations
 to try:

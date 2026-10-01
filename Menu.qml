@@ -235,6 +235,8 @@ Item {
   // stock menu does; true: it always takes launcherBodyFraction, so the card
   // never changes size while typing or switching tabs.
   property bool launcherFixedHeight: false
+  // The tab highlight's slide and pop (Settings.tabAnim has the keys).
+  property var tabAnim: Settings.TAB_ANIM_DEFAULTS
 
   // Row height follows the font: the stock minimums (50 and 58) were sized for
   // full-size text and would otherwise hold the rows tall while the labels
@@ -2638,6 +2640,7 @@ Item {
           foreground: root.foreground
           accent: Color.accent
           fontSize: root.scaledFont(Style.font.body)
+          anim: root.tabAnim
           onTabClicked: function(id) {
             if (aiCtl.isAiMode) aiCtl.setAiAgent(id)
             else root.setTab(id)
@@ -2662,6 +2665,7 @@ Item {
             foreground: root.foreground
             accent: Color.accent
             fontSize: root.scaledFont(Style.font.caption)
+            anim: root.tabAnim
             onTabClicked: function(id) {
               fileCtl.setFileFilter(id)
               Qt.callLater(function() { keyCatcher.forceActiveFocus() })

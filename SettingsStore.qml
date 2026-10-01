@@ -60,6 +60,7 @@ Item {
     store.menu.menuHeightFraction = Settings.styleNumber(style, "pickerHeight")
     store.menu.launcherFixedHeight = typeof style.fixedHeight === "boolean" ? style.fixedHeight : store.styleDefaults.fixedHeight
     store.menu.launcherTopFraction = Settings.styleTop(style)
+    store.menu.tabAnim = Settings.tabAnim(style)
     if (!exists) store.writeStyleDefaults()
   }
 

@@ -17,6 +17,53 @@ var STYLE_RANGES = {
   top: { min: 0, max: 0.9, step: 0.02 }
 }
 
+// The tab highlight's slide (TabBar.qml). Opt-in style.json keys, not written
+// to a new file, so they are there to experiment with but stay out of the way:
+//   tabSlideMs    slide length in ms; 0 jumps
+//   tabEasing     one of TAB_EASINGS (Qt easing curve names)
+//   tabOvershoot  how far the Back curves overshoot (Qt's default 1.70158)
+//   tabPop        brightness/scale pulse as the pill lands; 0 turns it off
+//   tabBezier     [x1, y1, x2, y2], a CSS-style cubic-bezier that replaces
+//                 tabEasing; a y above 1 overshoots. x in 0..1, y in -1..3
+//   tabSweep      true: the accent text colour travels with the pill, lighting
+//                 whatever it covers; false: each label fades on its own
+var TAB_ANIM_DEFAULTS = { tabSlideMs: 120, tabEasing: "OutCubic", tabOvershoot: 1.70158, tabPop: 0, tabBezier: null, tabSweep: true }
+var TAB_ANIM_RANGES = {
+  tabSlideMs: { min: 0, max: 1000 },
+  tabOvershoot: { min: 0, max: 5 },
+  tabPop: { min: 0, max: 1 }
+}
+var TAB_EASINGS = [
+  "Linear", "OutQuad", "OutCubic", "OutQuart", "OutQuint", "OutExpo", "OutCirc", "OutSine",
+  "InOutQuad", "InOutCubic", "InOutQuart", "InOutExpo", "InOutSine", "OutBack", "InOutBack", "OutElastic", "OutBounce"
+]
+
+function validBezier(v) {
+  if (!Array.isArray(v) || v.length !== 4) return false
+  for (var i = 0; i < 4; i++) {
+    var n = Number(v[i])
+    if (typeof v[i] !== "number" || !isFinite(n)) return false
+    if (i % 2 === 0 ? (n < 0 || n > 1) : (n < -1 || n > 3)) return false
+  }
+  return true
+}
+
+// The tab animation settings from a parsed style.json, each key falling back
+// to its default when missing or invalid.
+function tabAnim(style) {
+  var out = {}
+  for (var key in TAB_ANIM_DEFAULTS) {
+    var range = TAB_ANIM_RANGES[key]
+    var v = style ? style[key] : undefined
+    if (key === "tabSweep") out[key] = typeof v === "boolean" ? v : TAB_ANIM_DEFAULTS[key]
+    else if (key === "tabBezier") out[key] = validBezier(v) ? v.map(Number) : null
+    else if (!range) out[key] = TAB_EASINGS.indexOf(v) >= 0 ? v : TAB_ANIM_DEFAULTS[key]
+    else out[key] = v !== undefined && v !== null && isFinite(Number(v)) && Number(v) >= range.min && Number(v) <= range.max
+      ? Number(v) : TAB_ANIM_DEFAULTS[key]
+  }
+  return out
+}
+
 var APPS_VIEWS = ["list", "grid"]
 // state.json "barLeftClick": what the bar button's left click opens; the
 // right click opens the other.
@@ -177,6 +224,9 @@ if (typeof module !== "undefined") {
   module.exports = {
     STYLE_DEFAULTS: STYLE_DEFAULTS,
     STYLE_RANGES: STYLE_RANGES,
+    TAB_ANIM_DEFAULTS: TAB_ANIM_DEFAULTS,
+    TAB_EASINGS: TAB_EASINGS,
+    tabAnim: tabAnim,
     APPS_VIEWS: APPS_VIEWS,
     BAR_CLICKS: BAR_CLICKS,
     CURSOR_STYLES: CURSOR_STYLES,
