@@ -1,6 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -1993,6 +1994,33 @@ Item {
   AnswerEngine {
     id: answerEngine
     menu: root
+  }
+
+  // Shortcuts Hyprland delivers straight into the shell -- bind a key to
+  // hl.dsp.global("omarchy-menu-omni:toggle") -- instead of each press
+  // starting omarchy-menu, jq, omarchy-shell and a `qs ipc` client (~40 ms
+  // on the VM before the shell hears of it). Until the host has handed this
+  // plugin its shell API (on the first summon), a press takes the old way.
+  function toggleFromShortcut(route) {
+    if (root.shell) {
+      root.shell.toggle("omarchy.menu", JSON.stringify({ menu: route }))
+      return
+    }
+    Quickshell.execDetached(["omarchy-menu", "toggle", route])
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle"
+    description: "Open or close the Omarchy menu"
+    onPressed: root.toggleFromShortcut("root")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-apps"
+    description: "Open or close the Omarchy menu on Apps"
+    onPressed: root.toggleFromShortcut("apps")
   }
 
   // What the controllers reach for through `menu`.
