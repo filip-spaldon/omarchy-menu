@@ -124,10 +124,18 @@ Item {
     if (command) Quickshell.execDetached(command)
   }
 
+  // Closed, the list is no longer followed, so it is dropped rather than
+  // kept stale: until the next open has read it again, Enter on an app
+  // launches it (as before the running markers) instead of focusing a window
+  // that may be gone, or launching a second copy of one that opened since.
   Connections {
     target: tracker.menu
     function onOpenedChanged() {
-      if (!tracker.menu.opened) tracker.readThisOpen = false
+      if (tracker.menu.opened) return
+      tracker.readThisOpen = false
+      refreshTimer.stop()
+      tracker.openWindows = []
+      tracker.windowsByAppId = new Map()
     }
   }
 

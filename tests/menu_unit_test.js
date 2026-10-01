@@ -667,6 +667,8 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   const onOpened = (tracker.match(/function onOpenedChanged\(\) \{[\s\S]*?\n    \}/) || [""])[0]
   eq(/refresh\(\)/.test(onOpened), false, "opening the menu does not read the window list")
   eq(/onWindowsNeededChanged[\s\S]*?tracker\.refresh\(\)/.test(tracker), true, "the window list is read once something shows it")
+  eq(/tracker\.openWindows = \[\]/.test(onOpened) && /tracker\.windowsByAppId = new Map\(\)/.test(onOpened), true,
+     "closing the menu drops the window list instead of keeping it stale")
 }
 
 console.log("")
