@@ -56,6 +56,17 @@ Item {
           bar.sweepLabels: false
         }
       },
+      // Wayfinder: stops on a line, the active one a filled capsule.
+      State {
+        when: bar.tabStyle === "station"
+        PropertyChanges {
+          bar.litColor: bar.background
+          bar.highlightColor: bar.accent
+          bar.icons: false
+          bar.chipIdle: bar.background
+          bar.chipHover: Qt.tint(bar.background, Util.alpha(bar.accent, 0.12))
+        }
+      },
     ]
   }
 
@@ -164,6 +175,16 @@ Item {
   implicitWidth: flow.implicitWidth
   implicitHeight: flow.implicitHeight
 
+  // Wayfinder's stations: the line the stops sit on, behind the first row.
+  Rectangle {
+    visible: bar.tabStyle === "station" && repeater.count > 1
+    x: Style.space(10)
+    width: Math.max(0, flow.width - Style.space(20))
+    height: Style.spacing.hairline
+    y: bar.activeChip ? Math.round(bar.activeChip.height / 2) : 0
+    color: Util.alpha(bar.foreground, 0.22)
+  }
+
   // A dot (dot: true) sits under the active tab; a pill covers it.
   readonly property int dotSize: Math.max(3, Math.round(bar.fontSize / 4))
 
@@ -192,6 +213,18 @@ Item {
     required property bool bold
     required property bool lit
     spacing: Style.space(6)
+
+    // Wayfinder's stations: a stop ring in place of the icon.
+    Rectangle {
+      visible: label.owner.tabStyle === "station"
+      width: Math.round(label.owner.fontSize * 0.7)
+      height: width
+      radius: width / 2
+      color: "transparent"
+      border.width: Math.max(1, Math.round(width / 5))
+      border.color: label.lit ? label.owner.litColor : Util.alpha(label.owner.foreground, 0.6)
+      anchors.verticalCenter: parent.verticalCenter
+    }
 
     Text {
       textFormat: Text.PlainText

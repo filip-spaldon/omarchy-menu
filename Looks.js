@@ -11,6 +11,7 @@ var DEFAULT_LOOK = "classic"
 var LOOKS = [
   { name: "classic", label: "Classic" },
   { name: "mala", label: "Mala" },
+  { name: "wayfinder", label: "Wayfinder" },
 ]
 
 function entry(name) {
