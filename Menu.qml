@@ -514,6 +514,11 @@ Item {
         when: root.drawnLook === "axis"
         PropertyChanges { root.lookView: "AxisView.qml" }
       },
+      // Konstrukt: every result also a Suprematist shape (KonstruktView.qml).
+      State {
+        when: root.drawnLook === "konstrukt"
+        PropertyChanges { root.lookView: "KonstruktView.qml" }
+      },
     ]
   }
 

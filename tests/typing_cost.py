@@ -47,6 +47,10 @@ CEILINGS = {
              ("bind:AxisView.qml", 170),          # 146
              ("bind:ResultRow.qml", 3050),        # 2706
              ("created", 640)],                   # 570
+    "konstrukt": [("bind:KonstruktView.qml", 30500),  # 27201-27847 with the shapes gliding, as they do in use
+                  ("bind:Menu.qml", 360),             # 308
+                  ("bind:ResultRow.qml", 3450),       # 3088
+                  ("created", 860)],                  # 780
 }
 # What every look shares: the card's height walks the rows once per rebuild
 # (28; 274 when it read every row through the model).
