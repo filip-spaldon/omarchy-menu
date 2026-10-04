@@ -12,6 +12,7 @@ var LOOKS = [
   { name: "classic", label: "Classic" },
   { name: "mala", label: "Mala" },
   { name: "wayfinder", label: "Wayfinder" },
+  { name: "axis", label: "Axis" },
 ]
 
 function entry(name) {

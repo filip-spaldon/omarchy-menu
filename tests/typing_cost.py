@@ -43,6 +43,10 @@ CEILINGS = {
                   ("bind:TabBar.qml", 680),       # 600
                   ("bind:WayfinderRow.qml", 2900),  # 2586
                   ("created", 560)],              # 498
+    "axis": [("bind:Menu.qml", 360),              # 301 (625 with the hidden card laid out)
+             ("bind:AxisView.qml", 170),          # 146
+             ("bind:ResultRow.qml", 3050),        # 2706
+             ("created", 640)],                   # 570
 }
 # What every look shares: the card's height walks the rows once per rebuild
 # (28; 274 when it read every row through the model).
