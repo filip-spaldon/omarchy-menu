@@ -489,6 +489,11 @@ Item {
           root.headerIndent: Style.space(30) // after the interchange hexagon
         }
       },
+      // Axis: no card, two hairlines across the screen (AxisView.qml).
+      State {
+        when: root.drawnLook === "axis"
+        PropertyChanges { root.lookView: "AxisView.qml" }
+      },
     ]
   }
 

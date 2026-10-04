@@ -911,5 +911,10 @@ eq(Looks.styleLook({ look: "wayfinder" }), "wayfinder", "Wayfinder is a look")
 eq(Looks.lookLabel("wayfinder"), "Wayfinder", "Wayfinder's popup label")
 assert(require("fs").existsSync(path.join(root, "WayfinderRow.qml")), "Wayfinder's rows")
 
+// Looks: Axis
+eq(Looks.styleLook({ look: "axis" }), "axis", "Axis is a look")
+eq(Looks.lookLabel("axis"), "Axis", "Axis's popup label")
+assert(require("fs").existsSync(path.join(root, "AxisView.qml")), "Axis's view")
+
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

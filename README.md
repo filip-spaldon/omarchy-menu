@@ -495,6 +495,7 @@ dmenu pickers always use Classic.
 | `classic` | The card described above: icons, tab chips, counts, keycaps |
 | `mala` | One quiet column of text: no icons, boxes or counters. The query is set larger, tabs are lowercase words with a sliding dot, matches are in full ink against dimmed text, rows are numbered in the margin (Alt+1…9 opens one) and an accent bead marks the selection |
 | `wayfinder` | The results as a transit map: tabs are stations on a line, results hang off a trunk with the route drawn down to the selected stop, rows carry map references (A1, F5…) as keycaps for Alt+n, and section headers are interchange hexagons |
+| `axis` | No card: two hairlines cross the screen. The horizontal one carries what you typed, the vertical one what exists, and the row at the crossing is what Enter does; the list moves through the crossing, which stays put. The launcher position picks which rule-of-thirds point the lines cross at |
 
 The empty All prompt is always compact. Source edits usually reload
 automatically; after adding or renaming a file run `omarchy restart shell`.
