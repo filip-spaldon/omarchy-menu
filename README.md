@@ -496,6 +496,7 @@ dmenu pickers always use Classic.
 | `mala` | One quiet column of text: no icons, boxes or counters. The query is set larger, tabs are lowercase words with a sliding dot, matches are in full ink against dimmed text, rows are numbered in the margin (Alt+1…9 opens one) and an accent bead marks the selection |
 | `wayfinder` | The results as a transit map: tabs are stations on a line, results hang off a trunk with the route drawn down to the selected stop, rows carry map references (A1, F5…) as keycaps for Alt+n, and section headers are interchange hexagons |
 | `axis` | No card: two hairlines cross the screen. The horizontal one carries what you typed, the vertical one what exists, and the row at the crossing is what Enter does; the list moves through the crossing, which stays put. The launcher position picks which rule-of-thirds point the lines cross at |
+| `konstrukt` | Every result appears twice: as a row in the list on the left, and as a flat Suprematist shape in the field on the right. Shape and colour show the kind, size how much of the name the query covers, tilt the age, and place the rank on a sunflower spiral, best in the middle |
 
 The empty All prompt is always compact. Source edits usually reload
 automatically; after adding or renaming a file run `omarchy restart shell`.
@@ -512,7 +513,7 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `KeySheet.js`, `Looks.js`, `ai/*.js` | Pure logic, tested with Node |
+| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `KeySheet.js`, `Looks.js`, `Konstrukt.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.

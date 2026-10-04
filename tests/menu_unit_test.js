@@ -916,5 +916,40 @@ eq(Looks.styleLook({ look: "axis" }), "axis", "Axis is a look")
 eq(Looks.lookLabel("axis"), "Axis", "Axis's popup label")
 assert(require("fs").existsSync(path.join(root, "AxisView.qml")), "Axis's view")
 
+// Looks: Konstrukt
+{
+  const Konstrukt = require(path.join(root, "Konstrukt.js"))
+  eq(Looks.styleLook({ look: "konstrukt" }), "konstrukt", "Konstrukt is a look")
+  eq(Looks.lookLabel("konstrukt"), "Konstrukt", "Konstrukt's popup label")
+  eq(Konstrukt.shapeFor("folder"), "triangle", "folders are triangles")
+  eq(Konstrukt.shapeFor("action"), "cross", "System entries are crosses")
+  const noon = new Date(2026, 8, 27, 12, 0).getTime()
+  eq(Konstrukt.ageDays("Today 12:38", noon), 0, "today is age 0")
+  eq(Konstrukt.ageDays("Yesterday 20:09", noon), 1, "yesterday is a day old")
+  eq(Konstrukt.ageDays("08/09 18:49", noon), 19, "a date this year")
+  eq(Konstrukt.ageDays("08/12/25 18:49", noon), 293, "a date from another year carries it")
+  eq(Konstrukt.ageDays("", noon), 0, "no date is age 0")
+  eq(Math.round(Konstrukt.tiltFor(365)), 45, "a year old tilts 45 degrees")
+  eq(Konstrukt.tiltFor(0), 0, "new stands upright")
+  const p = Konstrukt.spiral(0, 10)
+  eq([p.x, p.y], [0, 0], "the best result sits in the middle")
+  eq(Konstrukt.sameMap({ 1: 10, 3: 40 }, { 3: 40, 1: 10 }), true, "the same row middles")
+  eq(Konstrukt.sameMap({ 1: 10 }, { 1: 11 }), false, "a row moved")
+  eq(Konstrukt.sameMap({ 1: 10 }, { 1: 10, 2: 20 }), false, "a row left the list")
+  eq(Konstrukt.sameMap({ 1: 10, 2: 20 }, { 1: 10 }), false, "a row came onto the list")
+  eq(Konstrukt.sameMap({}, {}), true, "no rows either time")
+
+  // Typing cost: each shape slot holds its own fields, set by rebuild(), so a
+  // keystroke re-runs only the bindings of what changed; none of the 36
+  // slots binds to the shared array, and only the selected shape lays out
+  // its caption.
+  const view = require("fs").readFileSync(path.join(root, "KonstruktView.qml"), "utf8")
+  const pool = view.slice(view.indexOf("id: pool"), view.indexOf("// System's grid of categories."))
+  assert(pool.length > 0 && !/kon\.slots\[/.test(pool.replace(/Component\.onCompleted:.*\n/, "")), "no slot binds to kon.slots")
+  assert(!/kon\.rowY\[/.test(pool.replace(/function place\(\)[\s\S]*?\n      \}/, "")), "connectors read rowY only in place()")
+  assert(/text: slot\.selected \?/.test(pool), "the caption is laid out only on the selected shape")
+  assert(/if \(Konstrukt\.sameMap\(out, kon\.rowY\)\) return/.test(view), "unchanged row middles leave the connectors alone")
+}
+
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

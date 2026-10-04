@@ -13,6 +13,7 @@ var LOOKS = [
   { name: "mala", label: "Mala" },
   { name: "wayfinder", label: "Wayfinder" },
   { name: "axis", label: "Axis" },
+  { name: "konstrukt", label: "Konstrukt" },
 ]
 
 function entry(name) {
