@@ -448,6 +448,31 @@ Item {
   StateGroup {
     id: lookStates
     states: [
+      // Mala: one quiet column of text.
+      State {
+        when: root.drawnLook === "mala"
+        PropertyChanges {
+          root.lookRows: "MalaRow.qml"   // no icons, numbers in the margin
+          root.alwaysNumbered: true      // Alt+1…9 opens one
+          root.selectionTint: false      // the bead instead
+          root.shortFooter: true
+          root.hairlineFrame: true
+          root.matchInk: true            // full ink against dimmed text
+          root.searchGlyph: false
+          root.queryScale: 1.25
+          root.counts: false
+          root.quietMeta: true
+          root.tabStyle: "word"
+          root.tabCase: "lower"
+          root.headerLower: true
+          root.headerOpacity: 0.4
+          root.headerWeight: Font.Normal
+          root.headerSpacing: 2
+          root.headerIndent: root.rowReservedBorderLeft + Style.space(30)
+          root.categoryIcons: false
+          root.categoryDim: 0.55
+        }
+      },
     ]
   }
 
@@ -3493,6 +3518,20 @@ Item {
                   height: Math.max(0, parent.height - Style.space(18))
                   radius: width / 2
                   color: root.selectionEdge
+                }
+
+                // Mala: one quiet column of text, no icons, boxes or counters.
+                // An accent bead in the margin marks the selection.
+                Text {
+                  visible: root.drawnLook === "mala"
+                  textFormat: Text.PlainText
+                  text: "●"
+                  color: Color.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: root.scaledFont(Style.font.bodySmall)
+                  width: Style.space(22)
+                  horizontalAlignment: Text.AlignHCenter
+                  y: selMarker.stop ? Math.round(selMarker.stop.labelCenterY - height / 2) : 0
                 }
               }
 

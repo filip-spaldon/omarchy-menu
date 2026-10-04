@@ -33,6 +33,18 @@ BorderSurface {
     color: category.menu.selectionEdge
   }
 
+  // Mala's bead on the browsed category.
+  Text {
+    visible: category.menu.drawnLook === "mala" && category.focusedHere
+    textFormat: Text.PlainText
+    text: "●"
+    color: Color.accent
+    font.family: category.menu.fontFamily
+    font.pixelSize: category.menu.scaledFont(Style.font.bodySmall)
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+  }
+
   Text {
     id: categoryIcon
     textFormat: Text.PlainText

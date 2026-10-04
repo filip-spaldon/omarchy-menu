@@ -901,5 +901,10 @@ eq(new Set(Looks.LOOKS.map(l => l.name)).size, Looks.LOOKS.length, "look names a
   eq(/id: cardContent\n(?:.*\n){0,3}\s*visible:/.test(menuSource), false, "the card's content stays visible (its tabs and footer size the card)")
 }
 
+// Looks: Mala
+eq(Looks.styleLook({ look: "mala" }), "mala", "Mala is a look")
+eq(Looks.lookLabel("mala"), "Mala", "Mala's popup label")
+assert(require("fs").existsSync(path.join(root, "MalaRow.qml")), "Mala's rows")
+
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

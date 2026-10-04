@@ -10,6 +10,7 @@ var DEFAULT_LOOK = "classic"
 // In the order Alt+L goes through them.
 var LOOKS = [
   { name: "classic", label: "Classic" },
+  { name: "mala", label: "Mala" },
 ]
 
 function entry(name) {

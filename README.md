@@ -493,6 +493,7 @@ dmenu pickers always use Classic.
 | Look | What it is |
 | --- | --- |
 | `classic` | The card described above: icons, tab chips, counts, keycaps |
+| `mala` | One quiet column of text: no icons, boxes or counters. The query is set larger, tabs are lowercase words with a sliding dot, matches are in full ink against dimmed text, rows are numbered in the margin (Alt+1…9 opens one) and an accent bead marks the selection |
 
 The empty All prompt is always compact. Source edits usually reload
 automatically; after adding or renaming a file run `omarchy restart shell`.

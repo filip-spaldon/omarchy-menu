@@ -41,8 +41,24 @@ Item {
   StateGroup {
     id: styleStates
     states: [
+      // Mala: bare words with a sliding dot.
+      State {
+        when: bar.tabStyle === "word"
+        PropertyChanges {
+          bar.litColor: bar.foreground
+          bar.dot: true
+          bar.highlightColor: Util.alpha(bar.foreground, 0.85)
+          bar.icons: false
+          bar.labelDim: 0.5
+          bar.pad: Style.space(12)
+          bar.chipIdle: "transparent"
+          bar.chipHover: "transparent"
+          bar.sweepLabels: false
+        }
+      },
     ]
   }
+
 
   function caseLabel(text) {
     return bar.tabCase === "lower" ? String(text).toLowerCase()
