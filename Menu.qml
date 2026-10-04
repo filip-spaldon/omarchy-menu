@@ -7,6 +7,7 @@ import qs.Commons
 import qs.Ui
 import "Settings.js" as Settings
 import "MenuModel.js" as MenuModel
+import "KeySheet.js" as KeySheet
 import "Tabs.js" as Tabs
 import "FileSearch.js" as FileSearch
 import "ai/AiBackend.js" as AiBackend
@@ -105,7 +106,7 @@ Item {
   property bool zoxideAdd: true
   // All with nothing typed is just the search field and the tab chips: the
   // card is a prompt, and picking a tab or typing is what opens it up.
-  readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim()
+  readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim() && !root.cheatOpen
 
   // System as two panes, like a settings app: the top-level categories on the
   // left, the highlighted category's items on the right, updating as the
@@ -189,6 +190,8 @@ Item {
   property bool deleteConfirmOpen: false
   property var deleteTarget: null
   onOpenedChanged: {
+    root.altHeld = false
+    root.cheatOpen = false
     if (opened) return
     if (root.launcherPositionMoved) {
       root.launcherPositionMoved = false
@@ -223,6 +226,22 @@ Item {
   property color selectedText: Color.menu.selectedText
   property color selectedBorder: Color.menu.selectedBorder
   property var selectedBorderSpec: Border.surfaceSpec("menu", "selected-border", selectedBorder, 0)
+  // The selection mark (result rows, System categories): a theme's own
+  // [menu] selected-* colours when it sets them, else an accent tint and edge.
+  // Every theme's shell.toml carries these keys from Omarchy's template, so
+  // "sets" means differs from the template's value (foreground at 0.08,
+  // accent, the active border at 0.25).
+  function themeSets(key, templateValue, templateAlpha) {
+    var v = Color.shellValues["menu." + key]
+    if (typeof v !== "string" || v.length === 0) return false
+    var a = Color.shellValues["menu." + key + "-alpha"]
+    var sameAlpha = a === undefined || Number(a) === templateAlpha
+    var sameValue = typeof templateValue === "string" ? v === templateValue : Qt.colorEqual(v, templateValue)
+    return !(sameValue && sameAlpha)
+  }
+  readonly property color selectionFill: root.themeSets("selected-background", Color.foreground, 0.08) ? root.selectedBackground : Util.alpha(Color.accent, 0.13)
+  readonly property color selectionEdge: root.themeSets("selected-border", "hyprland.active-border-foreground", 0.25) ? root.selectedBorder : Color.accent
+  readonly property color selectionText: root.themeSets("selected-text", Color.accent, undefined) ? root.selectedText : root.foreground
   // --- Look ------------------------------------------------------------------
   // The dials this fork adds on top of the stock geometry. Everything below
   // derives from them, so a redesign is an edit here rather than a hunt
@@ -347,6 +366,85 @@ Item {
 
   readonly property int sectionHeaderHeight: root.scaledFont(Style.font.caption) + Style.space(14)
 
+  // A row's label with the query's match in the accent colour, or "" when
+  // nothing matches. Everything else in the label is escaped
+  // (MenuModel.highlight). Worked out once per row as the row goes into
+  // displayModel (its "marked" role), not by a binding in ResultRow: such a
+  // binding follows filterText, so on every keystroke the rows about to be
+  // cleared worked out and laid out their labels again before the new rows
+  // did the same -- the match paid for twice. And a delegate that imports a
+  // .js file evaluates the whole file again for every row.
+  readonly property string matchOpen: "<font color=\"" + Color.accent + "\">"
+  function markRow(row) {
+    row.marked = !root.filterText || row.kind === "example" ? ""
+      : MenuModel.highlight(row.label, root.filterText, root.matchOpen, "</font>")
+    return row
+  }
+
+  // Alt is down (the rows are numbered while it is), the "?" key sheet is
+  // open, and the All tab's per-section totals before the cap (tab counts).
+  property bool altHeld: false
+  property bool cheatOpen: false
+  property var allSectionTotals: ({})
+
+  // The result row that has the cursor, for the selection marker; cleared
+  // when that row goes away.
+  property Item cursorRow: null
+
+  // The first row on screen, so the Alt numbers follow the scroll. Only
+  // looked up while Alt is held: nothing else reads it.
+  property int firstVisibleRow: 0
+  onAltHeldChanged: if (altHeld) updateFirstVisibleRow()
+  function updateFirstVisibleRow() {
+    if (!root.altHeld) return
+    var y = resultList.contentY
+    var found = -1
+    // A section header can sit at the top edge; step past it.
+    for (var dy = 1; dy < root.sectionHeaderHeight + root.baseRowHeight && found < 0; dy += 4)
+      found = resultList.indexAt(Style.space(40), y + dy)
+    root.firstVisibleRow = Math.max(0, found)
+  }
+
+  // Alt+1…9 opens the row shown with that number.
+  function jumpToNumber(event) {
+    if (!root.tabsActive || !(event.modifiers & Qt.AltModifier)) return false
+    if (event.key < Qt.Key_1 || event.key > Qt.Key_9 || root.gridActive || aiCtl.isAiMode) return false
+    var index = KeySheet.rowForNumber(root.firstVisibleRow, displayModel.count, event.key - Qt.Key_0)
+    if (index < 0) return true
+    root.cursorActive = true
+    root.selectedIndex = index
+    root.activateIndex(index, false)
+    return true
+  }
+
+  // The footer: [key, what it does] pairs, drawn as keycaps. Alt held shows
+  // what Alt does instead. Empty: fall back to the text footer.
+  function footerKeys() {
+    // Where the card went (Alt+arrows) shows as text for a moment instead.
+    if (settingsStore.error || root.positionHint || answerEngine.killActive || root.commandMode) return []
+    if (root.altHeld) return [["alt 1–9", "open that row"], ["alt ←→↑↓", "move the card"], ["alt 0", "reset"]]
+    if (root.activeTab === "apps") return [["↵", "open"], ["shift ↵", "new window"], ["^G", root.appsView === "grid" ? "list" : "grid"], ["?", "all keys"]]
+    if (root.activeTab === "windows") return [["↵", "go to"], ["⇥", "next tab"], ["?", "all keys"]]
+    if (root.activeTab === "files" || root.activeTab === "folders") return [["↵", "open"], ["^F", "type"], ["^S", "sort"], ["^L", "limit"], ["?", "all keys"]]
+    if (root.activeTab === "system" && root.systemTwoPane) return [["↑↓", "browse"], ["→", "open"], ["←", "back"], ["?", "all keys"]]
+    return [["↑↓", "move"], ["↵", "open"], ["⇥", "next tab"], ["ai", "ask"], ["?", "all keys"]]
+  }
+
+  // Tab chip counts: what All's sections found, shown while All searches.
+  readonly property var foundCounts: {
+    if (root.activeTab !== "all" || !root.filterText.trim() || aiCtl.isAiMode) return ({})
+    // Only tabs that found something: "0" and All's own total add width
+    // without telling you where to go.
+    var out = ({})
+    for (var id in root.allSectionTotals) if (root.allSectionTotals[id] > 0) out[id] = root.allSectionTotals[id]
+    return out
+  }
+  // What the chips show: replaced only when a count changed. A new object
+  // on every keystroke and rebuild re-ran each chip's count, its width and
+  // the bar's fit check, though the counts were mostly the same.
+  property var tabCounts: ({})
+  onFoundCountsChanged: if (!Tabs.sameCounts(root.foundCounts, root.tabCounts)) root.tabCounts = root.foundCounts
+
   // The key hints under the results, for what the current tab can do.
   function footerHints() {
     if (answerEngine.killActive)
@@ -389,6 +487,8 @@ Item {
   readonly property real rowReservedBorderLeft: Border.left(selectedBorderSpec)
   readonly property real rowReservedBorderRight: Border.right(selectedBorderSpec)
   readonly property int cornerRadius: Style.cornerRadius
+  // Rows and the selection use about two thirds of the card's radius.
+  readonly property int rowRadius: Math.round(root.cornerRadius * 0.65)
   property int contentMargin: Style.spacing.panelPadding
   property int headerHeight: Math.max(Math.round(Style.space(34) * root.menuFontScale), root.scaledFont(Style.font.title) + Style.spacing.controlPaddingY * 2)
   property int contentSpacing: Style.spacing.md
@@ -406,7 +506,7 @@ Item {
   // A fitted body still takes the full height for the grid and AI answers,
   // whose size is not a row count.
   readonly property int desiredRowsHeight: root.compact ? 0
-    : (root.launcherFixedHeight || root.gridActive || aiCtl.isAiMode || root.systemTwoPane
+    : (root.launcherFixedHeight || root.cheatOpen || root.gridActive || aiCtl.isAiMode || root.systemTwoPane
         ? root.launcherBodyHeight
         : Math.min(root.launcherBodyHeight, Math.max(root.baseRowHeight * 3,
             rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider))))
@@ -533,15 +633,24 @@ Item {
     return totals[full - 1] + root.rowSpacing + peek
   }
 
+  // The rows on show, as syncDisplayModel last put them in displayModel. Read
+  // by rowListHeight instead of the model: reading a row through
+  // displayModel.get() makes the card's height depend on that row, so every
+  // row set in place re-ran this walk over all rows, a dozen times a
+  // keystroke. Its arguments say when to measure again: layoutSerial moves
+  // after every rebuild.
+  readonly property var shownRows: ({ rows: [] })
+
   function rowListHeight(_serial, _count, _filter, _divider) {
-    if (displayModel.count === 0) return root.baseRowHeight
+    var rows = root.shownRows.rows
+    if (rows.length === 0) return root.baseRowHeight
 
     var totals = []
     var total = 0
     var previousSection = ""
 
-    for (var i = 0; i < displayModel.count; i++) {
-      var row = displayModel.get(i)
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i]
       if (i > 0) total += root.rowSpacing
       if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
       total += root.rowHeightForDetail(row.detail, row.kind)
@@ -1494,7 +1603,7 @@ Item {
       var detail = parts.join("\t")
       if (query && label.toLowerCase().indexOf(query) < 0
           && detail.toLowerCase().indexOf(query) < 0) continue
-      rows.push(MenuModel.sanitizeRow({
+      rows.push(root.markRow(MenuModel.sanitizeRow({
         itemId: "dmenu." + i,
         disabled: false,
         kind: "dmenu",
@@ -1512,7 +1621,7 @@ Item {
         score: i,
         section: "",
         trailText: ""
-      }))
+      })))
     }
     root.syncDisplayModel(rows)
 
@@ -1652,6 +1761,7 @@ Item {
     if (!query) return []
 
     var sections = []
+    var totals = ({})
     var order = Tabs.orderSections(root.allSectionOrder)
     for (var i = 0; i < order.length; i++) {
       var id = order[i].id
@@ -1662,7 +1772,9 @@ Item {
         : id === "folders" ? fileCtl.fileSectionRows(true)
         : root.systemSearchRows(query, "root", false)
       sections.push({ title: order[i].title, rows: sectionRows })
+      totals[id] = sectionRows.length
     }
+    if (!Tabs.sameCounts(totals, root.allSectionTotals)) root.allSectionTotals = totals
     var rows = root.plainAnswerRows(query).concat(Tabs.composeSections(sections, root.allSectionLimit))
 
     if (rows.length === 0) {
@@ -1678,6 +1790,7 @@ Item {
   // row's value.
   property var displayRoles: ({})
   function syncDisplayModel(rows) {
+    root.shownRows.rows = rows
     MenuModel.syncRows(displayModel, rows, root.displayRoles)
   }
 
@@ -1700,6 +1813,7 @@ Item {
       previousId = displayModel.get(root.selectedIndex).itemId
 
     if (!root.rowsLoaded) {
+      root.shownRows.rows = []
       displayModel.clear()
       return
     }
@@ -1737,7 +1851,7 @@ Item {
 
     // Sanitized here rather than in each builder: this is the one place
     // every row passes through on its way to the ListView.
-    for (var k = 0; k < rows.length; k++) MenuModel.sanitizeRow(rows[k])
+    for (var k = 0; k < rows.length; k++) rows[k] = root.markRow(MenuModel.sanitizeRow(rows[k]))
     root.syncDisplayModel(rows)
     layoutSerial += 1
 
@@ -2624,13 +2738,38 @@ Item {
         focus: true
 
         Keys.priority: Keys.BeforeItem
+        Keys.onReleased: function(event) {
+          if (event.key === Qt.Key_Alt || event.key === Qt.Key_AltGr) root.altHeld = false
+        }
+
         Keys.onPressed: function(event) {
+          if (event.key === Qt.Key_Alt || event.key === Qt.Key_AltGr) {
+            root.altHeld = root.tabsActive
+            return
+          }
           if (root.deleteConfirmOpen) {
             if (deleteConfirm.handleKey(event)) event.accepted = true
             return
           }
 
+          // "?" on an empty query shows every key; any key closes it again.
+          if (root.cheatOpen) {
+            root.cheatOpen = false
+            event.accepted = true
+            return
+          }
+          if (event.text === "?" && !root.filterText && root.tabsActive && !aiCtl.isAiMode) {
+            root.cheatOpen = true
+            event.accepted = true
+            return
+          }
+
           if (root.moveLauncher(event)) {
+            event.accepted = true
+            return
+          }
+
+          if (root.jumpToNumber(event)) {
             event.accepted = true
             return
           }
@@ -2943,6 +3082,7 @@ Item {
             accent: Color.accent
             fontSize: root.scaledFont(Style.font.body)
             anim: root.tabAnim
+            counts: root.tabCounts
             onTabClicked: function(id) {
               if (aiCtl.isAiMode) aiCtl.setAiAgent(id)
               else root.setTab(id)
@@ -3014,6 +3154,78 @@ Item {
             width: parent.width
             height: root.visibleRowsHeight
             visible: height > 0
+
+            // "?" with nothing typed: every key, in groups. Loaded only while
+            // open, so the results area resizing never lays it out.
+            Loader {
+              active: root.cheatOpen
+              z: 30
+              anchors.fill: parent
+              sourceComponent: Rectangle {
+                color: Qt.rgba(root.background.r, root.background.g, root.background.b, 1)
+                radius: root.rowRadius
+
+                Flow {
+                  anchors.fill: parent
+                  anchors.margins: Style.space(12)
+                  spacing: Style.space(18)
+
+                  Repeater {
+                    model: KeySheet.CHEATSHEET
+                    Column {
+                      required property var modelData
+                      width: (parent.width - Style.space(18)) / 2
+                      spacing: Style.space(6)
+
+                      Text {
+                        textFormat: Text.PlainText
+                        text: modelData.title.toUpperCase()
+                        color: root.foreground
+                        opacity: 0.5
+                        font.family: root.fontFamily
+                        font.pixelSize: root.scaledFont(Style.font.caption)
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: 1
+                      }
+
+                      Repeater {
+                        model: modelData.keys
+                        Row {
+                          required property var modelData
+                          spacing: Style.space(8)
+                          Rectangle {
+                            width: Math.max(sheetKey.implicitWidth + Style.space(8), Style.space(30))
+                            height: sheetKey.implicitHeight + Style.space(3)
+                            radius: Style.space(3)
+                            color: "transparent"
+                            border.width: 1
+                            border.color: Util.alpha(root.foreground, 0.35)
+                            Text {
+                              id: sheetKey
+                              anchors.centerIn: parent
+                              textFormat: Text.PlainText
+                              text: modelData[0]
+                              color: root.foreground
+                              font.family: root.fontFamily
+                              font.pixelSize: root.scaledFont(Style.font.caption)
+                            }
+                          }
+                          Text {
+                            textFormat: Text.PlainText
+                            text: modelData[1]
+                            color: root.foreground
+                            opacity: 0.75
+                            font.family: root.fontFamily
+                            font.pixelSize: root.scaledFont(Style.font.bodySmall)
+                            anchors.verticalCenter: parent.verticalCenter
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
 
             AiPanel {
               id: aiPanel
@@ -3117,6 +3329,54 @@ Item {
               spacing: root.rowSpacing
               boundsBehavior: Flickable.StopAtBounds
 
+              onContentYChanged: if (root.altHeld) Qt.callLater(root.updateFirstVisibleRow)
+              onCountChanged: if (root.altHeld) Qt.callLater(root.updateFirstVisibleRow)
+
+              // The selection: a tint with an accent edge that glides between rows.
+              // Rows themselves stay unfilled. In the rows' own coordinates: a
+              // ListView's children stay in the viewport, so without `parent`
+              // the mark sat contentY off its row once the list scrolled.
+              Item {
+                id: selMarker
+                parent: resultList.contentItem
+                // The row with the cursor reports itself (ResultRow.hasCursor),
+                // also when the list has only just made it.
+                readonly property Item stop: root.cursorRow
+                property bool glide: false
+                visible: stop !== null && stop.hasCursor === true
+                z: -1
+                x: 0
+                width: resultList.width
+                y: stop ? stop.y : 0
+                height: stop ? stop.height : 0
+                Behavior on y { enabled: selMarker.glide; NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+                Behavior on height { enabled: selMarker.glide; NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+
+                Connections {
+                  target: root
+                  function onSelectedIndexChanged() {
+                    selMarker.glide = selMarker.visible
+                    markerGlideEnd.restart()
+                  }
+                }
+                Timer { id: markerGlideEnd; interval: 180; onTriggered: selMarker.glide = false }
+
+                Rectangle {
+                  anchors.fill: parent
+                  radius: root.rowRadius
+                  color: root.selectionFill
+                }
+
+                Rectangle {
+                  x: 0
+                  width: Math.max(3, Style.space(3))
+                  y: Style.space(9)
+                  height: Math.max(0, parent.height - Style.space(18))
+                  radius: width / 2
+                  color: root.selectionEdge
+                }
+              }
+
               section.property: "section"
               section.criteria: ViewSection.FullString
               section.delegate: Item {
@@ -3128,9 +3388,12 @@ Item {
                 visible: section === "drilldown" || isHeader
 
                 Text {
+                  id: headerTitle
                   visible: parent.isHeader
                   textFormat: Text.PlainText
-                  text: Tabs.headerTitle(parent.section).toUpperCase()
+                  readonly property string title: Tabs.headerTitle(parent.section)
+                  readonly property int total: Tabs.headerTotal(parent.section)
+                  text: title.toUpperCase() + (total > 0 ? "  " + total : "")
                   color: root.foreground
                   opacity: 0.45
                   font.family: root.fontFamily
@@ -3141,6 +3404,34 @@ Item {
                   anchors.leftMargin: root.rowReservedBorderLeft + Style.space(10)
                   anchors.bottom: parent.bottom
                   anchors.bottomMargin: Style.space(4)
+                }
+
+
+                // "+4 in Files ⇥": what the five-row cap left out, and the way there.
+                Text {
+                  id: headerMore
+                  readonly property int hidden: headerTitle.total - Math.min(headerTitle.total, root.allSectionLimit)
+                  visible: parent.isHeader && hidden > 0 && root.activeTab === "all"
+                  textFormat: Text.PlainText
+                  text: "+" + hidden + " in " + headerTitle.title + "  ⇥"
+                  color: root.foreground
+                  opacity: 0.45
+                  font.family: root.fontFamily
+                  font.pixelSize: root.scaledFont(Style.font.caption)
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: headerTitle.verticalCenter
+                }
+
+                Rectangle {
+                  visible: parent.isHeader
+                  anchors.left: headerTitle.right
+                  anchors.leftMargin: Style.space(10)
+                  anchors.right: headerMore.visible ? headerMore.left : parent.right
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: headerTitle.verticalCenter
+                  height: Style.spacing.hairline
+                  color: Util.alpha(root.foreground, 0.15)
                 }
 
                 Rectangle {
@@ -3225,18 +3516,82 @@ Item {
             }
           }
 
-          Text {
+          Item {
             id: footer
+            // Compared as text: footerKeys() makes a new list each time the
+            // query changes, and a new list would rebuild every keycap.
+            readonly property string keysText: JSON.stringify(root.footerKeys())
+            readonly property var keys: JSON.parse(keysText)
             visible: !root.dmenuActive && (settingsStore.error !== "" || (root.tabsActive && !root.compact && !aiCtl.isAiMode))
             width: parent.width
-            textFormat: Text.PlainText
-            text: settingsStore.error || root.positionHint || root.footerHints()
-            color: root.foreground
-            opacity: 0.4
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            font.family: root.fontFamily
-            font.pixelSize: root.scaledFont(Style.font.caption)
+            implicitHeight: footerKeyRow.visible ? footerKeyRow.implicitHeight + Style.space(8) : footerText.implicitHeight
+
+            // A hairline, then keycaps.
+            Rectangle {
+              visible: footerKeyRow.visible
+              width: parent.width
+              height: Style.spacing.hairline
+              color: Util.alpha(root.foreground, 0.12)
+            }
+
+            Row {
+              id: footerKeyRow
+              visible: footer.keys.length > 0
+              anchors.horizontalCenter: parent.horizontalCenter
+              anchors.bottom: parent.bottom
+              spacing: Style.space(14)
+
+              Repeater {
+                model: footer.keys
+                Row {
+                  required property var modelData
+                  spacing: Style.space(5)
+                  Rectangle {
+                    width: footKey.implicitWidth + Style.space(8)
+                    height: footKey.implicitHeight + Style.space(2)
+                    radius: Style.space(3)
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Util.alpha(root.foreground, 0.32)
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text {
+                      id: footKey
+                      anchors.centerIn: parent
+                      textFormat: Text.PlainText
+                      text: modelData[0]
+                      color: root.foreground
+                      opacity: 0.8
+                      font.family: root.fontFamily
+                      font.pixelSize: root.scaledFont(Style.font.caption)
+                    }
+                  }
+                  Text {
+                    textFormat: Text.PlainText
+                    text: modelData[1]
+                    color: root.foreground
+                    opacity: 0.62
+                    font.family: root.fontFamily
+                    font.pixelSize: root.scaledFont(Style.font.caption)
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+              }
+            }
+
+            // Errors, and what keycaps would not say: kill rows, commands.
+            Text {
+              id: footerText
+              visible: !footerKeyRow.visible
+              width: parent.width
+              textFormat: Text.PlainText
+              text: settingsStore.error || root.positionHint || root.footerHints()
+              color: root.foreground
+              opacity: 0.62
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.Wrap
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.caption)
+            }
           }
         }
       }

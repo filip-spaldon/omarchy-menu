@@ -36,6 +36,14 @@ reach a row or the query. The card stays where you left it: the position is
 saved to `style.json` when the menu closes. dmenu pickers stay centred. The slide is `"moveMs"` (140) and `"moveEasing"` (`"InOutQuad"`;
 `"OutBack"` overshoots a little for a livelier move) in `style.json`.
 
+The selected row lists what it can do, with its keys (on a file: Enter open,
+Alt+Enter folder, Ctrl+C path), and the part of each label that matches the
+query is in the accent colour. Hold Alt to number the rows on screen;
+Alt+1…9 opens that row. While All searches, each section header says how many
+results it had and what the five-row cap left out ("+4 in Files ⇥"), and the
+tabs show what they found. The footer shows the current tab's keys, and `?` on
+an empty query lists every key (so a search can't start with "?").
+
 | Tab | Contents |
 | --- | --- |
 | **All** | Answers followed by Apps, System, Files and Folders sections, up to five results per section |
@@ -488,7 +496,7 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `ai/*.js` | Pure logic, tested with Node |
+| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `KeySheet.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.

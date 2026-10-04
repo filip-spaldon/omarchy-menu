@@ -14,6 +14,7 @@ const MenuModel = require(path.join(root, "MenuModel.js"))
 const Settings = require(path.join(root, "Settings.js"))
 const Roots = require(path.join(root, "Roots.js"))
 const Windows = require(path.join(root, "Windows.js"))
+const KeySheet = require(path.join(root, "KeySheet.js"))
 
 let pass = 0
 let fail = 0
@@ -78,6 +79,25 @@ const sections = Tabs.composeSections([
 eq(sections.map(r => r.itemId), ["a1", "a2", "s1"], "sections are capped and empty ones vanish")
 eq(sections.map(r => Tabs.headerTitle(r.section)), ["Apps", "Apps", "System"], "every row carries its header")
 assert(sections.every(r => Tabs.isHeaderSection(r.section)), "headers never collide with the drilldown divider")
+eq(Tabs.headerTotal(sections[0].section), 3, "the header carries the section's total before the cap")
+eq(Tabs.headerTotal(sections[0].section), Tabs.headerTotal(sections[1].section), "a section's rows share its header")
+eq(Tabs.headerTitle("hdr:Files|12"), "Files", "the count is not part of the title")
+eq(Tabs.headerTotal("hdr:Files|12"), 12, "the header carries the section's total")
+eq(Tabs.sameCounts({ apps: 1, files: 34 }, { files: 34, apps: 1 }), true, "the same tab counts in any order")
+eq(Tabs.sameCounts({ apps: 1 }, { apps: 2 }), false, "a count changed")
+eq(Tabs.sameCounts({ apps: 1 }, { apps: 1, files: 3 }), false, "a tab lost its count")
+eq(Tabs.sameCounts({}, null), true, "no counts either way")
+{
+  // Typing cost: the chips' counts are replaced only when one changed (a new
+  // object re-ran every chip's count, width and the bar's fit check).
+  const menuSource = require("fs").readFileSync(path.join(root, "Menu.qml"), "utf8")
+  eq(/onFoundCountsChanged: if \(!Tabs\.sameCounts\(root\.foundCounts, root\.tabCounts\)\) root\.tabCounts = root\.foundCounts/.test(menuSource), true,
+     "tab counts change only with a count")
+  eq(/if \(!Tabs\.sameCounts\(totals, root\.allSectionTotals\)\) root\.allSectionTotals = totals/.test(menuSource), true,
+     "All's section totals change only with a total")
+}
+eq(Tabs.headerTitle("hdr:A|B"), "A|B", "a bar in a title without a count stays")
+eq(Tabs.headerTotal("drilldown"), 0, "the drilldown divider has no total")
 const original = { itemId: "x", section: "" }
 Tabs.composeSections([{ title: "T", rows: [original] }], 5)
 eq(original.section, "", "composeSections does not stamp the caller's row objects")
@@ -188,7 +208,12 @@ eq(FileSearch.nextDisplayLimit(200), 15, "display limits wrap")
       setProperty(i, role, value) { this.log.push("setProperty " + i); this.items[i][role] = value },
       insert(i, row) { this.log.push("insert " + i); this.items.splice(i, 0, Object.assign({}, row)) },
       remove(i, n) { this.log.push("remove " + i + " " + (n || 1)); this.items.splice(i, n || 1) },
-      append(row) { this.log.push("append"); this.items.push(Object.assign({}, row)) },
+      // Like ListModel.append, one row or an array of rows in one insertion.
+      append(row) {
+        const list = Array.isArray(row) ? row : [row]
+        this.log.push("append " + list.length)
+        list.forEach(x => this.items.push(Object.assign({}, x)))
+      },
       clear() { this.log.push("clear"); this.items = [] }
     }
     return m
@@ -200,12 +225,12 @@ eq(FileSearch.nextDisplayLimit(200), 15, "display limits wrap")
   const roles = {}
   MenuModel.syncRows(model, [r("a"), r("b")], roles)
   eq(ids(model), ["a", "b"], "sync fills an empty model")
-  eq(model.log, ["append", "append"], "an empty model is filled by appending")
+  eq(model.log, ["append 2"], "an empty model is filled in one insertion")
 
   model.log = []
   MenuModel.syncRows(model, [r("a"), r("b"), r("c"), r("d")], roles)
   eq(ids(model), ["a", "b", "c", "d"], "sync grows the list")
-  eq(model.log, ["append", "append"], "unchanged rows are left alone when the list grows")
+  eq(model.log, ["append 2"], "unchanged rows are left alone and new ones go in as one insertion")
 
   model.log = []
   MenuModel.syncRows(model, [r("a"), r("b")], roles)
@@ -236,6 +261,17 @@ eq(FileSearch.nextDisplayLimit(200), 15, "display limits wrap")
 
   MenuModel.syncRows(model, [], roles)
   eq(model.count, 0, "an empty result empties the list")
+
+  // Typing cost: the card's height walks the rows it is given, not the
+  // model (a model read makes the height depend on every row set in place).
+  const fs = require("fs")
+  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  const body = (src, name) => { const i = src.indexOf("function " + name + "("); return i < 0 ? "" : src.slice(i, src.indexOf("\n  function ", i + 1)) }
+  const sync = body(menuSource, "syncDisplayModel")
+  const height = body(menuSource, "rowListHeight")
+  eq(/root\.shownRows\.rows = rows/.test(sync), true, "syncDisplayModel keeps the rows on show for the card's height")
+  eq(/displayModel\.get\(/.test(height), false, "the card's height does not read the model row by row")
+  eq(/root\.shownRows\.rows/.test(height), true, "the card's height reads the rows on show")
 }
 
 // --------------------------------------------------------- untrusted text --
@@ -796,5 +832,40 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
 }
 
 console.log("")
+// Query match in the label, Alt+1…9, the "?" sheet
+eq(MenuModel.matchSpans("omarchy-wordmark.svg", "omarch"), [[0, 6]], "a prefix match")
+eq(MenuModel.matchSpans("Docker DB", "db dock"), [[0, 4], [7, 9]], "each word, in order")
+eq(MenuModel.matchSpans("Omarchy", "x"), [], "no match")
+eq(MenuModel.matchSpans("a b", "a b"), [], "one-letter words are dropped from multi-word queries")
+eq(MenuModel.matchSpans("Firefox", "fire fox"), [[0, 7]], "touching spans merge")
+eq(MenuModel.highlight("a<b>c", "b", "[", "]"), "a&lt;[b]&gt;c", "highlight escapes around the match")
+eq(MenuModel.highlight("<img src=x>", "img", "[", "]"), "&lt;[img] src=x&gt;", "markup in a label stays text")
+eq(MenuModel.highlight("Fonts", "zz", "[", "]"), "", "no match gives an empty string")
+eq(MenuModel.highlight("Firefox", " FIRE ", "[", "]"), "[Fire]fox", "one word: matched case-insensitively, label keeps its case")
+eq(MenuModel.highlight("campfire.png", "fire", "[", "]"), "camp[fire].png", "one word in the middle")
+{
+  // The one-word shortcut gives what the general path (matchSpans) gives.
+  const general = (label, query) => {
+    const spans = MenuModel.matchSpans(label, query)
+    if (spans.length === 0) return ""
+    let out = "", pos = 0
+    for (const [a, b] of spans) {
+      out += MenuModel.escapeHtml(label.slice(pos, a)) + "[" + MenuModel.escapeHtml(label.slice(a, b)) + "]"
+      pos = b
+    }
+    return out + MenuModel.escapeHtml(label.slice(pos))
+  }
+  const labels = ["Firefox", "firefox-nightly", "Docker DB", "a<b>fire", "Tom & Jerry", "x", "", "FIRE fire", "Ünïcode fïre"]
+  const queries = ["f", "fire", "FiRe", "db dock", "fire fox", "  fire  ", "&", "<b>", "zz", "ï", "e"]
+  let same = true
+  for (const l of labels) for (const q of queries)
+    if (MenuModel.highlight(l, q, "[", "]") !== general(l, q)) { same = false; console.log("  differs:", l, "|", q) }
+  assert(same, "highlight's one-word shortcut agrees with matchSpans on every label and query")
+}
+eq(KeySheet.rowForNumber(3, 20, 1), 3, "Alt+1 is the first visible row")
+eq(KeySheet.rowForNumber(0, 4, 5), -1, "a number past the list does nothing")
+eq(KeySheet.rowForNumber(0, 20, 0), -1, "Alt+0 is not a row")
+assert(KeySheet.CHEATSHEET.every(g => g.title && g.keys.length > 0 && g.keys.every(k => k.length === 2)), "every key sheet group has keys and descriptions")
+
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)
