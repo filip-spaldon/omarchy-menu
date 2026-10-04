@@ -16,16 +16,25 @@ BorderSurface {
 
   width: ListView.view.width
   height: category.menu.baseRowHeight
-  radius: category.menu.cornerRadius
-  color: category.focusedHere ? category.menu.selectedBackground
-    : (category.picked ? Util.alpha(category.menu.foreground, 0.08) : "transparent")
-  borderSpec: category.focusedHere ? category.menu.selectedBorderSpec : Border.none()
+  radius: category.menu.rowRadius
+  // The browsed category: marked like a result row (Menu.selectionFill/Edge).
+  color: category.focusedHere ? category.menu.selectionFill : (category.picked ? Util.alpha(category.menu.foreground, 0.07) : "transparent")
+  borderSpec: Border.none()
+
+  Rectangle {
+    visible: category.focusedHere
+    width: Math.max(3, Style.space(3))
+    y: Style.space(8)
+    height: parent.height - Style.space(16)
+    radius: width / 2
+    color: category.menu.selectionEdge
+  }
 
   Text {
     id: categoryIcon
     textFormat: Text.PlainText
     text: category.modelData.icon
-    color: category.focusedHere ? category.menu.selectedText : (category.picked ? Color.accent : category.menu.foreground)
+    color: category.picked ? Color.accent : category.menu.foreground
     font.family: category.modelData.iconFont || category.menu.fontFamily
     font.pixelSize: category.menu.scaledFont(Style.font.iconLarge)
     width: category.menu.iconSlotWidth
@@ -38,7 +47,7 @@ BorderSurface {
   Text {
     textFormat: Text.PlainText
     text: category.modelData.label
-    color: category.focusedHere ? category.menu.selectedText : category.menu.foreground
+    color: category.menu.foreground
     opacity: category.picked ? 1 : 0.8
     font.family: category.menu.fontFamily
     font.pixelSize: category.menu.scaledFont(Style.font.heading)

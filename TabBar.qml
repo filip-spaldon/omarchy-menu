@@ -18,6 +18,36 @@ Item {
   required property color accent
   required property int fontSize
 
+  // Match counts per tab id, shown small after the label when present.
+  property var counts: ({})
+  readonly property bool hasCounts: Object.keys(bar.counts).length > 0
+  // The count slot: room for as many digits as the widest count on show
+  // ("99+" above 99), tabular, so chips keep their size while typing.
+  readonly property string countPattern: {
+    var digits = 1
+    for (var id in bar.counts) {
+      var n = Number(bar.counts[id])
+      digits = Math.max(digits, n > 99 ? 3 : String(n).length)
+    }
+    return digits >= 3 ? "99+" : (digits === 2 ? "00" : "0")
+  }
+  TextMetrics { id: countSlot; font.family: bar.fontFamily; font.pixelSize: Math.round(bar.fontSize * 0.85); text: bar.countPattern }
+  readonly property real countSlotWidth: countSlot.advanceWidth
+  // Whether every tab's count fits on one line. Measured from the labels
+  // alone (chip.fullWidth does not depend on which counts show), so hiding
+  // counts can never feed back into this. When they do not fit, only the
+  // active tab keeps its count.
+  readonly property real naturalWidth: {
+    var w = 0
+    var n = bar.chipsVersion >= 0 ? repeater.count : 0
+    for (var i = 0; i < n; i++) {
+      var c = repeater.itemAt(i)
+      if (c) w += c.fullWidth
+    }
+    return w + Math.max(0, n - 1) * Style.space(6)
+  }
+  readonly property bool showAllCounts: bar.naturalWidth <= bar.width
+
   signal tabClicked(string id)
 
   // The menu passes style.json's tab animation keys (Settings.tabAnim).
@@ -136,6 +166,22 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
       Behavior on color { enabled: label.owner.sliding; ColorAnimation { duration: label.owner.slideDuration } }
     }
+
+    // The count: the bar's slot width, tabular digits.
+    Text {
+      readonly property var count: label.owner.counts[label.chipData.id]
+      visible: count !== undefined && (label.owner.showAllCounts || label.bold)
+      width: label.owner.countSlotWidth
+      horizontalAlignment: Text.AlignLeft
+      font.features: ({ "tnum": 1 })
+      textFormat: Text.PlainText
+      text: count !== undefined ? (count > 99 ? "99+" : String(count)) : ""
+      color: label.lit ? label.owner.accent : label.owner.foreground
+      opacity: label.lit ? 0.8 : 0.5
+      font.family: label.owner.fontFamily
+      font.pixelSize: Math.round(label.owner.fontSize * 0.85)
+      anchors.verticalCenter: parent.verticalCenter
+    }
   }
 
   Flow {
@@ -155,7 +201,16 @@ Item {
         required property var modelData
         readonly property bool active: chip.modelData.id === bar.activeTab
 
-        width: chipRow.implicitWidth + Style.space(20)
+        // Counts widen the chips; tighter padding keeps six on one line.
+        readonly property real pad: Style.space(bar.hasCounts ? 13 : 20)
+        width: chipRow.implicitWidth + chip.pad
+        // The chip's width with its count showing, measured from the label
+        // (bold, the widest it gets), for the bar's fit check.
+        TextMetrics { id: labelSize; font.family: bar.fontFamily; font.pixelSize: bar.fontSize; font.weight: Font.DemiBold; text: chip.modelData.label }
+        TextMetrics { id: iconSize; font.family: bar.fontFamily; font.pixelSize: bar.fontSize; text: chip.modelData.icon || "" }
+        readonly property real fullWidth: labelSize.advanceWidth + chip.pad
+          + (iconSize.text ? iconSize.advanceWidth + Style.space(6) : 0)
+          + (bar.counts[chip.modelData.id] !== undefined ? bar.countSlotWidth + Style.space(6) : 0)
         height: chipRow.implicitHeight + Style.space(10)
         radius: height / 2
         // The active fill is the sliding highlight underneath.
