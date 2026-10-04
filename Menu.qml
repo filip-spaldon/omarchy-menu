@@ -473,6 +473,22 @@ Item {
           root.categoryDim: 0.55
         }
       },
+      // Wayfinder: the results as a transit map.
+      State {
+        when: root.drawnLook === "wayfinder"
+        PropertyChanges {
+          root.lookRows: "WayfinderRow.qml"  // stops, map references
+          root.alwaysNumbered: true          // the references are Alt+n
+          root.selectionTint: false          // the row is filled instead
+          root.shortFooter: true
+          root.hairlineFrame: true           // with crop marks
+          root.matchUnderline: true
+          root.tabStyle: "station"           // stops on a line
+          root.filterTabStyle: "word"
+          root.headerSpacing: 2
+          root.headerIndent: Style.space(30) // after the interchange hexagon
+        }
+      },
     ]
   }
 
@@ -2847,6 +2863,25 @@ Item {
       borderSpec: root.hairlineFrame ? Border.flat(Util.alpha(root.foreground, 0.14), 1) : root.borderSpec
       padding: root.contentMargin
 
+      // Wayfinder: crop marks at the corners, as on a printed map sheet.
+      Repeater {
+        model: root.drawnLook === "wayfinder" ? 4 : 0
+        Item {
+          id: cropMark
+          required property int index
+          readonly property bool atRight: index === 1 || index === 3
+          readonly property bool atBottom: index >= 2
+          readonly property int arm: Style.space(12)
+          readonly property int gap: Style.space(5)
+          x: atRight ? card.width + gap - arm : -gap
+          y: atBottom ? card.height + gap - arm : -gap
+          width: arm
+          height: arm
+          Rectangle { width: cropMark.arm; height: 2; y: cropMark.atBottom ? cropMark.arm - 2 : 0; color: Color.accent }
+          Rectangle { width: 2; height: cropMark.arm; x: cropMark.atRight ? cropMark.arm - 2 : 0; color: Color.accent }
+        }
+      }
+
       MouseArea { anchors.fill: parent; onClicked: {} }
 
       Item {
@@ -3535,6 +3570,114 @@ Item {
                 }
               }
 
+              // Wayfinder: the results as a transit map. The trunk line down
+              // the left gutter, and the route in accent from the top to the
+              // selected stop. Behind the rows, and in the rows' own
+              // coordinates: a ListView's children stay in the viewport (its
+              // default property is `data`, not the Flickable's content), so
+              // without `parent` the route would ignore the scroll and run on
+              // past the selection.
+              Rectangle {
+                parent: resultList.contentItem
+                visible: root.drawnLook === "wayfinder" && resultList.count > 0
+                z: -1
+                x: Math.round(Style.space(26) / 2) - 1
+                y: resultList.originY
+                width: Math.max(1, Style.space(2))
+                height: resultList.contentHeight
+                color: Util.alpha(root.foreground, 0.2)
+              }
+
+              // The route is the lit track: from the top to the train's back
+              // end (`tail`). The train runs from `tail` to `head`; at rest
+              // both sit on the selected stop and the train is hidden behind
+              // its ring.
+              Rectangle {
+                id: route
+                parent: resultList.contentItem
+                readonly property Item stop: root.drawnLook === "wayfinder" && root.cursorActive && resultList.count > 0
+                  && resultList.contentHeight > 0 ? resultList.itemAtIndex(root.selectedIndex) : null
+                // The selected stop's centre, in the list's content coordinates.
+                readonly property real target: stop ? stop.y + stop.labelCenterY : resultList.originY
+                property real head: resultList.originY
+                property real tail: resultList.originY
+                property Item lastStop: null
+                property double lastMove: 0
+                visible: stop !== null
+                z: -1
+                x: Math.round(Style.space(26) / 2) - 1
+                y: resultList.originY
+                width: Math.max(2, Style.space(3))
+                height: Math.max(0, Math.min(head, tail) - resultList.originY)
+                color: Color.accent
+
+                // The head is the selection: it lands on the new stop in the
+                // same frame as the selected ring and row, on every move, so
+                // the line and the selection never disagree. The motion is the
+                // tail: the train opens from the stop it left to the new one
+                // and closes up into the new ring (InOutCubic: it holds, then
+                // snaps in). Going down, the track is drawn in behind it; going
+                // up, it is erased at once. Moves under 150 ms apart (a held
+                // key) close in 160 ms, OutCubic, with the tail kept within a
+                // row of the selection, so nothing queues.
+                onTargetChanged: route.travel()
+                function travel() {
+                  const to = route.target
+                  if (!route.stop) {
+                    // Between delegates (the new row is not built yet) the
+                    // train holds; with the cursor off the route clears.
+                    if (root.cursorActive && resultList.count > 0) return
+                    tailAnim.stop()
+                    route.lastStop = null
+                    route.head = to
+                    route.tail = to
+                    return
+                  }
+                  const moved = route.stop !== route.lastStop
+                  const running = tailAnim.running
+                  route.lastStop = route.stop
+                  tailAnim.stop()
+                  route.head = to
+                  // The same stop moved (layout, filtering): follow it at once.
+                  if (!root.opened || (!moved && !running)) {
+                    route.tail = to
+                    return
+                  }
+                  const now = Date.now()
+                  const rapid = !moved || now - route.lastMove < 150
+                  if (moved) route.lastMove = now
+                  if (rapid) {
+                    // Restarted every ~20 ms by a held key, the tail's
+                    // animation barely advances; keep it within a row.
+                    const row = Style.space(44)
+                    if (to > route.tail) route.tail = Math.max(route.tail, to - row)
+                    else route.tail = Math.min(route.tail, to + row)
+                  }
+                  tailAnim.duration = rapid ? 160 : 240 + Math.min(120, Math.abs(to - route.tail) / 4)
+                  tailAnim.easing.type = rapid ? Easing.OutCubic : Easing.InOutCubic
+                  tailAnim.to = to
+                  tailAnim.start()
+                }
+                NumberAnimation { id: tailAnim; target: route; property: "tail" }
+              }
+
+              // The train: a wider capsule from tail to head, only while it
+              // runs. The stops' rings sit over it, so it passes under them
+              // like a map line under its stations, and it closes up inside
+              // the new ring.
+              Rectangle {
+                parent: resultList.contentItem
+                readonly property real span: Math.abs(route.head - route.tail)
+                visible: route.visible && span > 1
+                z: -1
+                width: Math.max(4, Style.space(6))
+                x: Math.round(Style.space(26) / 2 - width / 2)
+                y: Math.min(route.head, route.tail) - width / 2
+                height: span + width
+                radius: width / 2
+                color: Color.accent
+              }
+
               section.property: "section"
               section.criteria: ViewSection.FullString
               section.delegate: Item {
@@ -3544,6 +3687,21 @@ Item {
                 width: ListView.view.width
                 height: section === "drilldown" ? root.dividerHeight : (isHeader ? root.sectionHeaderHeight : 0)
                 visible: section === "drilldown" || isHeader
+
+                // Wayfinder: an interchange hexagon on the trunk line.
+                Text {
+                  visible: parent.isHeader && root.drawnLook === "wayfinder"
+                  textFormat: Text.PlainText
+                  text: "\u{F02D9}"
+                  color: root.foreground
+                  opacity: 0.7
+                  font.family: root.fontFamily
+                  font.pixelSize: root.scaledFont(Style.font.heading)
+                  width: Style.space(26)
+                  horizontalAlignment: Text.AlignHCenter
+                  anchors.left: parent.left
+                  anchors.verticalCenter: headerTitle.verticalCenter
+                }
 
                 Text {
                   id: headerTitle

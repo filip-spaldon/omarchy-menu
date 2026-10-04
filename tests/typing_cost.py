@@ -39,6 +39,10 @@ CEILINGS = {
     "mala": [("bind:Menu.qml", 530),              # 464
              ("bind:MalaRow.qml", 1600),          # 1406
              ("created", 260)],                   # 223
+    "wayfinder": [("bind:Menu.qml", 830),         # 738
+                  ("bind:TabBar.qml", 680),       # 600
+                  ("bind:WayfinderRow.qml", 2900),  # 2586
+                  ("created", 560)],              # 498
 }
 # What every look shares: the card's height walks the rows once per rebuild
 # (28; 274 when it read every row through the model).

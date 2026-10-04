@@ -906,5 +906,10 @@ eq(Looks.styleLook({ look: "mala" }), "mala", "Mala is a look")
 eq(Looks.lookLabel("mala"), "Mala", "Mala's popup label")
 assert(require("fs").existsSync(path.join(root, "MalaRow.qml")), "Mala's rows")
 
+// Looks: Wayfinder
+eq(Looks.styleLook({ look: "wayfinder" }), "wayfinder", "Wayfinder is a look")
+eq(Looks.lookLabel("wayfinder"), "Wayfinder", "Wayfinder's popup label")
+assert(require("fs").existsSync(path.join(root, "WayfinderRow.qml")), "Wayfinder's rows")
+
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)
