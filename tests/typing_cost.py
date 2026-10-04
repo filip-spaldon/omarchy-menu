@@ -36,6 +36,9 @@ CEILINGS = {
                 ("bind:TabBar.qml", 700),         # 617 (831 when every rebuild made new counts)
                 ("bind:ResultRow.qml", 2550),     # 2276
                 ("created", 570)],                # 508
+    "mala": [("bind:Menu.qml", 530),              # 464
+             ("bind:MalaRow.qml", 1600),          # 1406
+             ("created", 260)],                   # 223
 }
 # What every look shares: the card's height walks the rows once per rebuild
 # (28; 274 when it read every row through the model).
