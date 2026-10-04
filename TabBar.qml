@@ -18,6 +18,36 @@ Item {
   required property color accent
   required property int fontSize
 
+  // The look's tab treatment (Menu.qml tabStyle, tabCase): "chip" pills
+  // with a sliding highlight, in title case, unless a style's State in
+  // styleStates below sets the properties that follow.
+  property string tabStyle: "chip"
+  property string tabCase: "title"
+  // The card colour, for a look whose active tab is filled solid.
+  property color background: "black"
+  property color litColor: bar.accent        // the active tab's label
+  property bool dot: false                   // a dot under the active tab instead of a pill
+  property color highlightColor: Util.alpha(bar.accent, 0.22 + 0.24 * bar.popStrength * bar.glow)
+  property bool icons: true                  // the tab icons
+  property real labelDim: 0.8                // inactive labels
+  property real pad: Style.space(bar.hasCounts ? 13 : 20)
+  property color chipIdle: Util.alpha(bar.foreground, 0.07)
+  property color chipHover: Util.alpha(bar.accent, 0.10)
+  // The accent colour travels with the highlight (the lit copy of a label,
+  // clipped to it) rather than switching tab by tab.
+  property bool sweepLabels: true
+
+  // One State per tab style, in one group (see Menu.qml lookStates).
+  StateGroup {
+    id: styleStates
+    states: [
+    ]
+  }
+
+  function caseLabel(text) {
+    return bar.tabCase === "lower" ? String(text).toLowerCase()
+      : (bar.tabCase === "upper" ? String(text).toUpperCase() : String(text))
+  }
   // Match counts per tab id, shown small after the label when present.
   property var counts: ({})
   readonly property bool hasCounts: Object.keys(bar.counts).length > 0
@@ -118,15 +148,18 @@ Item {
   implicitWidth: flow.implicitWidth
   implicitHeight: flow.implicitHeight
 
+  // A dot (dot: true) sits under the active tab; a pill covers it.
+  readonly property int dotSize: Math.max(3, Math.round(bar.fontSize / 4))
+
   Rectangle {
     id: highlight
     visible: bar.activeChip !== null
-    x: bar.activeChip ? bar.activeChip.x : 0
-    y: bar.activeChip ? bar.activeChip.y : 0
-    width: bar.activeChip ? bar.activeChip.width : 0
-    height: bar.activeChip ? bar.activeChip.height : 0
+    x: bar.activeChip ? (bar.dot ? bar.activeChip.x + (bar.activeChip.width - bar.dotSize) / 2 : bar.activeChip.x) : 0
+    y: bar.activeChip ? (bar.dot ? bar.activeChip.y + bar.activeChip.height - bar.dotSize : bar.activeChip.y) : 0
+    width: bar.activeChip ? (bar.dot ? bar.dotSize : bar.activeChip.width) : 0
+    height: bar.activeChip ? (bar.dot ? bar.dotSize : bar.activeChip.height) : 0
     radius: height / 2
-    color: Util.alpha(bar.accent, 0.22 + 0.24 * bar.popStrength * bar.glow)
+    color: bar.highlightColor
     scale: 1 + 0.10 * bar.popStrength * bar.glow
 
     Behavior on x { enabled: bar.sliding; NumberAnimation { duration: bar.slideDuration; easing.type: bar.slideEasing; easing.overshoot: bar.anim.tabOvershoot; easing.bezierCurve: bar.slideBezier } }
@@ -146,8 +179,9 @@ Item {
 
     Text {
       textFormat: Text.PlainText
+      visible: label.owner.icons
       text: label.chipData.icon
-      color: label.lit ? label.owner.accent : label.owner.foreground
+      color: label.lit ? label.owner.litColor : label.owner.foreground
       opacity: label.lit ? 1 : 0.7
       font.family: label.owner.fontFamily
       font.pixelSize: label.owner.fontSize
@@ -157,9 +191,9 @@ Item {
 
     Text {
       textFormat: Text.PlainText
-      text: label.chipData.label
-      color: label.lit ? label.owner.accent : label.owner.foreground
-      opacity: label.lit ? 1 : 0.8
+      text: label.owner.caseLabel(label.chipData.label)
+      color: label.lit ? label.owner.litColor : label.owner.foreground
+      opacity: label.lit ? 1 : label.owner.labelDim
       font.family: label.owner.fontFamily
       font.pixelSize: label.owner.fontSize
       font.weight: label.bold ? Font.DemiBold : Font.Normal
@@ -176,7 +210,7 @@ Item {
       font.features: ({ "tnum": 1 })
       textFormat: Text.PlainText
       text: count !== undefined ? (count > 99 ? "99+" : String(count)) : ""
-      color: label.lit ? label.owner.accent : label.owner.foreground
+      color: label.lit ? label.owner.litColor : label.owner.foreground
       opacity: label.lit ? 0.8 : 0.5
       font.family: label.owner.fontFamily
       font.pixelSize: Math.round(label.owner.fontSize * 0.85)
@@ -202,21 +236,19 @@ Item {
         readonly property bool active: chip.modelData.id === bar.activeTab
 
         // Counts widen the chips; tighter padding keeps six on one line.
-        readonly property real pad: Style.space(bar.hasCounts ? 13 : 20)
+        readonly property real pad: bar.pad
         width: chipRow.implicitWidth + chip.pad
         // The chip's width with its count showing, measured from the label
         // (bold, the widest it gets), for the bar's fit check.
-        TextMetrics { id: labelSize; font.family: bar.fontFamily; font.pixelSize: bar.fontSize; font.weight: Font.DemiBold; text: chip.modelData.label }
-        TextMetrics { id: iconSize; font.family: bar.fontFamily; font.pixelSize: bar.fontSize; text: chip.modelData.icon || "" }
+        TextMetrics { id: labelSize; font.family: bar.fontFamily; font.pixelSize: bar.fontSize; font.weight: Font.DemiBold; text: bar.caseLabel(chip.modelData.label) }
+        TextMetrics { id: iconSize; font.family: bar.fontFamily; font.pixelSize: bar.fontSize; text: bar.icons ? (chip.modelData.icon || "") : "" }
         readonly property real fullWidth: labelSize.advanceWidth + chip.pad
           + (iconSize.text ? iconSize.advanceWidth + Style.space(6) : 0)
           + (bar.counts[chip.modelData.id] !== undefined ? bar.countSlotWidth + Style.space(6) : 0)
         height: chipRow.implicitHeight + Style.space(10)
         radius: height / 2
         // The active fill is the sliding highlight underneath.
-        color: chip.active
-          ? "transparent"
-          : (chipMouse.containsMouse ? Util.alpha(bar.accent, 0.10) : Util.alpha(bar.foreground, 0.07))
+        color: chip.active ? "transparent" : (chipMouse.containsMouse ? bar.chipHover : bar.chipIdle)
 
         ChipLabel {
           id: chipRow
@@ -226,7 +258,7 @@ Item {
           bold: chip.active
           // Sweeping, the lit copy below does the colouring; this stays the
           // plain label underneath it.
-          lit: chip.active && !bar.sweep
+          lit: chip.active && (!bar.sweep || !bar.sweepLabels)
         }
 
         // The label again in the accent colour, clipped to the part of the
@@ -234,7 +266,7 @@ Item {
         // instead of switching chip by chip.
         Item {
           id: litClip
-          visible: bar.sweep && width > 0 && height > 0
+          visible: bar.sweep && bar.sweepLabels && width > 0 && height > 0
           clip: true
           readonly property real fromX: Math.max(0, highlight.x - chip.x)
           readonly property real fromY: Math.max(0, highlight.y - chip.y)

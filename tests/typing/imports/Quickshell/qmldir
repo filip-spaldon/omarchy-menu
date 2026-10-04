@@ -1,0 +1,6 @@
+module Quickshell
+singleton Quickshell 1.0 Quickshell.qml
+singleton DesktopEntries 1.0 DesktopEntries.qml
+ExclusionMode 1.0 ExclusionMode.qml
+PanelWindow 1.0 PanelWindow.qml
+PanelAnchors 1.0 PanelAnchors.qml
