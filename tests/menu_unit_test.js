@@ -15,6 +15,7 @@ const Settings = require(path.join(root, "Settings.js"))
 const Roots = require(path.join(root, "Roots.js"))
 const Windows = require(path.join(root, "Windows.js"))
 const KeySheet = require(path.join(root, "KeySheet.js"))
+const Looks = require(path.join(root, "Looks.js"))
 
 let pass = 0
 let fail = 0
@@ -866,6 +867,39 @@ eq(KeySheet.rowForNumber(3, 20, 1), 3, "Alt+1 is the first visible row")
 eq(KeySheet.rowForNumber(0, 4, 5), -1, "a number past the list does nothing")
 eq(KeySheet.rowForNumber(0, 20, 0), -1, "Alt+0 is not a row")
 assert(KeySheet.CHEATSHEET.every(g => g.title && g.keys.length > 0 && g.keys.every(k => k.length === 2)), "every key sheet group has keys and descriptions")
+
+// Looks: the switch
+eq(Looks.styleLook({}), "classic", "no look is classic")
+eq(Looks.styleLook({ look: "vaporwave" }), "classic", "an unknown look falls back to classic")
+eq(Looks.styleLook({ look: ["classic"] }), "classic", "a look that is not a name falls back to classic")
+eq(Looks.styleLook(null), "classic", "no style at all is classic")
+eq(Looks.cycleLook("gone", 1), Looks.LOOKS[1 % Looks.LOOKS.length].name, "an unknown look cycles from classic")
+eq(Looks.cycleLook(Looks.LOOKS[Looks.LOOKS.length - 1].name, 1), "classic", "the last look wraps to the first")
+eq(Looks.lookLabel("classic"), "Classic", "the popup label")
+eq(Settings.STYLE_DEFAULTS.look, Looks.DEFAULT_LOOK, "a new style.json names the default look")
+assert(Looks.LOOKS.every(l => /^[a-z]+$/.test(l.name) && l.label), "every look has a name and a label")
+eq(new Set(Looks.LOOKS.map(l => l.name)).size, Looks.LOOKS.length, "look names are unique")
+{
+  // Every look but classic sets what it changes in a State (Menu.qml).
+  const qml = require("fs").readFileSync(path.join(root, "Menu.qml"), "utf8")
+  for (const l of Looks.LOOKS.slice(1))
+    assert(qml.indexOf('when: root.drawnLook === "' + l.name + '"') >= 0, l.name + " sets what it changes in Menu.qml")
+}
+{
+  const ops = Settings.patch("look", "classic")
+  eq(ops.length, 1, "switching the look writes one key")
+  eq(ops[0].path, ["look"], "and only the look")
+}
+
+// Looks: under a full-screen view the card's query row and results area are
+// hidden (not laid out for nothing), but not the tabs or footer, whose
+// visible feeds the card's size.
+{
+  const menuSource = require("fs").readFileSync(path.join(root, "Menu.qml"), "utf8")
+  eq((menuSource.match(/visible: !root\.overlayActive\n            width: parent\.width\n            height: root\.headerHeight/g) || []).length, 1, "the query row is hidden under a view")
+  eq(/height: root\.visibleRowsHeight\n            visible: height > 0 && !root\.overlayActive/.test(menuSource), true, "the results area is hidden under a view")
+  eq(/id: cardContent\n(?:.*\n){0,3}\s*visible:/.test(menuSource), false, "the card's content stays visible (its tabs and footer size the card)")
+}
 
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

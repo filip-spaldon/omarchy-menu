@@ -443,7 +443,8 @@ defaults and re-read every time the menu opens:
   "fixedHeight": false,
   "top": 0.2,
   "pickerHeight": 0.7,
-  "tabSlide": true
+  "tabSlide": true,
+  "look": "classic"
 }
 ```
 
@@ -462,6 +463,7 @@ the top so the card grows downward. The stock menu itself is
 | `position` | — | Written by Alt+arrows and the settings popup: `{"anchorX": "left"\|"center"\|"right", "anchorY": "top"\|"middle"\|"bottom", "offsetX", "offsetY"}`, offsets as a share of the screen from that edge. Pinned to the bottom, the card grows upward |
 | `pickerHeight` | `0.7` | Maximum list height of dmenu pickers |
 | `tabSlide` | `true` | Tab animations; `false` turns them off, whatever the keys below say |
+| `look` | `"classic"` | The launcher's design (see Looks below) |
 | `tabSlideMs` | `120` | How long the active-tab highlight slides between tabs (0–1000 ms, 0 jumps) |
 | `tabEasing` | `"OutCubic"` | The slide's Qt easing curve; `tabOvershoot` (`1.70158`) applies to the Back curves |
 | `tabBezier` | — | `[x1, y1, x2, y2]` for a custom cubic-bezier slide, overriding `tabEasing` |
@@ -474,12 +476,23 @@ to a new `style.json`; add them to tune the tab animation.
 Missing or out-of-range values fall back to the defaults above. Some combinations
 to try:
 
-| Look | fontScale | cardWidth | bodyHeight | fixedHeight | top |
+| Preset | fontScale | cardWidth | bodyHeight | fixedHeight | top |
 | --- | --- | --- | --- | --- | --- |
 | Compact | 0.8 | 540 | 0.35 | true | 0.22 |
 | Spotlight | 0.9 | 720 | 0.40 | true | 0.15 |
 | Dense | 0.75 | 680 | 0.55 | true | 0.12 |
 | Comfortable | 1.0 | 640 | 0.38 | true | 0.20 |
+
+### Looks
+
+A look is a design for the launcher card; every look follows the Omarchy
+theme's colours. Pick one with `"look"` in `style.json`, the Look row in the
+bar popup, or Alt+L / Alt+Shift+L in the open menu (saved when it closes).
+dmenu pickers always use Classic.
+
+| Look | What it is |
+| --- | --- |
+| `classic` | The card described above: icons, tab chips, counts, keycaps |
 
 The empty All prompt is always compact. Source edits usually reload
 automatically; after adding or renaming a file run `omarchy restart shell`.
@@ -496,7 +509,7 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `KeySheet.js`, `ai/*.js` | Pure logic, tested with Node |
+| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `KeySheet.js`, `Looks.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.
