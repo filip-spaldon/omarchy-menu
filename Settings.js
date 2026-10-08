@@ -291,10 +291,15 @@ function cardVertical(pos, h, margin) {
   return { top: -1, bottom: -1, shift: pos.offsetY * h }
 }
 
-// The style.json write for a moved card: the "position" key alone, so a
-// save never touches the keys around it.
+// The style.json write for a moved card: the "position" key, and the older
+// "top" removed, since position wins over it and a stale top would only
+// mislead whoever reads the file. Every other key is left alone.
+function positionValue(pos) {
+  return { anchorX: pos.anchorX, anchorY: pos.anchorY, offsetX: pos.offsetX, offsetY: pos.offsetY }
+}
+
 function positionPatch(pos) {
-  return patch("position", { anchorX: pos.anchorX, anchorY: pos.anchorY, offsetX: pos.offsetX, offsetY: pos.offsetY })
+  return patch("position", positionValue(pos)).concat(patch("top", undefined))
 }
 
 // A numeric style.json value as the menu reads it: the file's value when it
@@ -476,6 +481,7 @@ if (typeof module !== "undefined") {
     cardLeft: cardLeft,
     cardVertical: cardVertical,
     positionPatch: positionPatch,
+    positionValue: positionValue,
     positionLabel: positionLabel,
     positionPresets: positionPresets,
     cyclePosition: cyclePosition,

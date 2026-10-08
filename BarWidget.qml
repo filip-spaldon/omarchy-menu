@@ -295,7 +295,7 @@ Panel {
       setState("barLeftClick", Settings.cycle(Settings.BAR_CLICKS, barLeftClick, direction))
     else if (key === "appsView") setState("appsView", Settings.cycle(Settings.APPS_VIEWS, appsView, direction))
     else if (key === "cursorStyle") setState("cursorStyle", Settings.cycle(Settings.CURSOR_STYLES, cursorStyle, direction))
-    else if (key === "style:position") setStyle("position", Settings.cyclePosition(Settings.stylePosition(sty), direction))
+    else if (key === "style:position") setPosition(Settings.cyclePosition(Settings.stylePosition(sty), direction))
     else if (key.indexOf("style:") === 0) {
       var name = key.slice(6)
       setStyle(name, Settings.stepNumber(Settings.styleNumber(sty, name), Settings.STYLE_RANGES[name], direction))
@@ -466,6 +466,13 @@ Panel {
     if (!styleValid) return
     styleData = Settings.withKey(styleData, key, value)
     styleWriter.save(Settings.patch(key, value))
+  }
+
+  // Like the menu's own save: position, with the older "top" dropped.
+  function setPosition(pos) {
+    if (!styleValid) return
+    styleData = Settings.withKey(Settings.withKey(styleData, "position", Settings.positionValue(pos)), "top", undefined)
+    styleWriter.save(Settings.positionPatch(pos))
   }
 
   function setAgentEntry(section, value) {

@@ -28,6 +28,15 @@ QtObject {
   // Pinned to the bottom: the edge the card grows up from, raised if needed
   // so the smallest full card still fits above it.
   readonly property real bottomEdge: Math.min(viewportHeight - gap, Math.max(requestedBottom, gap + minimumHeight))
+  // bottomEdge as it stands once the rows want at least minimumBodyHeight,
+  // for a caller budgeting those rows: bottomEdge itself reads
+  // desiredBodyHeight (through minimumHeight), so a budget that feeds
+  // desiredBodyHeight cannot bind to it. `chrome` is what the caller counts
+  // above and below its rows.
+  function rowsBottomEdge(chrome) {
+    return Math.min(viewportHeight - gap,
+      Math.max(requestedBottom, gap + Math.min(maximumHeight, chrome + minimumBodyHeight)))
+  }
   readonly property real cardTop: bottomAnchored
     ? Math.max(gap, bottomEdge - contentHeight)
     : requestedTop < 0

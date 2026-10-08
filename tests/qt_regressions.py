@@ -153,6 +153,19 @@ class QtRegressionTests(unittest.TestCase):
         self.assertEqual(g.property("cardTop"), 10)
         self.assertGreaterEqual(g.property("bodyHeight"), 240)
 
+    def test_rows_bottom_edge_matches_the_raised_card_edge(self):
+        # The menu budgets its rows against rowsBottomEdge; once the rows want
+        # at least minimumBodyHeight it must be the edge the card ends at.
+        from PySide6.QtCore import Q_ARG, Q_RETURN_ARG, QMetaObject, Qt
+        for bottom in [100, 300, 1000]:
+            with self.subTest(bottom=bottom):
+                g = self.geometry(viewportHeight=1080, gap=10, requestedBottom=bottom, chromeHeight=180,
+                                  desiredBodyHeight=600, minimumBodyHeight=240, reserveHeight=30)
+                edge = QMetaObject.invokeMethod(g, "rowsBottomEdge", Qt.DirectConnection,
+                                                Q_RETURN_ARG("QVariant"), Q_ARG("QVariant", 180))
+                self.assertAlmostEqual(edge, g.property("bottomEdge"))
+                self.assertAlmostEqual(edge, g.property("cardTop") + g.property("cardHeight"))
+
     def test_centre_shift_moves_and_stays_on_screen(self):
         g = self.geometry(viewportHeight=1080, gap=10, requestedTop=-1, chromeHeight=180,
                           desiredBodyHeight=400, minimumBodyHeight=240, reserveHeight=30)

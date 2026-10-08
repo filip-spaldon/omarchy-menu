@@ -185,6 +185,9 @@ Item {
       root.launcherPositionMoved = false
       settingsStore.savePosition(root.launcherPosition)
     }
+    // Otherwise the next open would show where the card went last time.
+    positionHintEnd.stop()
+    root.positionHint = ""
     deleteConfirmOpen = false
     deleteTarget = null
     answerEngine.utilityAnswers = ({})
@@ -486,12 +489,15 @@ Item {
   // derived from the card height, which this value feeds.
   // A launcher pinned to the bottom grows upward, so its rows may take the
   // room from the top gap down to its bottom edge, whatever line the card
-  // froze at (requestedBottom: bottomEdge would feed back into this value).
+  // froze at. The edge is the one the card uses, raised like bottomEdge so a
+  // low pin still budgets the smallest full card (rowsBottomEdge: bottomEdge
+  // itself would feed back into this value).
   function availableRowsHeight() {
     var fromBottom = root.tabsActive && launcherGeometry.bottomAnchored
     var top = panel.cardTop >= 0 && !fromBottom ? panel.cardTop : Style.gapsOut
-    var bottom = fromBottom ? Math.min(panel.height - Style.gapsOut, launcherGeometry.requestedBottom) : panel.height - Style.gapsOut
-    var available = bottom - top - root.contentMargin * 2 - root.headerHeight - root.contentSpacing
+    var chrome = root.contentMargin * 2 + root.headerHeight + root.contentSpacing
+    var bottom = fromBottom ? launcherGeometry.rowsBottomEdge(chrome) : panel.height - Style.gapsOut
+    var available = bottom - top - chrome
     // The starting menu sets the ceiling along with the offset: drilling into
     // a longer submenu scrolls behind the fold instead of growing the card.
     // (dmenu pickers only: the launcher opens compact, so its starting height

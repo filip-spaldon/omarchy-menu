@@ -234,8 +234,9 @@ eq(left(P("center", "middle", 0.45, 0)), 590, "a card pushed past the side is ke
 eq(Settings.cardVertical(Settings.DEFAULT_POSITION, 800, 10), { top: 160, bottom: -1, shift: 0 }, "the default asks for a top edge 20% down")
 eq(Settings.cardVertical(P("right", "bottom", 0.03, 0.1), 800, 10), { top: -1, bottom: 710, shift: 0 }, "pinned to the bottom, the card asks for a bottom edge")
 eq(Settings.cardVertical(P("center", "middle", 0, -0.1), 800, 10), { top: -1, bottom: -1, shift: -80 }, "in the middle, the card is centred and shifted")
-eq(Settings.positionPatch(P("right", "bottom", 0.03, 0.12)), [{ path: ["position"], value: P("right", "bottom", 0.03, 0.12) }],
-   "saving a moved card patches the position key alone")
+eq(Settings.positionPatch(P("right", "bottom", 0.03, 0.12)),
+   [{ path: ["position"], value: P("right", "bottom", 0.03, 0.12) }, { path: ["top"], remove: true }],
+   "saving a moved card patches the position key and drops the older top")
 {
   const fs = require("fs"), os = require("os"), { spawnSync } = require("child_process")
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-position-"))
@@ -247,8 +248,8 @@ eq(Settings.positionPatch(P("right", "bottom", 0.03, 0.12)), [{ path: ["position
   eq(run.status, 0, "the position patch is written")
   // The helper writes keys sorted; compare without their order.
   const sorted = (o) => Object.keys(o).sort().reduce((out, k) => (out[k] = o[k], out), {})
-  eq(sorted(JSON.parse(fs.readFileSync(file, "utf8"))), sorted(Object.assign({}, before, { position: P("right", "bottom", 0.03, 0.12) })),
-     "a position save leaves every other style.json key as it was")
+  eq(sorted(JSON.parse(fs.readFileSync(file, "utf8"))), sorted(Object.assign({}, before, { position: P("right", "bottom", 0.03, 0.12), top: undefined })),
+     "a position save removes the stale top and leaves every other style.json key as it was")
   fs.rmSync(dir, { recursive: true, force: true })
 }
 eq(Settings.positionLabel(P("right", "bottom", 0, 0)), "↘ bottom right", "a corner is named with its arrow")
