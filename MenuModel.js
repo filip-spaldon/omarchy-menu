@@ -39,6 +39,57 @@ function sanitizeRow(row) {
   return row
 }
 
+// --- In-place list sync -------------------------------------------------------
+// The result list is updated in place rather than cleared and refilled: a
+// keystroke rebuilds it 3-5 times, and clearing made the ListView destroy and
+// re-create every row (icon, labels, border) each time, though most rows came
+// back unchanged. Rows whose roles all match are left alone; others are set in
+// place, so their delegates are reused.
+//
+// ListModel.set() merges: a role the new row does not carry keeps whatever the
+// slot held before, so a row built without, say, `trailText` would show the
+// previous occupant's. Every row is therefore filled out to every role seen so
+// far, a missing one getting the neutral value of its type. `roles` maps role
+// name to that neutral value and is kept by the caller across calls, since a
+// ListModel cannot be asked for its role names.
+//
+// `model` needs count, get, set, remove and append -- a ListModel, or a stub.
+
+function neutralRoleValue(value) {
+  if (typeof value === "boolean") return false
+  if (typeof value === "number") return 0
+  return ""
+}
+
+function syncRows(model, rows, roles) {
+  var i, role
+  for (i = 0; i < rows.length; i++) {
+    for (role in rows[i]) {
+      if (!(role in roles)) roles[role] = neutralRoleValue(rows[i][role])
+    }
+  }
+
+  var full = []
+  for (i = 0; i < rows.length; i++) {
+    var row = {}
+    for (role in roles) row[role] = role in rows[i] ? rows[i][role] : roles[role]
+    full.push(row)
+  }
+
+  var common = Math.min(full.length, model.count)
+  for (i = 0; i < common; i++) {
+    var current = model.get(i)
+    for (role in roles) {
+      if (current[role] !== full[i][role]) {
+        model.set(i, full[i])
+        break
+      }
+    }
+  }
+  if (model.count > full.length) model.remove(full.length, model.count - full.length)
+  for (var j = common; j < full.length; j++) model.append(full[j])
+}
+
 function stripJsonc(raw) {
   var text = String(raw || "")
   var out = ""
@@ -1798,6 +1849,7 @@ if (typeof module !== "undefined") {
     guardScript: guardScript,
     sanitizeText: sanitizeText,
     sanitizeRow: sanitizeRow,
+    syncRows: syncRows,
     stripJsonc: stripJsonc,
     normalizeAliases: normalizeAliases,
     normalizeItem: normalizeItem,

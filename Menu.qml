@@ -1390,15 +1390,19 @@ Item {
     return -1
   }
 
+  // Goes through the same in-place sync as rebuildDisplay: both fill the one
+  // displayModel, and a direct append would bypass the role bookkeeping that
+  // keeps a later sync from leaving stale values behind.
   function rebuildDmenuDisplay() {
-    displayModel.clear()
     root.searchDivider = false
 
     if (root.mode === "input") {
+      root.syncDisplayModel([])
       layoutSerial += 1
       return
     }
 
+    var rows = []
     var query = root.filterText.trim().toLowerCase()
     for (var i = 0; i < root.dmenuOptions.length; i++) {
       // An option is "<label>", "<glyph>\t<label>", or
@@ -1411,7 +1415,7 @@ Item {
       var detail = parts.join("\t")
       if (query && label.toLowerCase().indexOf(query) < 0
           && detail.toLowerCase().indexOf(query) < 0) continue
-      displayModel.append(MenuModel.sanitizeRow({
+      rows.push(MenuModel.sanitizeRow({
         itemId: "dmenu." + i,
         disabled: false,
         kind: "dmenu",
@@ -1431,6 +1435,7 @@ Item {
         trailText: ""
       }))
     }
+    root.syncDisplayModel(rows)
 
     layoutSerial += 1
 
@@ -1588,6 +1593,15 @@ Item {
     return rows
   }
 
+  // The list is updated in place rather than cleared and refilled; see
+  // MenuModel.syncRows. displayRoles remembers every role a row has carried,
+  // so one a new row lacks is reset rather than left showing the previous
+  // row's value.
+  property var displayRoles: ({})
+  function syncDisplayModel(rows) {
+    MenuModel.syncRows(displayModel, rows, root.displayRoles)
+  }
+
   // keepSelection: the list is being rebuilt under an unchanged query (late
   // results, a provider refresh), so the cursor follows its item rather than
   // staying on an index that now holds something else.
@@ -1597,13 +1611,19 @@ Item {
       return
     }
 
+    // Only a row the user moved to is followed. The top row is where typing
+    // puts the cursor: late results that rank something else first keep it
+    // there. (The list is now updated in place, so the old top row is still
+    // in the model when they arrive and would otherwise drag the cursor down
+    // to wherever it ranks.)
     var previousId = ""
-    if (keepSelection && root.selectedIndex >= 0 && root.selectedIndex < displayModel.count)
+    if (keepSelection && root.selectedIndex > 0 && root.selectedIndex < displayModel.count)
       previousId = displayModel.get(root.selectedIndex).itemId
 
-    displayModel.clear()
-
-    if (!root.rowsLoaded) return
+    if (!root.rowsLoaded) {
+      displayModel.clear()
+      return
+    }
     if (root.showsSystemRows()) root.ensureGuards()
 
     var active = root.item(root.activeMenu) ? root.activeMenu : "root"
@@ -1638,7 +1658,8 @@ Item {
 
     // Sanitized here rather than in each builder: this is the one place
     // every row passes through on its way to the ListView.
-    for (var k = 0; k < rows.length; k++) displayModel.append(MenuModel.sanitizeRow(rows[k]))
+    for (var k = 0; k < rows.length; k++) MenuModel.sanitizeRow(rows[k])
+    root.syncDisplayModel(rows)
     layoutSerial += 1
 
     var kept = Tabs.indexOfItem(rows, previousId)
