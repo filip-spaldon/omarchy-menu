@@ -208,8 +208,8 @@ Panel {
       row({ key: "style:cardWidth", label: "Width", value: String(Math.round(Settings.styleNumber(sty, "cardWidth"))), adjust: true, enabled: styleValid })
       row({ key: "style:bodyHeight", label: "Results height", value: percent(Settings.styleNumber(sty, "bodyHeight")), adjust: true, enabled: styleValid })
       row({ key: "style:fixedHeight", label: "Fixed height", value: onOff(fixedHeight), toggle: true, enabled: styleValid })
-      var top = Settings.styleTop(sty)
-      row({ key: "style:top", label: "Distance from top", value: top < 0 ? "Centred" : percent(top), adjust: true, enabled: styleValid })
+      // Alt+arrows move the card from the menu itself; this cycles the presets.
+      row({ key: "style:position", label: "Position", value: Settings.positionLabel(Settings.stylePosition(sty)), adjust: true, enabled: styleValid })
       row({ key: "style:pickerHeight", label: "Picker height", value: percent(Settings.styleNumber(sty, "pickerHeight")), adjust: true, enabled: styleValid })
       row({ key: "style:tabSlide", label: "Tab animation", value: onOff(tabSlideOn), toggle: true, enabled: styleValid })
     } else if (id === "ai") {
@@ -300,10 +300,8 @@ Panel {
     else if (key === "appsView") setState("appsView", Settings.cycle(Settings.APPS_VIEWS, appsView, direction))
     else if (key === "openTab") setState("openTab", Settings.cycle(Settings.OPEN_TABS, openTab, direction))
     else if (key === "cursorStyle") setState("cursorStyle", Settings.cycle(Settings.CURSOR_STYLES, cursorStyle, direction))
-    else if (key === "style:top") {
-      var top = Settings.stepTop(Settings.styleTop(sty), direction)
-      setStyle("top", top < 0 ? "center" : top)
-    } else if (key.indexOf("style:") === 0) {
+    else if (key === "style:position") setPosition(Settings.cyclePosition(Settings.stylePosition(sty), direction))
+    else if (key.indexOf("style:") === 0) {
       var name = key.slice(6)
       setStyle(name, Settings.stepNumber(Settings.styleNumber(sty, name), Settings.STYLE_RANGES[name], direction))
     } else if (key === "ai:agent") setState("aiAgent", Settings.cycle(installedAgents, aiAgent, direction))
@@ -473,6 +471,13 @@ Panel {
     if (!styleValid) return
     styleData = Settings.withKey(styleData, key, value)
     styleWriter.save(Settings.patch(key, value))
+  }
+
+  // Like the menu's own save: position, with the older "top" dropped.
+  function setPosition(pos) {
+    if (!styleValid) return
+    styleData = Settings.withKey(Settings.withKey(styleData, "position", Settings.positionValue(pos)), "top", undefined)
+    styleWriter.save(Settings.positionPatch(pos))
   }
 
   function setAgentEntry(section, value) {

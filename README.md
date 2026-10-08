@@ -23,6 +23,19 @@ Switching tabs preserves the query. Arrow keys select a result; Enter activates
 it. Esc clears the query, then closes the menu; Left or Backspace on an empty
 query goes back a level in System.
 
+The card can be moved with the keyboard:
+
+| Shortcut | Action |
+| --- | --- |
+| Alt+arrows | Move the card across a 3×3 grid of screen positions |
+| Alt+Shift+arrows | Nudge it a little |
+| Alt+0 / Alt+Home | Put it back at the default position |
+
+These keys are taken on every tab, in the search field too, so they never
+reach a row or the query. The card stays where you left it: the position is
+saved to `style.json` when the menu closes. dmenu pickers stay centred. The slide is `"moveMs"` (140) and `"moveEasing"` (`"InOutQuad"`;
+`"OutBack"` overshoots a little for a livelier move) in `style.json`.
+
 | Tab | Contents |
 | --- | --- |
 | **All** | Answers followed by Apps, System, Files and Folders sections, up to five results per section |
@@ -437,7 +450,8 @@ the top so the card grows downward. The stock menu itself is
 | `cardWidth` | `560` | Width in `Style.space()` units (200–2000); chips wrap when narrow |
 | `bodyHeight` | `0.6` | Results area as a share of the screen height |
 | `fixedHeight` | `false` | `false` fits the rows; `true` keeps one size while typing and switching tabs |
-| `top` | `0.2` | `"center"`, or the top edge as a share of the screen |
+| `top` | `0.2` | `"center"`, or the top edge as a share of the screen; `position` wins when set, and saving a position removes it |
+| `position` | — | Written by Alt+arrows and the settings popup: `{"anchorX": "left"\|"center"\|"right", "anchorY": "top"\|"middle"\|"bottom", "offsetX", "offsetY"}`, offsets as a share of the screen from that edge. Pinned to the bottom, the card grows upward |
 | `pickerHeight` | `0.7` | Maximum list height of dmenu pickers |
 | `tabSlide` | `true` | Tab animations; `false` turns them off, whatever the keys below say |
 | `tabSlideMs` | `120` | How long the active-tab highlight slides between tabs (0–1000 ms, 0 jumps) |

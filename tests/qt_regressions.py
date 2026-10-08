@@ -118,6 +118,63 @@ class QtRegressionTests(unittest.TestCase):
         self.assertLessEqual(g.property("cardTop") + g.property("cardHeight"), height - gap + .01)
         self.assertAlmostEqual(g.property("contentHeight"), g.property("cardHeight"))
 
+    def test_bottom_anchored_matrix_stays_on_screen(self):
+        # Pinned to the bottom (Alt+arrows), the card grows upward from its
+        # bottom edge and must keep its footer and usable results on screen.
+        g = self.component("MenuGeometry.qml")
+        for height in [720, 1080, 2304]:
+            for chrome in [100, 250, 1000]:
+                for bottom in [height * .1, height * .5, height - 10, height * 2]:
+                    for body in [0, height * .6, height * .95]:
+                        with self.subTest(height=height, chrome=chrome, bottom=bottom, body=body):
+                            for key, value in dict(viewportHeight=height, gap=10, requestedTop=-1, requestedBottom=bottom,
+                                                   chromeHeight=chrome, desiredBodyHeight=body,
+                                                   minimumBodyHeight=150, reserveHeight=30).items():
+                                g.setProperty(key, value)
+                            self.assertGreaterEqual(g.property("cardTop"), 10)
+                            self.assertLessEqual(g.property("cardTop") + g.property("cardHeight"), height - 10 + .01)
+                            self.assertGreaterEqual(g.property("bodyHeight"), min(body, 150))
+                            self.assertAlmostEqual(g.property("contentHeight"), chrome + g.property("bodyHeight"))
+
+    def test_bottom_anchored_card_grows_up_from_a_fixed_edge(self):
+        height, gap, reserve = 1080, 10, 30
+        edge = height - gap - height * .12
+        g = self.geometry(viewportHeight=height, gap=gap, requestedBottom=edge, chromeHeight=150,
+                          desiredBodyHeight=0, minimumBodyHeight=240, reserveHeight=reserve)
+        self.assertAlmostEqual(g.property("cardTop") + g.property("cardHeight"), edge)
+        g.setProperty("chromeHeight", 150 + reserve)
+        g.setProperty("desiredBodyHeight", 400)
+        self.assertAlmostEqual(g.property("cardTop") + g.property("cardHeight"), edge)
+        self.assertAlmostEqual(g.property("bodyHeight"), 400)
+
+    def test_bottom_edge_too_high_is_lowered_to_fit(self):
+        g = self.geometry(viewportHeight=1080, gap=10, requestedBottom=100, chromeHeight=180,
+                          desiredBodyHeight=600, minimumBodyHeight=240, reserveHeight=30)
+        self.assertEqual(g.property("cardTop"), 10)
+        self.assertGreaterEqual(g.property("bodyHeight"), 240)
+
+    def test_rows_bottom_edge_matches_the_raised_card_edge(self):
+        # The menu budgets its rows against rowsBottomEdge; once the rows want
+        # at least minimumBodyHeight it must be the edge the card ends at.
+        from PySide6.QtCore import Q_ARG, Q_RETURN_ARG, QMetaObject, Qt
+        for bottom in [100, 300, 1000]:
+            with self.subTest(bottom=bottom):
+                g = self.geometry(viewportHeight=1080, gap=10, requestedBottom=bottom, chromeHeight=180,
+                                  desiredBodyHeight=600, minimumBodyHeight=240, reserveHeight=30)
+                edge = QMetaObject.invokeMethod(g, "rowsBottomEdge", Qt.DirectConnection,
+                                                Q_RETURN_ARG("QVariant"), Q_ARG("QVariant", 180))
+                self.assertAlmostEqual(edge, g.property("bottomEdge"))
+                self.assertAlmostEqual(edge, g.property("cardTop") + g.property("cardHeight"))
+
+    def test_centre_shift_moves_and_stays_on_screen(self):
+        g = self.geometry(viewportHeight=1080, gap=10, requestedTop=-1, chromeHeight=180,
+                          desiredBodyHeight=400, minimumBodyHeight=240, reserveHeight=30)
+        centred = g.property("cardTop")
+        g.setProperty("centerShift", -100)
+        self.assertAlmostEqual(g.property("cardTop"), centred - 100)
+        g.setProperty("centerShift", 5000)
+        self.assertAlmostEqual(g.property("cardTop") + g.property("cardHeight"), 1080 - 10)
+
 
 if __name__ == "__main__":
     unittest.main()
