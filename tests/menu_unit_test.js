@@ -61,6 +61,14 @@ eq(Tabs.visibleTabs(null, ["system"], "system").map(t => t.id), Tabs.DEFAULT_TAB
    "a disabled tab opened by route stays visible while active")
 eq(Tabs.firstEnabledTab(null, ["all"]), "apps", "with All off, the first tab that is on opens")
 eq(Tabs.firstEnabledTab(["system", "all"], ["all"]), "system", "first enabled follows the user's order")
+eq(Tabs.openTabFor("first", ["apps", "system", "files", "folders", "all"], []), "apps",
+   "openTab first opens the first tab of the order, not All")
+eq(Tabs.openTabFor(undefined, null, []), "all", "a missing openTab opens the first default tab")
+eq(Tabs.openTabFor("first", ["apps", "system", "all"], ["apps"]), "system", "openTab first skips disabled tabs")
+eq(Tabs.openTabFor("files", null, []), "files", "openTab names a tab")
+eq(Tabs.openTabFor("files", ["system", "all"], ["files"]), "system", "a disabled openTab falls back to the first tab on")
+eq(Tabs.openTabFor("bogus", ["folders"], []), "folders", "an unknown openTab falls back to the first tab on")
+eq(Settings.OPEN_TABS, ["first"].concat(Tabs.DEFAULT_TAB_ORDER), "OPEN_TABS is first plus every tab")
 
 const sections = Tabs.composeSections([
   { title: "Apps", rows: [{ itemId: "a1" }, { itemId: "a2" }, { itemId: "a3" }] },

@@ -140,8 +140,8 @@ Item {
   //   "tabOrder":    the tabs left to right, e.g. ["all","apps","system","files","folders"]
   //   "allSections": the order of All's result sections, e.g. ["apps","system","files","folders"]
   //   "disabledTabs": tabs switched off, e.g. ["files","folders"]; a disabled
-  //                  tab also drops out of All, and if All itself is off,
-  //                  SUPER + SPACE opens the first tab that is on
+  //                  tab also drops out of All, and if the "openTab" tab
+  //                  is off, SUPER + SPACE opens the first tab that is on
   //   "allSectionsOff": sections All does not search, e.g. ["files","folders"];
   //                  the tabs themselves stay
   // Unknown ids are ignored and missing ones appended, so an ordering edit
@@ -151,6 +151,15 @@ Item {
   property var allSectionOrder: Tabs.DEFAULT_ALL_SECTIONS
   property var disabledTabs: []
   property var allSectionsOff: []
+  // state.json "openTab": the tab SUPER + SPACE opens on, "first" (the first
+  // tab of tabOrder that is on) or a tab id (Tabs.openTabFor). Other routes
+  // keep their own tab.
+  property string openTab: "first"
+  // Set while the bare summon's tab was picked from the last state.json read:
+  // the re-read on open can still change it (SettingsStore.applyState), until
+  // the user switches tab or types.
+  property bool openTabPending: false
+  onFilterTextChanged: if (root.filterText) root.openTabPending = false
   readonly property var orderedTabs: Tabs.visibleTabs(root.tabOrder, root.disabledTabs, root.activeTab)
 
   function tabEnabled(id) {
@@ -1153,6 +1162,7 @@ Item {
   // another source. The System tab keeps its place in the menu too.
   function setTab(id) {
     if (!Tabs.isTab(id) || root.dmenuActive) return
+    root.openTabPending = false
     panel.freezeCardTop()
     root.activeTab = id
     root.selectedIndex = 0
@@ -2127,8 +2137,11 @@ Item {
     aiCtl.loadAiConfig()
     settingsStore.loadStyle()
     settingsStore.loadState()
-    if (place.tab === "all" && !root.tabEnabled("all"))
-      place = { tab: Tabs.firstEnabledTab(root.tabOrder, root.disabledTabs), menu: "root" }
+    // The bare summon opens on the "openTab" choice. loadState reads the file
+    // asynchronously, so this uses the last read; applyState re-picks the tab
+    // when the read brings a change.
+    var bareSummon = place.tab === "all" && place.menu === "root"
+    if (bareSummon) place = { tab: Tabs.openTabFor(root.openTab, root.tabOrder, root.disabledTabs), menu: "root" }
     root.activeTab = place.tab
     // Type filters and where to look start over with each open, as in
     // omarchy-find; the sort mode and the result limit are preferences and
@@ -2143,6 +2156,7 @@ Item {
     if (place.tab === "system") Qt.callLater(root.enterSystemPanes)
     if (place.tab === "apps") root.loadProviderForMenu("apps")
     fileCtl.requestFileSearch()
+    root.openTabPending = bareSummon
     return "ok"
   }
 

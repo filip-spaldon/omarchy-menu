@@ -77,6 +77,9 @@ var APPS_VIEWS = ["list", "grid"]
 // right click opens the other.
 var BAR_CLICKS = ["settings", "menu"]
 var CURSOR_STYLES = ["block", "beam", "underline", "outline", "none"]
+// state.json "openTab": the tab SUPER + SPACE opens on; "first" is the first
+// tab of tabOrder that is on (Tabs.openTabFor).
+var OPEN_TABS = ["first", "all", "apps", "windows", "system", "files", "folders"]
 // state.json "zoxide": how zoxide's folder scores enter the file search.
 var ZOXIDE_MODES = ["off", "rank", "results"]
 // state.json's read ceiling: the search roots make it more than a few keys.
@@ -313,6 +316,7 @@ if (typeof module !== "undefined") {
     APPS_VIEWS: APPS_VIEWS,
     BAR_CLICKS: BAR_CLICKS,
     CURSOR_STYLES: CURSOR_STYLES,
+    OPEN_TABS: OPEN_TABS,
     ZOXIDE_MODES: ZOXIDE_MODES,
     STATE_MAX_BYTES: STATE_MAX_BYTES,
     AGENT_EFFORTS: AGENT_EFFORTS,

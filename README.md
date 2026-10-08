@@ -143,6 +143,7 @@ Settings are read on every open from
   "allSections": ["apps", "system", "files", "folders"],
   "disabledTabs": [],
   "allSectionsOff": [],
+  "openTab": "first",
   "cursorStyle": "block",
   "cursorBlink": true,
   "cursorWhenEmpty": true,
@@ -162,12 +163,17 @@ The initial application view is `list`; the example selects `grid`.
 `tabOrder` controls visible tab order and the Ctrl+number shortcuts.
 `allSections` independently controls the order of result sections in All.
 Unknown or duplicate IDs are ignored; omitted IDs are appended in default order.
+`openTab` picks the tab `Super+Space` opens on: `first` (default) is the first
+tab of `tabOrder` that is on, or name one: `all`, `apps`, `windows`, `system`,
+`files` or `folders`. A named tab that is disabled falls back to the first one
+on. Only `Super+Space` follows it; `Super+Alt+Space` still opens Apps and
+System routes such as `capture` still open System.
 
 To hide file and folder search, set `"disabledTabs": ["files", "folders"]`.
 Their sections also disappear from All and its file searches stop. To keep the
 tabs but leave sections out of All's search, list them in `allSectionsOff`
 instead, e.g. `["files", "folders"]`; any section may be off. To open Apps
-by default, disable All and put Apps first in `tabOrder`. Disabling every tab
+by default, put Apps first in `tabOrder` or set `"openTab": "apps"`. Disabling every tab
 is ignored so the launcher remains usable.
 
 Direct routes remain available: opening Apps or a System submenu temporarily
@@ -190,7 +196,9 @@ Add it to the bar with the bar's widget picker, or put
   - **Bar button**: which click opens the popup and which the launcher.
   - **Launcher**: apps view, cursor style, cursor blink, cursor in an empty
     field, answers without `/`.
-  - **Tabs**: switch each tab on or off, and change their order.
+  - **Tabs**: the tab `Super+Space` opens on (**Open on**, `←` `→` cycles
+    First tab and each tab; `openTab`), switch each tab on or off, and change
+    their order.
   - **Search in All**: switch each result section on or off, and change
     their order. A section that is off leaves All only, its tab stays
     (`allSectionsOff` in `state.json`).
