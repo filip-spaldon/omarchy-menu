@@ -1380,15 +1380,19 @@ Item {
     return -1
   }
 
+  // Goes through the same in-place sync as rebuildDisplay: both fill the one
+  // displayModel, and a direct append would bypass the role bookkeeping that
+  // keeps a later sync from leaving stale values behind.
   function rebuildDmenuDisplay() {
-    displayModel.clear()
     root.searchDivider = false
 
     if (root.mode === "input") {
+      root.syncDisplayModel([])
       layoutSerial += 1
       return
     }
 
+    var rows = []
     var query = root.filterText.trim().toLowerCase()
     for (var i = 0; i < root.dmenuOptions.length; i++) {
       // An option is "<label>", "<glyph>\t<label>", or
@@ -1401,7 +1405,7 @@ Item {
       var detail = parts.join("\t")
       if (query && label.toLowerCase().indexOf(query) < 0
           && detail.toLowerCase().indexOf(query) < 0) continue
-      displayModel.append(MenuModel.sanitizeRow({
+      rows.push(MenuModel.sanitizeRow({
         itemId: "dmenu." + i,
         disabled: false,
         kind: "dmenu",
@@ -1421,6 +1425,7 @@ Item {
         trailText: ""
       }))
     }
+    root.syncDisplayModel(rows)
 
     layoutSerial += 1
 
@@ -1578,25 +1583,13 @@ Item {
     return rows
   }
 
-  // The list is updated in place rather than cleared and refilled: a
-  // keystroke rebuilds it 3-5 times, and clearing made the ListView destroy
-  // and re-create every row (icon, labels, border) each time, though most
-  // rows came back unchanged. Rows whose roles all match are left alone;
-  // others are set in place, so their delegates are reused.
+  // The list is updated in place rather than cleared and refilled; see
+  // MenuModel.syncRows. displayRoles remembers every role a row has carried,
+  // so one a new row lacks is reset rather than left showing the previous
+  // row's value.
+  property var displayRoles: ({})
   function syncDisplayModel(rows) {
-    var common = Math.min(rows.length, displayModel.count)
-    for (var i = 0; i < common; i++) {
-      var current = displayModel.get(i)
-      var row = rows[i]
-      for (var role in row) {
-        if (current[role] !== row[role]) {
-          displayModel.set(i, row)
-          break
-        }
-      }
-    }
-    if (displayModel.count > rows.length) displayModel.remove(rows.length, displayModel.count - rows.length)
-    for (var j = common; j < rows.length; j++) displayModel.append(rows[j])
+    MenuModel.syncRows(displayModel, rows, root.displayRoles)
   }
 
   // keepSelection: the list is being rebuilt under an unchanged query (late

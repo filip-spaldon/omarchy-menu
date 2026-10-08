@@ -169,12 +169,65 @@ eq(FileSearch.nextDisplayLimit(200), 15, "display limits wrap")
 
 // ---------------------------------------------------- in-place list sync --
 {
-  const fs = require("fs")
-  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
-  const body = (src, name) => { const i = src.indexOf("function " + name + "("); return i < 0 ? "" : src.slice(i, src.indexOf("\n  function ", i + 1)) }
-  const rebuild = body(menuSource, "rebuildDisplay")
-  eq((rebuild.match(/displayModel\.clear\(\)/g) || []).length, 1, "rebuildDisplay clears the list only before the menu has loaded")
-  eq(/root\.syncDisplayModel\(rows\)/.test(rebuild), true, "rebuildDisplay updates the list in place")
+  // A stand-in for QML's ListModel: set() merges like the real one, so a
+  // role the new row lacks would keep its old value unless syncRows fills it.
+  function stubModel() {
+    const m = {
+      items: [], log: [],
+      get count() { return this.items.length },
+      get(i) { return this.items[i] },
+      set(i, row) { this.log.push("set " + i); Object.assign(this.items[i], row) },
+      setProperty(i, role, value) { this.log.push("setProperty " + i); this.items[i][role] = value },
+      insert(i, row) { this.log.push("insert " + i); this.items.splice(i, 0, Object.assign({}, row)) },
+      remove(i, n) { this.log.push("remove " + i + " " + (n || 1)); this.items.splice(i, n || 1) },
+      append(row) { this.log.push("append"); this.items.push(Object.assign({}, row)) },
+      clear() { this.log.push("clear"); this.items = [] }
+    }
+    return m
+  }
+  const r = (id, extra) => Object.assign({ itemId: id, label: id.toUpperCase(), disabled: false, score: 1 }, extra || {})
+  const ids = m => m.items.map(x => x.itemId)
+
+  const model = stubModel()
+  const roles = {}
+  MenuModel.syncRows(model, [r("a"), r("b")], roles)
+  eq(ids(model), ["a", "b"], "sync fills an empty model")
+  eq(model.log, ["append", "append"], "an empty model is filled by appending")
+
+  model.log = []
+  MenuModel.syncRows(model, [r("a"), r("b"), r("c"), r("d")], roles)
+  eq(ids(model), ["a", "b", "c", "d"], "sync grows the list")
+  eq(model.log, ["append", "append"], "unchanged rows are left alone when the list grows")
+
+  model.log = []
+  MenuModel.syncRows(model, [r("a"), r("b")], roles)
+  eq(ids(model), ["a", "b"], "sync shrinks the list")
+  eq(model.log, ["remove 2 2"], "surplus rows are removed in one call")
+
+  model.log = []
+  MenuModel.syncRows(model, [r("b"), r("a")], roles)
+  eq(ids(model), ["b", "a"], "sync reorders the list")
+  eq(model.items.map(x => x.label), ["B", "A"], "reordered rows carry their own roles")
+  eq(model.log, ["set 0", "set 1"], "reordered rows are set in place, never cleared")
+
+  model.log = []
+  MenuModel.syncRows(model, [r("b", { trailText: "3 min", detail: "x" }), r("a")], roles)
+  eq(model.items[0].trailText, "3 min", "a new role reaches the model")
+  eq(model.items[1].trailText, "", "a row without a new role gets it empty")
+
+  MenuModel.syncRows(model, [r("b", { disabled: true }), r("a")], roles)
+  eq(model.items[0].trailText, "", "a string role missing from the new row does not keep its old value")
+  eq(model.items[0].detail, "", "every missing string role is reset")
+  MenuModel.syncRows(model, [{ itemId: "b", label: "B" }, r("a")], roles)
+  eq(model.items[0].disabled, false, "a missing bool role resets to false")
+  eq(model.items[0].score, 0, "a missing number role resets to 0")
+
+  model.log = []
+  MenuModel.syncRows(model, [{ itemId: "b", label: "B" }, r("a")], roles)
+  eq(model.log, [], "a row equal to its filled-out form is not set again")
+
+  MenuModel.syncRows(model, [], roles)
+  eq(model.count, 0, "an empty result empties the list")
 }
 
 // --------------------------------------------------------- untrusted text --
