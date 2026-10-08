@@ -1601,8 +1601,13 @@ Item {
       return
     }
 
+    // Only a row the user moved to is followed. The top row is where typing
+    // puts the cursor: late results that rank something else first keep it
+    // there. (The list is now updated in place, so the old top row is still
+    // in the model when they arrive and would otherwise drag the cursor down
+    // to wherever it ranks.)
     var previousId = ""
-    if (keepSelection && root.selectedIndex >= 0 && root.selectedIndex < displayModel.count)
+    if (keepSelection && root.selectedIndex > 0 && root.selectedIndex < displayModel.count)
       previousId = displayModel.get(root.selectedIndex).itemId
 
     if (!root.rowsLoaded) {
