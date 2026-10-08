@@ -2193,6 +2193,13 @@ Item {
     onPressed: root.toggleFromShortcut("apps")
   }
 
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-windows"
+    description: "Open or close the Omarchy menu on Windows"
+    onPressed: root.toggleFromShortcut("windows")
+  }
+
   // What the controllers reach for through `menu`.
   readonly property var stateData: settingsStore.stateData
   readonly property string aiAgent: aiCtl.aiAgent

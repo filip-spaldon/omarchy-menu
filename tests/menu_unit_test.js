@@ -553,7 +553,7 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   const fs = require("fs")
   const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
   const names = Array.from(menuSource.matchAll(/GlobalShortcut \{\s*appid: "omarchy-menu-omni"\s*name: "([\w-]+)"/g), m => m[1])
-  eq(names, ["toggle", "toggle-apps"], "the menu's global shortcut names")
+  eq(names, ["toggle", "toggle-apps", "toggle-windows"], "the menu's global shortcut names")
   eq(/if \(root\.shell\) \{[\s\S]*?root\.shell\.toggle\("omarchy\.menu"[\s\S]*?Quickshell\.execDetached\(\["omarchy-menu", "toggle", route\]\)/.test(menuSource), true,
      "a shortcut falls back to omarchy-menu until the shell API is there")
 }
