@@ -81,6 +81,7 @@ Panel {
   readonly property var sectionOrder: Tabs.normalizeOrder(st.allSections, Tabs.DEFAULT_ALL_SECTIONS)
   readonly property var disabledTabs: Tabs.normalizeDisabled(st.disabledTabs)
   readonly property var sectionsOff: Tabs.normalizeSectionsOff(st.allSectionsOff)
+  readonly property string openTab: Settings.OPEN_TABS.indexOf(st.openTab) >= 0 ? st.openTab : "first"
   readonly property string cursorStyle: Settings.CURSOR_STYLES.indexOf(st.cursorStyle) >= 0 ? st.cursorStyle : "block"
   readonly property bool cursorBlink: typeof st.cursorBlink === "boolean" ? st.cursorBlink : true
   readonly property bool cursorWhenEmpty: typeof st.cursorWhenEmpty === "boolean" ? st.cursorWhenEmpty : true
@@ -184,8 +185,11 @@ Panel {
       row({ key: "cursorWhenEmpty", label: "Cursor in empty field", value: onOff(cursorWhenEmpty), toggle: true, enabled: stateValid })
       row({ key: "commandsWithoutSlash", label: "Answers without “/”", value: onOff(commandsWithoutSlash), toggle: true, enabled: stateValid })
     } else if (id === "tabs") {
-      note("Enter switches on or off, ← → moves")
       var tabs = Tabs.orderTabs(tabOrder)
+      // SUPER + SPACE's tab; ← → cycles it.
+      var openOn = tabs.filter(function(t) { return t.id === openTab })[0]
+      row({ key: "openTab", label: "Open on", value: openOn ? openOn.label : "First tab", adjust: true, enabled: stateValid })
+      note("Enter switches on or off, ← → moves")
       for (var t = 0; t < tabs.length; t++)
         row({ key: "tab:" + tabs[t].id, label: tabs[t].label, icon: tabs[t].icon,
               value: disabledTabs.indexOf(tabs[t].id) >= 0 ? "Off" : "On", toggle: true, move: true, enabled: stateValid })
@@ -294,6 +298,7 @@ Panel {
     if (key === "barLeftClick" || key === "barRightClick")
       setState("barLeftClick", Settings.cycle(Settings.BAR_CLICKS, barLeftClick, direction))
     else if (key === "appsView") setState("appsView", Settings.cycle(Settings.APPS_VIEWS, appsView, direction))
+    else if (key === "openTab") setState("openTab", Settings.cycle(Settings.OPEN_TABS, openTab, direction))
     else if (key === "cursorStyle") setState("cursorStyle", Settings.cycle(Settings.CURSOR_STYLES, cursorStyle, direction))
     else if (key === "style:top") {
       var top = Settings.stepTop(Settings.styleTop(sty), direction)

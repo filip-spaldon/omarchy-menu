@@ -94,6 +94,8 @@ Item {
     store.menu.allSectionOrder = Tabs.normalizeOrder(state.allSections, Tabs.DEFAULT_ALL_SECTIONS)
     store.menu.disabledTabs = Tabs.normalizeDisabled(state.disabledTabs)
     store.menu.allSectionsOff = Tabs.normalizeSectionsOff(state.allSectionsOff)
+    // The tab SUPER + SPACE opens on: "first" (default) or a tab id.
+    store.menu.openTab = Settings.OPEN_TABS.indexOf(state.openTab) >= 0 ? state.openTab : "first"
     // Search cursor: "block" (default), "beam", "underline", "outline" or
     // "none"; cursorBlink false keeps it solid.
     store.menu.cursorStyle = Settings.CURSOR_STYLES.indexOf(state.cursorStyle) >= 0 ? state.cursorStyle : "block"
@@ -107,9 +109,15 @@ Item {
     store.menu.zoxideMode = Settings.ZOXIDE_MODES.indexOf(state.zoxide) >= 0 ? state.zoxide : "rank"
     store.menu.zoxideAdd = typeof state.zoxideAdd === "boolean" ? state.zoxideAdd : true
 
-    // Read after the launcher opened (it re-reads on every open): if All was
+    // Read after the launcher opened (it re-reads on every open). A bare
+    // summon picked its tab from the last read: re-pick it from this one,
+    // unless the user already switched tab or typed. Otherwise, if All was
     // just switched off, move on to the first tab that is on.
-    if (store.menu.opened && store.menu.tabsActive && store.menu.activeTab === "all" && !store.menu.tabEnabled("all"))
+    var openTab = Tabs.openTabFor(store.menu.openTab, store.menu.tabOrder, store.menu.disabledTabs)
+    var live = store.menu.opened && store.menu.tabsActive
+    if (live && store.menu.openTabPending && !store.menu.filterText && store.menu.activeTab !== openTab)
+      store.menu.setTab(openTab)
+    else if (live && store.menu.activeTab === "all" && !store.menu.tabEnabled("all"))
       store.menu.setTab(Tabs.firstEnabledTab(store.menu.tabOrder, store.menu.disabledTabs))
     else if (store.menu.opened) {
       store.menu.rebuildDisplay(true)
@@ -120,7 +128,8 @@ Item {
     var defaults = {
       appsView: store.menu.appsView, tabOrder: store.menu.tabOrder,
       allSections: store.menu.allSectionOrder, disabledTabs: store.menu.disabledTabs,
-      allSectionsOff: store.menu.allSectionsOff, cursorStyle: store.menu.cursorStyle,
+      allSectionsOff: store.menu.allSectionsOff, openTab: store.menu.openTab,
+      cursorStyle: store.menu.cursorStyle,
       cursorBlink: store.menu.cursorBlink, cursorWhenEmpty: store.menu.cursorWhenEmpty,
       commandsWithoutSlash: store.menu.commandsWithoutSlash, searchRoots: [],
       zoxide: store.menu.zoxideMode, zoxideAdd: store.menu.zoxideAdd
@@ -131,6 +140,7 @@ Item {
       appsView: state.appsView === "grid" || state.appsView === "list",
       tabOrder: Array.isArray(state.tabOrder), allSections: Array.isArray(state.allSections),
       disabledTabs: Array.isArray(state.disabledTabs), allSectionsOff: Array.isArray(state.allSectionsOff),
+      openTab: Settings.OPEN_TABS.indexOf(state.openTab) >= 0,
       cursorStyle: Settings.CURSOR_STYLES.indexOf(state.cursorStyle) >= 0,
       cursorBlink: typeof state.cursorBlink === "boolean",
       cursorWhenEmpty: typeof state.cursorWhenEmpty === "boolean",

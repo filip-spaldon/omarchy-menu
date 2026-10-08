@@ -108,6 +108,16 @@ function firstEnabledTab(order, disabled) {
   return "all"
 }
 
+// The tab the bare summon (SUPER + SPACE) opens on, from state.json
+// "openTab": "first" (the default) is the first tab of the user's order that
+// is on; a tab id opens that tab, or the first one on when it is switched off
+// or unknown.
+function openTabFor(openTab, order, disabled) {
+  var id = String(openTab || "first")
+  if (id !== "first" && isTab(id) && normalizeDisabled(disabled).indexOf(id) < 0) return id
+  return firstEnabledTab(order, disabled)
+}
+
 function tabIndex(id, tabs) {
   var list = tabs || TABS
   for (var i = 0; i < list.length; i++) if (list[i].id === id) return i
@@ -129,7 +139,8 @@ function cycleTab(id, delta, tabs) {
 }
 
 // A resolved route id to { tab, menu }. The bare summon (SUPER + SPACE) is
-// "root" and opens the launcher on All; "apps" (SUPER + ALT + SPACE) opens the
+// "root" and opens the launcher on All (Menu.qml puts the "openTab" choice
+// in its place, see openTabFor); "apps" (SUPER + ALT + SPACE) opens the
 // Apps tab and "windows" the Windows tab. Every other route -- `capture`, `style.theme`, `system` -- is a
 // place in the system menu, so it opens System already drilled into it.
 function tabForRoute(id) {
@@ -202,6 +213,7 @@ if (typeof module !== "undefined") {
     normalizeSectionsOff: normalizeSectionsOff,
     visibleTabs: visibleTabs,
     firstEnabledTab: firstEnabledTab,
+    openTabFor: openTabFor,
     tabIndex: tabIndex,
     isTab: isTab,
     cycleTab: cycleTab,
