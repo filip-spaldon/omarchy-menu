@@ -36,6 +36,14 @@ reach a row or the query. The card stays where you left it: the position is
 saved to `style.json` when the menu closes. dmenu pickers stay centred. The slide is `"moveMs"` (140) and `"moveEasing"` (`"InOutQuad"`;
 `"OutBack"` overshoots a little for a livelier move) in `style.json`.
 
+The selected row lists what it can do, with its keys (on a file: Enter open,
+Alt+Enter folder, Ctrl+C path), and the part of each label that matches the
+query is in the accent colour. Hold Alt to number the rows on screen;
+Alt+1…9 opens that row. While All searches, each section header says how many
+results it had and what the five-row cap left out ("+4 in Files ⇥"), and the
+tabs show what they found. The footer shows the current tab's keys, and `?` on
+an empty query lists every key (so a search can't start with "?").
+
 | Tab | Contents |
 | --- | --- |
 | **All** | Answers followed by Apps, System, Files and Folders sections, up to five results per section |
@@ -435,7 +443,8 @@ defaults and re-read every time the menu opens:
   "fixedHeight": false,
   "top": 0.2,
   "pickerHeight": 0.7,
-  "tabSlide": true
+  "tabSlide": true,
+  "look": "classic"
 }
 ```
 
@@ -454,6 +463,7 @@ the top so the card grows downward. The stock menu itself is
 | `position` | — | Written by Alt+arrows and the settings popup: `{"anchorX": "left"\|"center"\|"right", "anchorY": "top"\|"middle"\|"bottom", "offsetX", "offsetY"}`, offsets as a share of the screen from that edge. Pinned to the bottom, the card grows upward |
 | `pickerHeight` | `0.7` | Maximum list height of dmenu pickers |
 | `tabSlide` | `true` | Tab animations; `false` turns them off, whatever the keys below say |
+| `look` | `"classic"` | The launcher's design (see Looks below) |
 | `tabSlideMs` | `120` | How long the active-tab highlight slides between tabs (0–1000 ms, 0 jumps) |
 | `tabEasing` | `"OutCubic"` | The slide's Qt easing curve; `tabOvershoot` (`1.70158`) applies to the Back curves |
 | `tabBezier` | — | `[x1, y1, x2, y2]` for a custom cubic-bezier slide, overriding `tabEasing` |
@@ -466,12 +476,27 @@ to a new `style.json`; add them to tune the tab animation.
 Missing or out-of-range values fall back to the defaults above. Some combinations
 to try:
 
-| Look | fontScale | cardWidth | bodyHeight | fixedHeight | top |
+| Preset | fontScale | cardWidth | bodyHeight | fixedHeight | top |
 | --- | --- | --- | --- | --- | --- |
 | Compact | 0.8 | 540 | 0.35 | true | 0.22 |
 | Spotlight | 0.9 | 720 | 0.40 | true | 0.15 |
 | Dense | 0.75 | 680 | 0.55 | true | 0.12 |
 | Comfortable | 1.0 | 640 | 0.38 | true | 0.20 |
+
+### Looks
+
+A look is a design for the launcher card; every look follows the Omarchy
+theme's colours. Pick one with `"look"` in `style.json`, the Look row in the
+bar popup, or Alt+L / Alt+Shift+L in the open menu (saved when it closes).
+dmenu pickers always use Classic.
+
+| Look | What it is |
+| --- | --- |
+| `classic` | The card described above: icons, tab chips, counts, keycaps |
+| `mala` | One quiet column of text: no icons, boxes or counters. The query is set larger, tabs are lowercase words with a sliding dot, matches are in full ink against dimmed text, rows are numbered in the margin (Alt+1…9 opens one) and an accent bead marks the selection |
+| `wayfinder` | The results as a transit map: tabs are stations on a line, results hang off a trunk with the route drawn down to the selected stop, rows carry map references (A1, F5…) as keycaps for Alt+n, and section headers are interchange hexagons |
+| `axis` | No card: two hairlines cross the screen. The horizontal one carries what you typed, the vertical one what exists, and the row at the crossing is what Enter does; the list moves through the crossing, which stays put. The launcher position picks which rule-of-thirds point the lines cross at |
+| `konstrukt` | Every result appears twice: as a row in the list on the left, and as a flat Suprematist shape in the field on the right. Shape and colour show the kind, size how much of the name the query covers, tilt the age, and place the rank on a sunflower spiral, best in the middle |
 
 The empty All prompt is always compact. Source edits usually reload
 automatically; after adding or renaming a file run `omarchy restart shell`.
@@ -488,7 +513,7 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `ai/*.js` | Pure logic, tested with Node |
+| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `KeySheet.js`, `Looks.js`, `Konstrukt.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.

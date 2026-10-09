@@ -6,7 +6,7 @@
 // style.json: the card's geometry. See SettingsStore.qml for what each does.
 var STYLE_DEFAULTS = {
   fontScale: 1.0, cardWidth: 560, bodyHeight: 0.6, fixedHeight: false, top: 0.2, pickerHeight: 0.7,
-  tabSlide: true
+  tabSlide: true, look: "classic"
 }
 
 // Numeric style.json keys: accepted range and the step the popup moves by.

@@ -18,6 +18,93 @@ Item {
   required property color accent
   required property int fontSize
 
+  // The look's tab treatment (Menu.qml tabStyle, tabCase): "chip" pills
+  // with a sliding highlight, in title case, unless a style's State in
+  // styleStates below sets the properties that follow.
+  property string tabStyle: "chip"
+  property string tabCase: "title"
+  // The card colour, for a look whose active tab is filled solid.
+  property color background: "black"
+  property color litColor: bar.accent        // the active tab's label
+  property bool dot: false                   // a dot under the active tab instead of a pill
+  property color highlightColor: Util.alpha(bar.accent, 0.22 + 0.24 * bar.popStrength * bar.glow)
+  property bool icons: true                  // the tab icons
+  property real labelDim: 0.8                // inactive labels
+  property real pad: Style.space(bar.hasCounts ? 13 : 20)
+  property color chipIdle: Util.alpha(bar.foreground, 0.07)
+  property color chipHover: Util.alpha(bar.accent, 0.10)
+  // The accent colour travels with the highlight (the lit copy of a label,
+  // clipped to it) rather than switching tab by tab.
+  property bool sweepLabels: true
+
+  // One State per tab style, in one group (see Menu.qml lookStates).
+  StateGroup {
+    id: styleStates
+    states: [
+      // Mala: bare words with a sliding dot.
+      State {
+        when: bar.tabStyle === "word"
+        PropertyChanges {
+          bar.litColor: bar.foreground
+          bar.dot: true
+          bar.highlightColor: Util.alpha(bar.foreground, 0.85)
+          bar.icons: false
+          bar.labelDim: 0.5
+          bar.pad: Style.space(12)
+          bar.chipIdle: "transparent"
+          bar.chipHover: "transparent"
+          bar.sweepLabels: false
+        }
+      },
+      // Wayfinder: stops on a line, the active one a filled capsule.
+      State {
+        when: bar.tabStyle === "station"
+        PropertyChanges {
+          bar.litColor: bar.background
+          bar.highlightColor: bar.accent
+          bar.icons: false
+          bar.chipIdle: bar.background
+          bar.chipHover: Qt.tint(bar.background, Util.alpha(bar.accent, 0.12))
+        }
+      },
+    ]
+  }
+
+
+  function caseLabel(text) {
+    return bar.tabCase === "lower" ? String(text).toLowerCase()
+      : (bar.tabCase === "upper" ? String(text).toUpperCase() : String(text))
+  }
+  // Match counts per tab id, shown small after the label when present.
+  property var counts: ({})
+  readonly property bool hasCounts: Object.keys(bar.counts).length > 0
+  // The count slot: room for as many digits as the widest count on show
+  // ("99+" above 99), tabular, so chips keep their size while typing.
+  readonly property string countPattern: {
+    var digits = 1
+    for (var id in bar.counts) {
+      var n = Number(bar.counts[id])
+      digits = Math.max(digits, n > 99 ? 3 : String(n).length)
+    }
+    return digits >= 3 ? "99+" : (digits === 2 ? "00" : "0")
+  }
+  TextMetrics { id: countSlot; font.family: bar.fontFamily; font.pixelSize: Math.round(bar.fontSize * 0.85); text: bar.countPattern }
+  readonly property real countSlotWidth: countSlot.advanceWidth
+  // Whether every tab's count fits on one line. Measured from the labels
+  // alone (chip.fullWidth does not depend on which counts show), so hiding
+  // counts can never feed back into this. When they do not fit, only the
+  // active tab keeps its count.
+  readonly property real naturalWidth: {
+    var w = 0
+    var n = bar.chipsVersion >= 0 ? repeater.count : 0
+    for (var i = 0; i < n; i++) {
+      var c = repeater.itemAt(i)
+      if (c) w += c.fullWidth
+    }
+    return w + Math.max(0, n - 1) * Style.space(6)
+  }
+  readonly property bool showAllCounts: bar.naturalWidth <= bar.width
+
   signal tabClicked(string id)
 
   // The menu passes style.json's tab animation keys (Settings.tabAnim).
@@ -88,15 +175,28 @@ Item {
   implicitWidth: flow.implicitWidth
   implicitHeight: flow.implicitHeight
 
+  // Wayfinder's stations: the line the stops sit on, behind the first row.
+  Rectangle {
+    visible: bar.tabStyle === "station" && repeater.count > 1
+    x: Style.space(10)
+    width: Math.max(0, flow.width - Style.space(20))
+    height: Style.spacing.hairline
+    y: bar.activeChip ? Math.round(bar.activeChip.height / 2) : 0
+    color: Util.alpha(bar.foreground, 0.22)
+  }
+
+  // A dot (dot: true) sits under the active tab; a pill covers it.
+  readonly property int dotSize: Math.max(3, Math.round(bar.fontSize / 4))
+
   Rectangle {
     id: highlight
     visible: bar.activeChip !== null
-    x: bar.activeChip ? bar.activeChip.x : 0
-    y: bar.activeChip ? bar.activeChip.y : 0
-    width: bar.activeChip ? bar.activeChip.width : 0
-    height: bar.activeChip ? bar.activeChip.height : 0
+    x: bar.activeChip ? (bar.dot ? bar.activeChip.x + (bar.activeChip.width - bar.dotSize) / 2 : bar.activeChip.x) : 0
+    y: bar.activeChip ? (bar.dot ? bar.activeChip.y + bar.activeChip.height - bar.dotSize : bar.activeChip.y) : 0
+    width: bar.activeChip ? (bar.dot ? bar.dotSize : bar.activeChip.width) : 0
+    height: bar.activeChip ? (bar.dot ? bar.dotSize : bar.activeChip.height) : 0
     radius: height / 2
-    color: Util.alpha(bar.accent, 0.22 + 0.24 * bar.popStrength * bar.glow)
+    color: bar.highlightColor
     scale: 1 + 0.10 * bar.popStrength * bar.glow
 
     Behavior on x { enabled: bar.sliding; NumberAnimation { duration: bar.slideDuration; easing.type: bar.slideEasing; easing.overshoot: bar.anim.tabOvershoot; easing.bezierCurve: bar.slideBezier } }
@@ -114,10 +214,23 @@ Item {
     required property bool lit
     spacing: Style.space(6)
 
+    // Wayfinder's stations: a stop ring in place of the icon.
+    Rectangle {
+      visible: label.owner.tabStyle === "station"
+      width: Math.round(label.owner.fontSize * 0.7)
+      height: width
+      radius: width / 2
+      color: "transparent"
+      border.width: Math.max(1, Math.round(width / 5))
+      border.color: label.lit ? label.owner.litColor : Util.alpha(label.owner.foreground, 0.6)
+      anchors.verticalCenter: parent.verticalCenter
+    }
+
     Text {
       textFormat: Text.PlainText
+      visible: label.owner.icons
       text: label.chipData.icon
-      color: label.lit ? label.owner.accent : label.owner.foreground
+      color: label.lit ? label.owner.litColor : label.owner.foreground
       opacity: label.lit ? 1 : 0.7
       font.family: label.owner.fontFamily
       font.pixelSize: label.owner.fontSize
@@ -127,14 +240,30 @@ Item {
 
     Text {
       textFormat: Text.PlainText
-      text: label.chipData.label
-      color: label.lit ? label.owner.accent : label.owner.foreground
-      opacity: label.lit ? 1 : 0.8
+      text: label.owner.caseLabel(label.chipData.label)
+      color: label.lit ? label.owner.litColor : label.owner.foreground
+      opacity: label.lit ? 1 : label.owner.labelDim
       font.family: label.owner.fontFamily
       font.pixelSize: label.owner.fontSize
       font.weight: label.bold ? Font.DemiBold : Font.Normal
       anchors.verticalCenter: parent.verticalCenter
       Behavior on color { enabled: label.owner.sliding; ColorAnimation { duration: label.owner.slideDuration } }
+    }
+
+    // The count: the bar's slot width, tabular digits.
+    Text {
+      readonly property var count: label.owner.counts[label.chipData.id]
+      visible: count !== undefined && (label.owner.showAllCounts || label.bold)
+      width: label.owner.countSlotWidth
+      horizontalAlignment: Text.AlignLeft
+      font.features: ({ "tnum": 1 })
+      textFormat: Text.PlainText
+      text: count !== undefined ? (count > 99 ? "99+" : String(count)) : ""
+      color: label.lit ? label.owner.litColor : label.owner.foreground
+      opacity: label.lit ? 0.8 : 0.5
+      font.family: label.owner.fontFamily
+      font.pixelSize: Math.round(label.owner.fontSize * 0.85)
+      anchors.verticalCenter: parent.verticalCenter
     }
   }
 
@@ -155,13 +284,20 @@ Item {
         required property var modelData
         readonly property bool active: chip.modelData.id === bar.activeTab
 
-        width: chipRow.implicitWidth + Style.space(20)
+        // Counts widen the chips; tighter padding keeps six on one line.
+        readonly property real pad: bar.pad
+        width: chipRow.implicitWidth + chip.pad
+        // The chip's width with its count showing, measured from the label
+        // (bold, the widest it gets), for the bar's fit check.
+        TextMetrics { id: labelSize; font.family: bar.fontFamily; font.pixelSize: bar.fontSize; font.weight: Font.DemiBold; text: bar.caseLabel(chip.modelData.label) }
+        TextMetrics { id: iconSize; font.family: bar.fontFamily; font.pixelSize: bar.fontSize; text: bar.icons ? (chip.modelData.icon || "") : "" }
+        readonly property real fullWidth: labelSize.advanceWidth + chip.pad
+          + (iconSize.text ? iconSize.advanceWidth + Style.space(6) : 0)
+          + (bar.counts[chip.modelData.id] !== undefined ? bar.countSlotWidth + Style.space(6) : 0)
         height: chipRow.implicitHeight + Style.space(10)
         radius: height / 2
         // The active fill is the sliding highlight underneath.
-        color: chip.active
-          ? "transparent"
-          : (chipMouse.containsMouse ? Util.alpha(bar.accent, 0.10) : Util.alpha(bar.foreground, 0.07))
+        color: chip.active ? "transparent" : (chipMouse.containsMouse ? bar.chipHover : bar.chipIdle)
 
         ChipLabel {
           id: chipRow
@@ -171,7 +307,7 @@ Item {
           bold: chip.active
           // Sweeping, the lit copy below does the colouring; this stays the
           // plain label underneath it.
-          lit: chip.active && !bar.sweep
+          lit: chip.active && (!bar.sweep || !bar.sweepLabels)
         }
 
         // The label again in the accent colour, clipped to the part of the
@@ -179,7 +315,7 @@ Item {
         // instead of switching chip by chip.
         Item {
           id: litClip
-          visible: bar.sweep && width > 0 && height > 0
+          visible: bar.sweep && bar.sweepLabels && width > 0 && height > 0
           clip: true
           readonly property real fromX: Math.max(0, highlight.x - chip.x)
           readonly property real fromY: Math.max(0, highlight.y - chip.y)

@@ -157,8 +157,11 @@ function tabForRoute(id) {
 // divider, which uses the same role.
 var HEADER_PREFIX = "hdr:"
 
-function headerSection(title) {
-  return HEADER_PREFIX + String(title || "")
+// A header can carry how many rows its section had before the per-section
+// cap ("hdr:Files|9"), so the header can say "9" and "+4 more" without a
+// second pass. The count is not part of the title.
+function headerSection(title, total) {
+  return HEADER_PREFIX + String(title || "") + (total > 0 ? "|" + total : "")
 }
 
 function isHeaderSection(section) {
@@ -166,7 +169,30 @@ function isHeaderSection(section) {
 }
 
 function headerTitle(section) {
-  return isHeaderSection(section) ? String(section).slice(HEADER_PREFIX.length) : ""
+  if (!isHeaderSection(section)) return ""
+  var body = String(section).slice(HEADER_PREFIX.length)
+  var bar = body.lastIndexOf("|")
+  return bar >= 0 && /^\d+$/.test(body.slice(bar + 1)) ? body.slice(0, bar) : body
+}
+
+// The section's row count before the cap, or 0 when the header carries none.
+function headerTotal(section) {
+  if (!isHeaderSection(section)) return 0
+  var m = /\|(\d+)$/.exec(String(section))
+  return m ? parseInt(m[1], 10) : 0
+}
+
+// Whether two { id: count } maps hold the same counts (the tab chips'
+// counts are replaced only when one changed).
+function sameCounts(a, b) {
+  a = a || {}
+  b = b || {}
+  var n = 0
+  for (var id in a) {
+    if (a[id] !== b[id]) return false
+    n++
+  }
+  return n === Object.keys(b).length
 }
 
 // sections: [{ title, rows }] in display order. Empty sections vanish, each
@@ -179,7 +205,7 @@ function composeSections(sections, perSection) {
   for (var s = 0; s < (sections || []).length; s++) {
     var section = sections[s]
     if (!section || !section.rows || section.rows.length === 0) continue
-    var header = section.title ? headerSection(section.title) : ""
+    var header = section.title ? headerSection(section.title, section.rows.length) : ""
     for (var r = 0; r < section.rows.length && r < limit; r++) {
       var copy = {}
       var row = section.rows[r]
@@ -221,7 +247,9 @@ if (typeof module !== "undefined") {
     headerSection: headerSection,
     isHeaderSection: isHeaderSection,
     headerTitle: headerTitle,
+    headerTotal: headerTotal,
     composeSections: composeSections,
+    sameCounts: sameCounts,
     indexOfItem: indexOfItem
   }
 }

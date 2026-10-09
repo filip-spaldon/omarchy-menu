@@ -4,12 +4,15 @@ import qs.Commons
 import qs.Ui
 import "Windows.js" as Windows
 
-// One row of the result list: icon or app icon, label, detail line,
-// right-hand text (a file's mtime) and a chevron for submenus. Roles come
-// from the menu's row model; pointer handling goes back to the menu.
+// One row in the Wayfinder look: a stop on the trunk line, the icon, label
+// and detail, and a map reference (A1, F5…) as a keycap for Alt+n. The
+// selected row is filled and its stop is an interchange ring. Same roles
+// and pointer handling as ResultRow; a row of its own so that classic rows
+// carry none of this.
 BorderSurface {
   id: row
-  required property var menu
+  // Made by the list from Menu.lookRows, so the menu comes through it.
+  readonly property var menu: ListView.view.lookMenu
 
   required property int index
   required property string itemId
@@ -36,23 +39,23 @@ BorderSurface {
   readonly property int windowCount: row.kind === "app" ? row.menu.appWindowCount(row.appId) : 0
   readonly property string trailShown: row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
 
-  // The row's place among those on screen, 1-9: holding Alt shows it, and
-  // Alt+n opens the row.
+  // The row's place among those on screen, 1-9, shown in its map
+  // reference; Alt+n opens the row.
   readonly property int ordinal: row.index - row.menu.firstVisibleRow + 1
-  readonly property bool numbered: row.menu.altHeld && row.kind !== "example"
-    && row.ordinal >= 1 && row.ordinal <= 9
+  readonly property bool numbered: row.kind !== "example" && row.ordinal >= 1 && row.ordinal <= 9
+  // A letter for the row's kind and its number on screen ("file", 5 ->
+  // "F5"): A apps, W windows, F files, D folders (apart from files), S
+  // everything from the System menu.
+  readonly property string mapRef: (({ app: "A", window: "W", file: "F", folder: "D" })[row.kind] || "S") + row.ordinal
+  // The trunk line's gutter, left of the icons.
+  readonly property int gutter: Style.space(26)
   // Where the label's middle sits, for the number and the actions.
   readonly property real labelCenterY: contentColumn.y + labelText.y + labelText.height / 2
-  // The selected row's actions and their keys, where the date was.
-  readonly property var actions: !row.hasCursor ? []
-    : (row.kind === "file" || row.kind === "folder" ? [["↵", "open"], ["alt ↵", "folder"], ["^C", "path"]]
-    : row.kind === "app" ? [["↵", "open"], ["shift ↵", "new window"]]
-    : row.kind === "window" ? [["↵", "go to"]] : [])
-  // The label with the query's match in the accent colour, or "" to keep
-  // plain text (Menu.qml, markRow).
+  // The label with the query's match underlined, or "" to keep plain text
+  // (Menu.qml, markRow).
   required property string marked
 
-  // The selection marker follows the row with the cursor (Menu.qml).
+  // The route follows the row with the cursor (Menu.qml).
   onHasCursorChanged: if (row.hasCursor) row.menu.cursorRow = row
   Component.onCompleted: if (row.hasCursor) row.menu.cursorRow = row
 
@@ -61,45 +64,54 @@ BorderSurface {
   width: ListView.view.width
   height: row.menu.rowHeightForDetail(row.detail, row.kind)
   radius: row.menu.rowRadius
-  // The selection is drawn by the list (Menu.qml, selMarker), gliding
-  // between rows; the rows themselves stay unfilled.
-  color: "transparent"
-  borderSpec: Border.none()
+  // The selected row is filled with the theme's selection colours.
+  color: row.hasCursor ? row.menu.selectedBackground : "transparent"
+  borderSpec: row.hasCursor ? row.menu.selectedBorderSpec : Border.none()
 
+  // This row's stop on the trunk line (the line itself and the route are in
+  // Menu.qml). Stops above the selection are lit, as the route has passed
+  // them; the selected stop is an interchange ring that opens with a small
+  // overshoot as the route pulls in.
   Rectangle {
-    visible: false
-    width: Style.space(4)
-    height: parent.height - Style.space(18)
-    radius: Math.min(row.menu.cornerRadius, Style.space(4))
-    color: row.menu.selectedBackground
-    anchors.left: parent.left
-    anchors.leftMargin: row.menu.rowReservedBorderLeft + Style.space(8)
-    anchors.verticalCenter: parent.verticalCenter
-  }
+    id: stopRing
+    readonly property int size: row.hasCursor ? Style.space(14) : Style.space(8)
+    width: size
+    height: size
+    radius: size / 2
+    x: Math.round((row.gutter - size) / 2)
+    y: Math.round(row.labelCenterY - size / 2)
+    color: row.menu.background
+    border.width: row.hasCursor ? Style.space(3) : Math.max(1, Style.space(2))
+    border.color: row.hasCursor || (row.menu.cursorActive && row.index < row.menu.selectedIndex)
+      ? Color.accent : Util.alpha(row.menu.foreground, 0.45)
 
-  // With Alt held: the row's number, as a keycap, over its icon. Loaded
-  // only then: every row is rebuilt on each keystroke, so what a row does
-  // not show should cost it nothing.
-  Loader {
-    active: row.numbered
-    z: 2
-    x: row.menu.rowReservedBorderLeft + Style.space(8) + (row.menu.iconSlotWidth - width) / 2
-    y: Math.round(row.labelCenterY - height / 2)
-    sourceComponent: Rectangle {
-      width: Math.round(row.menu.scaledFont(Style.font.iconLarge) * 0.95)
+    // A little under the ring's size, up past it and settling. Never below
+    // a plain stop or the train's width (from 0.45 the new ring was a dot
+    // inside the train's end for frames). Leaving is instant.
+    NumberAnimation {
+      id: ringPop
+      target: stopRing
+      property: "scale"
+      from: 0.8
+      to: 1
+      duration: 260
+      easing.type: Easing.OutBack
+      easing.overshoot: 3
+    }
+    readonly property bool selected: row.hasCursor
+    onSelectedChanged: {
+      ringPop.stop()
+      stopRing.scale = 1
+      if (stopRing.selected) ringPop.start()
+    }
+
+    Rectangle {
+      visible: row.hasCursor
+      anchors.centerIn: parent
+      width: Style.space(4)
       height: width
-      radius: Style.space(4)
-      color: row.menu.foreground
-
-      Text {
-        anchors.centerIn: parent
-        textFormat: Text.PlainText
-        text: String(row.ordinal)
-        color: row.menu.background
-        font.family: row.menu.fontFamily
-        font.pixelSize: row.menu.scaledFont(Style.font.body)
-        font.weight: Font.Bold
-      }
+      radius: width / 2
+      color: Color.accent
     }
   }
 
@@ -115,7 +127,7 @@ BorderSurface {
     horizontalAlignment: Text.AlignHCenter
     verticalAlignment: Text.AlignVCenter
     anchors.left: parent.left
-    anchors.leftMargin: row.menu.rowReservedBorderLeft + Style.space(8)
+    anchors.leftMargin: row.gutter + Style.space(4)
     y: contentColumn.y + labelText.y + (labelText.height - height) / 2
   }
 
@@ -132,7 +144,7 @@ BorderSurface {
     source: row.isApp ? row.menu.appIconSource(row.appIcon) : ""
     asynchronous: true
     anchors.left: parent.left
-    anchors.leftMargin: row.menu.rowReservedBorderLeft + Style.space(8) + (row.menu.iconSlotWidth - width) / 2
+    anchors.leftMargin: row.gutter + Style.space(4) + (row.menu.iconSlotWidth - width) / 2
     y: contentColumn.y + labelText.y + (labelText.height - height) / 2
   }
 
@@ -147,8 +159,8 @@ BorderSurface {
   Column {
     id: contentColumn
     anchors.left: row.hasIcon ? iconText.right : parent.left
-    anchors.leftMargin: row.hasIcon ? Style.space(6) : row.menu.rowReservedBorderLeft + Style.space(18)
-    anchors.right: actionRow.visible ? actionRow.left : (trailLabel.visible ? trailLabel.left : trail.left)
+    anchors.leftMargin: row.hasIcon ? Style.space(6) : row.gutter + Style.space(8)
+    anchors.right: trailLabel.visible ? trailLabel.left : refCap.left
     anchors.rightMargin: Style.space(6)
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(3)
@@ -158,7 +170,7 @@ BorderSurface {
       textFormat: row.marked ? Text.StyledText : Text.PlainText
       width: parent.width
       text: row.marked || row.label
-      color: row.hasCursor ? row.menu.selectionText : row.menu.foreground
+      color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
       font.family: row.menu.fontFamily
       font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.body : Style.font.heading)
       font.weight: Font.Medium
@@ -178,68 +190,45 @@ BorderSurface {
     }
   }
 
-  // The selected row's actions, as keycaps; they take the date's place.
-  // Loaded on the selected row only.
-  Loader {
-    id: actionRow
-    active: row.actions.length > 0
-    visible: active
-    anchors.right: trail.left
-    anchors.rightMargin: Style.space(6)
-    y: Math.round(row.labelCenterY - height / 2)
-    sourceComponent: Row {
-      spacing: Style.space(10)
-
-      Repeater {
-        model: row.actions
-        Row {
-          required property var modelData
-          spacing: Style.space(4)
-          Rectangle {
-            width: capText.implicitWidth + Style.space(8)
-            height: capText.implicitHeight + Style.space(2)
-            radius: Style.space(3)
-            color: "transparent"
-            border.width: 1
-            border.color: Util.alpha(row.menu.foreground, 0.32)
-            anchors.verticalCenter: parent.verticalCenter
-            Text {
-              id: capText
-              anchors.centerIn: parent
-              textFormat: Text.PlainText
-              text: modelData[0]
-              color: row.menu.foreground
-              opacity: 0.85
-              font.family: row.menu.fontFamily
-              font.pixelSize: row.menu.scaledFont(Style.font.caption)
-            }
-          }
-          Text {
-            textFormat: Text.PlainText
-            text: modelData[1]
-            color: row.menu.foreground
-            opacity: 0.7
-            font.family: row.menu.fontFamily
-            font.pixelSize: row.menu.scaledFont(Style.font.caption)
-            anchors.verticalCenter: parent.verticalCenter
-          }
-        }
-      }
-    }
-  }
-
   Text {
     id: trailLabel
     textFormat: Text.PlainText
-    visible: row.trailShown.length > 0 && !actionRow.visible
+    visible: row.trailShown.length > 0
     text: row.trailShown
     color: row.menu.foreground
     opacity: 0.45
     font.family: row.menu.fontFamily
     font.pixelSize: row.menu.scaledFont(Style.font.bodySmall)
-    anchors.right: trail.left
+    anchors.right: refCap.left
     anchors.rightMargin: Style.space(6)
     anchors.verticalCenter: parent.verticalCenter
+  }
+
+  // The map reference, a keycap for Alt+n; filled on the selection.
+  Rectangle {
+    id: refCap
+    visible: row.numbered
+    width: visible ? refText.implicitWidth + Style.space(10) : 0
+    height: refText.implicitHeight + Style.space(4)
+    radius: Style.space(3)
+    color: row.hasCursor ? Color.accent : "transparent"
+    border.width: row.hasCursor ? 0 : 1
+    border.color: Util.alpha(row.menu.foreground, 0.35)
+    anchors.right: trail.left
+    anchors.rightMargin: Style.space(6)
+    y: Math.round(row.labelCenterY - height / 2)
+
+    Text {
+      id: refText
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: row.mapRef
+      color: row.hasCursor ? row.menu.background : row.menu.foreground
+      opacity: row.hasCursor ? 1 : 0.7
+      font.family: row.menu.fontFamily
+      font.pixelSize: row.menu.scaledFont(Style.font.caption)
+      font.weight: Font.DemiBold
+    }
   }
 
   Row {
