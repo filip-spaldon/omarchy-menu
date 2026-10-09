@@ -725,10 +725,16 @@ function boundOutput(argv, lineMax, outMax, errLineMax, errMax) {
 // fetching a URL the moment it is drawn) gets through. The escape has to
 // survive backslashes already in the text: \<img would turn into \\<img,
 // an escaped backslash followed by raw HTML. So each run of backslashes in
-// front of "<" is kept and given one more when it is even.
+// front of "<" is kept and given one more when it is even. Image markers
+// are removed until none is left: dropping the one in !![x](url) would
+// otherwise leave ![x](url) behind.
 function markdownSafe(text) {
-  return String(text || "")
-    .replace(/!(\\*)\[/g, "$1[")
+  var out = String(text || ""), before
+  do {
+    before = out
+    out = out.replace(/!(\\*)\[/g, "$1[")
+  } while (out !== before)
+  return out
     .replace(/(\\*)</g, function(match, slashes) {
       return slashes + (slashes.length % 2 === 0 ? "\\" : "") + "<"
     })
