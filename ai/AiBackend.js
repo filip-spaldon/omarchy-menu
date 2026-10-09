@@ -722,22 +722,27 @@ function boundOutput(argv, lineMax, outMax, errLineMax, errMax) {
 
 // An answer made safe to render as Markdown (Text.MarkdownText): images are
 // demoted to links, and every "<" is escaped so no raw HTML (an <img>
-// fetching a URL the moment it is drawn) gets through. The escape has to
-// survive backslashes already in the text: \<img would turn into \\<img,
-// an escaped backslash followed by raw HTML. So each run of backslashes in
-// front of "<" is kept and given one more when it is even. Image markers
-// are removed until none is left: dropping the one in !![x](url) would
-// otherwise leave ![x](url) behind.
+// fetching a URL the moment it is drawn) gets through. Every "!" right
+// before a "[" is dropped, a whole run of them at once: dropping only the
+// last one of !![x](url) would leave ![x](url) behind. The "<" escape has to
+// survive backslashes already in the text: \<img would turn into \\<img, an
+// escaped backslash followed by raw HTML. So each run of backslashes in
+// front of "<" is kept and given one more when it is even. One pass over the
+// text with no regex backtracking: the answer comes from the provider, and
+// a long run of "!" or "\" must not stall the UI thread.
 function markdownSafe(text) {
-  var out = String(text || ""), before
-  do {
-    before = out
-    out = out.replace(/!(\\*)\[/g, "$1[")
-  } while (out !== before)
-  return out
-    .replace(/(\\*)</g, function(match, slashes) {
-      return slashes + (slashes.length % 2 === 0 ? "\\" : "") + "<"
-    })
+  var s = String(text || ""), out = [], slashes = 0
+  for (var i = 0; i < s.length; i++) {
+    var c = s[i]
+    if (c === "[") {
+      while (out.length > 0 && out[out.length - 1] === "!") out.pop()
+    } else if (c === "<" && slashes % 2 === 0) {
+      out.push("\\")
+    }
+    out.push(c)
+    slashes = c === "\\" ? slashes + 1 : 0
+  }
+  return out.join("")
 }
 
 function wrapForGroup(argv) {

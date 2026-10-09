@@ -1312,8 +1312,16 @@ for (const id of ["agy", "opencode"]) {
   eq(safe("\\\\<img src=x>"), "\\\\\\<img src=x>", "an escaped backslash before < gets the < escaped too")
   eq(safe("![a](https://x/?q=1)"), "[a](https://x/?q=1)", "images become links")
   for (const text of ["!![x](https://x/p)", "!!![x](https://x/p)", "!\\![x](https://x/p)", "!!\\[x](https://x/p)", "a!![x][r]\n\n[r]: https://x/p"])
-    assert(!/!\\*\[/.test(safe(text)), "no image marker survives: " + JSON.stringify(text))
+    assert(!/!\[/.test(safe(text)), "no image marker survives: " + JSON.stringify(text))
   eq(safe("!![x](https://x/p)"), "[x](https://x/p)", "stacked image markers all go")
+  eq(safe("a! b [c]"), "a! b [c]", "a ! that is not right before [ stays")
+  // Long provider-controlled runs take one pass, not one pass per character.
+  for (const [what, text] of [["!", "!".repeat(500000) + "[x](https://x/p)"], ["\\", "\\".repeat(500000) + "<img>"]]) {
+    const t0 = Date.now()
+    const out = safe(text)
+    assert(Date.now() - t0 < 1000, "a run of 500000 " + what + " is rendered safe in linear time")
+    assert(oddBefore(out) && !/!\[/.test(out), "and safe: " + what)
+  }
   eq(safe(null), "", "no text renders as empty")
 }
 
