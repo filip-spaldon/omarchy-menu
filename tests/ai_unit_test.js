@@ -149,9 +149,24 @@ function drainToReady(maxTicks) {
   assert(AiAdapters.uuidv4() !== AiAdapters.uuidv4(), "uuidv4 is not constant across calls")
 }
 
-// argv safety: prompt must always be a single literal argv element, never
-// concatenated into another string, for every adapter.
-for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
+// Prompt privacy: a runnable adapter never puts the question in argv (every
+// local user can read argv from /proc); it is written to stdin. The adapters
+// that cannot take it there are refused by beginGeneration.
+for (const id of ["claude", "codex", "pi"]) {
+  const adapter = AiAdapters.get(id)
+  const secret = "\"'; $(echo hi) `uname` | ; \n secret-question"
+  const argv = adapter.buildRun(secret, null, AiConfig.defaults())
+  assert(adapter.promptViaStdin === true, id + " takes the prompt on stdin")
+  assert(!argv.some(a => a.indexOf("secret-question") !== -1), id + ".buildRun keeps the prompt out of argv")
+  for (const part of argv) assert(typeof part === "string", id + ".buildRun argv elements are all strings")
+}
+eq(AiAdapters.get("claude").buildRun("q", null, AiConfig.defaults()).slice(0, 2), ["claude", "-p"], "claude -p with no prompt argument reads stdin")
+eq(AiAdapters.get("codex").buildRun("q", null, AiConfig.defaults()).slice(-1), ["-"], "codex exec - reads stdin")
+eq(AiAdapters.get("pi").buildRun("q", null, AiConfig.defaults()).slice(-1), ["-p"], "pi -p with no message reads stdin")
+
+// The adapters kept for when they return (agy, opencode) still build argv
+// with the prompt as one literal element.
+for (const id of ["agy", "opencode"]) {
   const adapter = AiAdapters.get(id)
   assert(adapter !== null, "adapter registered: " + id)
   const nasty = "\"'; $(echo hi) `uname` | ; \n中文 🚀"
@@ -323,8 +338,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   assert(adapter !== null, "pi adapter registered")
 
   const argv = adapter.buildRun("hello", null, AiConfig.defaults())
-  const pIdx = argv.indexOf("-p")
-  eq(argv[pIdx + 1], "hello", "pi buildRun binds the prompt as -p's own value (value-taking, like agy's --print)")
+  eq(argv[argv.length - 1], "-p", "pi buildRun ends with -p and no message: the prompt comes on stdin")
   assert(argv.indexOf("--mode") !== -1 && argv[argv.indexOf("--mode") + 1] === "json", "pi buildRun streams NDJSON events")
   const argvModel = adapter.buildRun("hello", null, { model: "opencode-go/qwen3.8-flash" })
   assert(argvModel.indexOf("--model") !== -1 && argvModel.indexOf("opencode-go/qwen3.8-flash") !== -1, "pi buildRun with explicit model includes --model")
@@ -405,7 +419,8 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   const g1 = AiBackend.beginGeneration("first prompt")
   assert(g1.generation === 1 || g1.generation > 0, "beginGeneration returns a positive generation id")
   assert(Array.isArray(g1.argv) && g1.argv[0] === "setsid", "spawned argv is wrapped with setsid for group isolation")
-  assert(g1.argv.indexOf("first prompt") !== -1, "prompt reaches argv as one literal element, unwrapped")
+  assert(!g1.argv.some(a => a.indexOf("first prompt") !== -1), "the prompt is not in the spawned argv")
+  eq(g1.input, "first prompt\n", "the prompt is handed back for stdin")
 
   const genA = g1.generation
   let snap = AiBackend.handleLine(genA, '{"type":"system","subtype":"init","session_id":"sess-a","cwd":"/"}')
@@ -594,6 +609,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   const agyAdapter = AiAdapters.get("agy")
   const agyReason = agyAdapter.disabledReason
   delete agyAdapter.disabledReason
+  agyAdapter.promptViaStdin = true
   AiBackend.loadConfig(JSON.stringify({ agent: "agy" }))
   AiBackend.cancel()
   const g = AiBackend.beginGeneration("zebra test")
@@ -615,6 +631,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   assert(resumeArgv.indexOf("server-assigned-id") !== -1, "handoff argv resumes the server-confirmed id, not the caller guess")
   assert(resumeArgv.indexOf(callerUuid) === -1, "handoff argv never references the stale caller uuid")
   agyAdapter.disabledReason = agyReason
+  delete agyAdapter.promptViaStdin
 }
 
 {
@@ -627,8 +644,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   const g = AiBackend.beginGeneration("pi e2e test")
   assert(Array.isArray(g.argv), "pi generation produces an argv")
   assert(g.argv[0] === "setsid", "pi argv is process-group wrapped like every adapter")
-  const pIdx = g.argv.indexOf("-p")
-  assert(pIdx !== -1 && g.argv[pIdx + 1] === "pi e2e test", "pi buildRun binds the prompt as -p's own value")
+  assert(!g.argv.some(a => a.indexOf("pi e2e test") !== -1) && g.input === "pi e2e test\n", "pi gets the prompt on stdin, not argv")
   eq(g.argv[g.argv.indexOf("--mode") + 1], "json", "pi buildRun streams NDJSON events")
   assert(g.argv.indexOf("--session-id") === -1, "pi buildRun never passes a caller session id (pi assigns its own)")
 
@@ -672,6 +688,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   const agyAdapter = AiAdapters.get("agy")
   const agyReason = agyAdapter.disabledReason
   delete agyAdapter.disabledReason
+  agyAdapter.promptViaStdin = true
   AiBackend.loadConfig(JSON.stringify({ agent: "agy" }))
   AiBackend.cancel()
   const g = AiBackend.beginGeneration("zero output test")
@@ -682,6 +699,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   eq(snap.state, "error", "zero-stdout + exit-0 is still classified as a failure, never a silent empty success")
   eq(snap.errorKind, "permission", "the real agy permission-wall stderr is classified correctly end to end")
   agyAdapter.disabledReason = agyReason
+  delete agyAdapter.promptViaStdin
 }
 
 {
@@ -1124,7 +1142,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   assert(toolsIdx !== -1, "claude headless run restricts its tools")
   eq(claude[toolsIdx + 1], "WebSearch,WebFetch", "claude headless run has only the web tools")
   eq(claude[claude.indexOf("--allowedTools") + 1], "WebSearch,WebFetch", "claude pre-approves only the web tools")
-  eq(claude[claude.indexOf("-p") + 1], "q", "claude restrictions never displace the prompt")
+  eq(claude[claude.indexOf("-p") + 1], "--output-format", "claude -p takes no prompt value (stdin)")
   assert(claude.indexOf("--dangerously-skip-permissions") === -1, "claude never skips permissions")
   assert(claude.indexOf("--strict-mcp-config") !== -1, "claude loads no MCP servers (claude.ai connectors included)")
   assert(claude.indexOf("--mcp-config") === -1, "claude is given no MCP config to load")
@@ -1132,7 +1150,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
 
   const codex = AiAdapters.get("codex").buildRun("q", null, AiConfig.defaults())
   eq(codex[codex.indexOf("--sandbox") + 1], "read-only", "codex headless run is sandboxed read-only")
-  eq(codex[codex.length - 1], "q", "codex prompt stays the final positional")
+  eq(codex[codex.length - 1], "-", "codex reads the prompt from stdin (final positional -)")
   assert(codex.indexOf("--ignore-user-config") !== -1, "codex skips config.toml (its MCP servers, plugins and hooks)")
   eq(codex[codex.indexOf("-c") + 1], "mcp_servers={}", "codex loads no MCP servers")
   for (const feature of ["apps", "plugins", "remote_plugin", "browser_use", "computer_use", "hooks", "memories", "image_generation"]) {
@@ -1141,7 +1159,7 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   }
   assert(codex.indexOf("--dangerously-bypass-approvals-and-sandbox") === -1, "codex never bypasses its sandbox")
   const codexTuned = AiAdapters.get("codex").buildRun("q", null, { model: "m", effort: "low" })
-  eq(codexTuned[codexTuned.length - 1], "q", "codex model and effort never displace the prompt")
+  eq(codexTuned[codexTuned.length - 1], "-", "codex model and effort never displace the stdin marker")
 
   const pi = AiAdapters.get("pi").buildRun("q", null, AiConfig.defaults())
   assert(pi.indexOf("--no-tools") !== -1, "pi headless run has no tools")
@@ -1202,11 +1220,11 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   run = AiAdapters.get("codex").buildRun("q", null, AiBackend.getConfig())
   eq(run[run.indexOf("--model") + 1], "gpt-6-luna", "ai.json models reach codex")
   eq(run[run.lastIndexOf("-c") + 1], 'model_reasoning_effort="low"', "ai.json efforts reach codex")
-  eq(run[run.length - 1], "q", "codex prompt stays last")
+  eq(run[run.length - 1], "-", "codex stdin marker stays last")
   AiBackend.setAgent("pi")
   run = AiAdapters.get("pi").buildRun("q", null, AiBackend.getConfig())
-  eq([run[run.indexOf("--model") + 1], run[run.indexOf("--thinking") + 1], run[run.indexOf("-p") + 1]],
-     ["openai-codex/gpt-6-luna", "low", "q"], "ai.json models/efforts reach pi, prompt bound to -p")
+  eq([run[run.indexOf("--model") + 1], run[run.indexOf("--thinking") + 1], run[run.length - 1]],
+     ["openai-codex/gpt-6-luna", "low", "-p"], "ai.json models/efforts reach pi, prompt on stdin after -p")
 
   AiBackend.loadConfig(JSON.stringify({ agent: "claude", model: "sonnet", models: { claude: "haiku" } }), "")
   c = AiBackend.getConfig()
@@ -1274,13 +1292,49 @@ for (const id of ["claude", "codex", "agy", "opencode", "pi"]) {
   AiBackend.loadConfig(null, "")
 }
 
+// ------------------------------------------- answer rendering (2.4.1) --
+{
+  const safe = AiBackend.markdownSafe
+  // Every "<" ends up behind an odd run of backslashes: Markdown then reads
+  // it as a literal "<", never as the start of raw HTML.
+  const oddBefore = (out) => {
+    for (let i = 0; i < out.length; i++) {
+      if (out[i] !== "<") continue
+      let n = 0
+      for (let j = i - 1; j >= 0 && out[j] === "\\"; j--) n++
+      if (n % 2 !== 1) return false
+    }
+    return true
+  }
+  for (const text of ["<img src=x>", "\\<img src=x>", "\\\\<img src=x>", "\\\\\\<img>", "a < b", "<<x>>", "\\\\\\\\<i>"])
+    assert(oddBefore(safe(text)), "no raw HTML survives: " + JSON.stringify(text))
+  eq(safe("\\<img src=x>"), "\\<img src=x>", "an already escaped < is left as it is")
+  eq(safe("\\\\<img src=x>"), "\\\\\\<img src=x>", "an escaped backslash before < gets the < escaped too")
+  eq(safe("![a](https://x/?q=1)"), "[a](https://x/?q=1)", "images become links")
+  eq(safe(null), "", "no text renders as empty")
+}
+
+{
+  // An adapter that can only take the question as an argument is not run.
+  const pi = AiAdapters.get("pi")
+  delete pi.promptViaStdin
+  AiBackend.loadConfig(JSON.stringify({ agent: "pi" }), "")
+  AiBackend.cancel()
+  const refused = AiBackend.beginGeneration("private question")
+  eq(refused.argv, null, "an adapter without stdin input is refused")
+  assert(/privately/.test(AiBackend.session.errorMessage), "and says why")
+  pi.promptViaStdin = true
+  AiBackend.loadConfig(null, "")
+  AiBackend.cancel()
+}
+
 // ------------------------------------------------ AI hardening (2.2) ----
 {
   AiBackend.loadConfig(JSON.stringify({ agent: "claude" }), "")
   AiBackend.cancel()
   let g = AiBackend.beginGeneration("--dangerously-skip-permissions hi")
-  const pIdx = g.argv.indexOf("-p")
-  eq(g.argv[pIdx + 1], " --dangerously-skip-permissions hi", "a prompt starting with '-' can never be read as an option")
+  assert(!g.argv.some(a => a.indexOf("dangerously") !== -1), "a prompt starting with '-' never reaches argv, so it cannot be read as an option")
+  eq(g.input, "--dangerously-skip-permissions hi\n", "it goes to stdin as typed")
   eq(AiBackend.session.prompt, "--dangerously-skip-permissions hi", "the prompt itself is kept as typed")
 
   AiBackend.handleLine(g.generation, JSON.stringify({ type: "system", subtype: "init", session_id: "--resume-evil" }))

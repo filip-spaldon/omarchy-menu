@@ -196,17 +196,23 @@ Item {
     return slot === "A" ? aiProcA : (slot === "B" ? aiProcB : null)
   }
 
-  function aiDispatchOrQueue(generation, argv) {
+  function aiDispatchOrQueue(generation, argv, input) {
     var proc = ai.aiFreeProc()
     if (!proc) {
-      ai.aiPendingSpawn = { generation: generation, argv: argv }
+      ai.aiPendingSpawn = { generation: generation, argv: argv, input: input }
       return
     }
     ai.aiPendingSpawn = null
+    ai.aiSpawn(proc, generation, argv, input)
+  }
+
+  // The question goes in on stdin, written in onStarted and then closed: on
+  // the command line every local user could read it from /proc, and a
+  // stdin left open never reaches EOF (codex exec and pi wait on it).
+  function aiSpawn(proc, generation, argv, input) {
     proc.gen = generation
+    proc.input = String(input || "")
     ai.aiStartDeadline(generation)
-    // Spawned with stdin enabled and closed in onStarted: otherwise the child
-    // inherits a stdin that never reaches EOF, and codex exec waits on it.
     proc.stdinEnabled = true
     proc.command = argv
     proc.running = true
@@ -218,11 +224,7 @@ Item {
     if (!proc) return
     var pending = ai.aiPendingSpawn
     ai.aiPendingSpawn = null
-    proc.gen = pending.generation
-    ai.aiStartDeadline(pending.generation)
-    proc.stdinEnabled = true
-    proc.command = pending.argv
-    proc.running = true
+    ai.aiSpawn(proc, pending.generation, pending.argv, pending.input)
   }
 
   // maxRunSeconds (ai.json, default 300): a run still going then is shown as
@@ -252,7 +254,7 @@ Item {
     ai.aiSession = AiBackend.snapshot()
     ai.aiHandoffError = ""
     if (!result.argv) return
-    ai.aiDispatchOrQueue(result.generation, result.argv)
+    ai.aiDispatchOrQueue(result.generation, result.argv, result.input)
   }
 
   function onAiLine(gen, line) {
@@ -359,7 +361,7 @@ Item {
   // moment it is drawn. Images are demoted to plain links and raw HTML is
   // escaped before rendering; links open only when clicked, and only http(s).
   function aiRenderable(text) {
-    return String(text || "").replace(/!\[/g, "[").replace(/</g, "\\<")
+    return AiBackend.markdownSafe(text)
   }
 
   function aiOpenLink(link) {
@@ -428,7 +430,12 @@ Item {
   Process {
     id: aiProcA
     property int gen: 0
-    onStarted: aiProcA.stdinEnabled = false
+    property string input: ""
+    onStarted: {
+      if (aiProcA.input) aiProcA.write(aiProcA.input)
+      aiProcA.input = ""
+      aiProcA.stdinEnabled = false
+    }
     stdout: SplitParser { onRead: function(line) { ai.onAiLine(aiProcA.gen, line) } }
     stderr: SplitParser { onRead: function(line) { ai.onAiStderr(aiProcA.gen, line) } }
     onExited: function(exitCode) {
@@ -440,7 +447,12 @@ Item {
   Process {
     id: aiProcB
     property int gen: 0
-    onStarted: aiProcB.stdinEnabled = false
+    property string input: ""
+    onStarted: {
+      if (aiProcB.input) aiProcB.write(aiProcB.input)
+      aiProcB.input = ""
+      aiProcB.stdinEnabled = false
+    }
     stdout: SplitParser { onRead: function(line) { ai.onAiLine(aiProcB.gen, line) } }
     stderr: SplitParser { onRead: function(line) { ai.onAiStderr(aiProcB.gen, line) } }
     onExited: function(exitCode) {

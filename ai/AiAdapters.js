@@ -93,6 +93,9 @@ var claudeAdapter = {
   id: "claude",
   label: "Claude",
   binary: "claude",
+  // The question goes to the CLI on stdin: command-line arguments are
+  // readable by every local user through /proc.
+  promptViaStdin: true,
   capabilities: {
     continuity: "returned-id",
     modelOverride: true,
@@ -103,7 +106,9 @@ var claudeAdapter = {
   createSessionRef: function() { return null },
 
   buildRun: function(prompt, sessionRef, config) {
-    var argv = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+    // -p with no prompt argument: the question is read from stdin (see
+    // promptViaStdin), never put on the command line.
+    var argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
     // Only the web tools exist in this run (--tools), and those two are
     // pre-approved so a search is not silently refused for want of a prompt.
     // No Read, no Bash, no Edit. One comma-joined value each: the flags are
@@ -206,6 +211,9 @@ var codexAdapter = {
   id: "codex",
   label: "Codex",
   binary: "codex",
+  // The question goes to the CLI on stdin: command-line arguments are
+  // readable by every local user through /proc.
+  promptViaStdin: true,
   capabilities: {
     continuity: "returned-id",
     modelOverride: true,
@@ -235,7 +243,8 @@ var codexAdapter = {
     for (var i = 0; i < CODEX_DISABLED_FEATURES.length; i++) argv.push("--disable", CODEX_DISABLED_FEATURES[i])
     if (config && config.model) argv.push("--model", config.model)
     if (config && config.effort) argv.push("-c", "model_reasoning_effort=\"" + config.effort + "\"")
-    argv.push(prompt)
+    // "-": the instructions are read from stdin (see promptViaStdin).
+    argv.push("-")
     return argv
   },
 
@@ -554,6 +563,9 @@ var piAdapter = {
   id: "pi",
   label: "Pi",
   binary: "pi",
+  // The question goes to the CLI on stdin: command-line arguments are
+  // readable by every local user through /proc.
+  promptViaStdin: true,
   capabilities: {
     // The session id lands in the very first NDJSON event and `pi
     // --session-id <id>` resumes it from the same working directory — see
@@ -579,7 +591,9 @@ var piAdapter = {
     var argv = ["pi", "--mode", "json", "--no-tools", "--no-extensions", "--no-skills"]
     if (config && config.model) argv.push("--model", config.model)
     if (config && config.effort) argv.push("--thinking", config.effort)
-    argv.push("-p", prompt)
+    // -p with no message: pi reads the message from stdin (see
+    // promptViaStdin).
+    argv.push("-p")
     return argv
   },
 

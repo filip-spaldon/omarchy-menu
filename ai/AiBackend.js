@@ -180,7 +180,12 @@ function beginGeneration(promptText) {
   // mutated in place, so holding this reference is enough — no copy needed.
   var frozenConfig = runtimeConfig
 
-  if (adapter && adapter.disabledReason) {
+  // The question is private: it reaches the agent on stdin only. An adapter
+  // whose CLI can only take it as an argument (visible in /proc to every
+  // local user) is not run.
+  var refusal = adapter ? (adapter.disabledReason
+    || (adapter.promptViaStdin ? "" : adapter.label + " cannot take the question privately (on stdin), so it is not used for AI search.")) : ""
+  if (refusal) {
     session = {
       generation: gen,
       adapterId: adapter.id,
@@ -191,7 +196,7 @@ function beginGeneration(promptText) {
       rawText: "", displayedText: "", pendingText: "",
       startedAt: Date.now(),
       canHandoff: false,
-      errorMessage: adapter.disabledReason,
+      errorMessage: refusal,
       errorKind: "config",
       continuity: "none",
       stderrText: "",
@@ -259,11 +264,11 @@ function beginGeneration(promptText) {
   }
   parserState = {}
 
-  // Every adapter passes the prompt as an argv element; one that starts with
-  // "-" would be parsed as an option. A leading space reads the same to the
-  // model and never as a flag.
-  var argv = adapter.buildRun(/^-/.test(promptText) ? " " + promptText : promptText, sessionRef, runtimeConfig)
-  return { generation: gen, argv: wrapForGroup(argv) }
+  // The prompt is not in argv (it cannot pass as an option, and no other
+  // user can read it from /proc): the caller writes `input` to the child's
+  // stdin and closes it.
+  var argv = adapter.buildRun(promptText, sessionRef, runtimeConfig)
+  return { generation: gen, argv: wrapForGroup(argv), input: promptText + "\n" }
 }
 
 function isStale(gen) {
@@ -713,6 +718,20 @@ var OUTPUT_GUARD_PROGRAM = [
 function boundOutput(argv, lineMax, outMax, errLineMax, errMax) {
   return ["perl", "-e", OUTPUT_GUARD_PROGRAM, "--",
           String(lineMax), String(outMax), String(errLineMax), String(errMax), "--"].concat(argv)
+}
+
+// An answer made safe to render as Markdown (Text.MarkdownText): images are
+// demoted to links, and every "<" is escaped so no raw HTML (an <img>
+// fetching a URL the moment it is drawn) gets through. The escape has to
+// survive backslashes already in the text: \<img would turn into \\<img,
+// an escaped backslash followed by raw HTML. So each run of backslashes in
+// front of "<" is kept and given one more when it is even.
+function markdownSafe(text) {
+  return String(text || "")
+    .replace(/!(\\*)\[/g, "$1[")
+    .replace(/(\\*)</g, function(match, slashes) {
+      return slashes + (slashes.length % 2 === 0 ? "\\" : "") + "<"
+    })
 }
 
 function wrapForGroup(argv) {

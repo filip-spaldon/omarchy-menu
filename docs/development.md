@@ -66,6 +66,8 @@ this list, in review and before a release:
     spliced in; where bash is needed, values arrive as `$1`, `$2`, ...;
   - a value from outside (a prompt, an id from an agent, a path) must not be
     able to pass as an option: validate it, prefix it, or put it after `--`.
+  - private input (an AI question) never goes on a command line, where any
+    local user can read it from `/proc`: it is written to the child's stdin.
 - **Files**:
   - read through `Settings.readFileCommand` (no symlinks, owner and size
     checked);
@@ -84,7 +86,9 @@ this list, in review and before a release:
   - files whose default handler runs or installs them open their folder
     instead.
 - **Answers and displayed text**: capped in size, sanitized
-  (`MenuModel.sanitizeText`) and shown as plain text.
+  (`MenuModel.sanitizeText`) and shown as plain text. AI answers are Markdown: they
+  go through `AiBackend.markdownSafe` (no images, every `<` escaped, also
+  behind existing backslashes).
 
 ## Plugin lifecycle
 
