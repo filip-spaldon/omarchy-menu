@@ -554,7 +554,9 @@ Item {
 
   function dmenuRowListHeight(_serial, _count, _filter) {
     if (root.mode === "input") return 0
-    if (displayModel.count === 0) return root.baseRowHeight
+    // Room for the empty state (icon and "No matches for …"), not a single
+    // row: a picker that finds nothing would otherwise cut the text in half.
+    if (displayModel.count === 0) return Math.max(root.baseRowHeight, emptyState.implicitHeight + Style.space(16))
 
     var available = availableRowsHeight()
     if (root.dmenuMaxHeight > 0) available = Math.min(available, Style.space(root.dmenuMaxHeight))
@@ -3195,7 +3197,9 @@ Item {
             }
 
             Column {
+              id: emptyState
               anchors.centerIn: parent
+              width: Math.min(Style.space(320), parent.width - Style.space(16))
               spacing: Style.space(8)
               visible: displayModel.count === 0 && root.mode !== "input" && !aiCtl.isAiMode && !root.systemTwoPane
 
@@ -3207,7 +3211,7 @@ Item {
                 font.family: root.fontFamily
                 font.pixelSize: root.scaledFont(Style.font.displayLarge)
                 horizontalAlignment: Text.AlignHCenter
-                width: Style.space(320)
+                width: parent.width
               }
 
               Text {
@@ -3220,7 +3224,9 @@ Item {
                 font.family: root.fontFamily
                 font.pixelSize: root.scaledFont(Style.font.title)
                 horizontalAlignment: Text.AlignHCenter
-                width: Style.space(320)
+                // A long query wraps instead of running past a narrow card.
+                wrapMode: Text.Wrap
+                width: parent.width
               }
             }
           }
