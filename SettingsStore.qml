@@ -4,6 +4,7 @@ import Quickshell.Io
 import "Tabs.js" as Tabs
 import "Settings.js" as Settings
 import "Roots.js" as Roots
+import "Looks.js" as Looks
 
 // Per-user files under the state directory: style.json (the card's
 // geometry) and state.json (apps view, tab and section order, disabled
@@ -46,6 +47,7 @@ Item {
   //   position      opt-in, written by Alt+arrows and the bar popup: the edge
   //                 the card is pinned to and how far from it (see
   //                 Settings.stylePosition); wins over "top" when set
+  //   look          the launcher's design (Looks.js), "classic" by default
   readonly property var styleDefaults: Settings.STYLE_DEFAULTS
 
   // Position saves asked for and finished, and what the read in flight saw
@@ -61,7 +63,9 @@ Item {
   }
 
   function loadStyle() {
-    if (styleReadProc.running || !styleWatch.stale) return
+    // Not while a save from the menu (Alt+L) is on its way: the file would
+    // still hold the old look.
+    if (styleReadProc.running || styleWriteProc.running || styleWriteProc.pending.length || !styleWatch.stale) return
     styleWatch.beginRead()
     store.styleReadSaves = store.positionSaves === store.positionSavesDone ? store.positionSaves : -1
     styleReadProc.command = store.menu.readFileCommand(store.stylePath, 8192)
@@ -81,11 +85,17 @@ Item {
     store.menu.tabAnim = Settings.tabAnim(style)
     store.menu.moveAnim = Settings.moveAnim(style)
     if (store.styleReadSaves === store.positionSaves) store.menu.launcherPosition = Settings.stylePosition(style)
+    store.menu.look = Looks.styleLook(style)
     if (result.missing) {
       var ops = []
       for (var key in store.styleDefaults) ops = ops.concat(Settings.patch(key, store.styleDefaults[key], true))
       styleWriteProc.save(ops)
     }
+  }
+
+  // One style.json key, written under the writer's lock.
+  function saveStyle(key, value) {
+    styleWriteProc.save(Settings.patch(key, value))
   }
 
   function loadState() {

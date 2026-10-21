@@ -87,7 +87,67 @@ function syncRows(model, rows, roles) {
     }
   }
   if (model.count > full.length) model.remove(full.length, model.count - full.length)
-  for (var j = common; j < full.length; j++) model.append(full[j])
+  // New rows go in as one insertion: each append changes the count, and
+  // every binding on it (the card's height walks all rows) ran once per row.
+  if (full.length > common) model.append(full.slice(common))
+}
+
+// The one place a row's label is not plain text: the matched part of the
+// query drawn in the accent colour. That Text is StyledText, so everything
+// in the label is escaped first and only the caller's open/close tags are
+// markup.
+function escapeHtml(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+}
+
+// [start, end) spans of `text` that the query's words match, case-insensitive,
+// first occurrence of each word, merged and in order. Words shorter than two
+// characters are left out unless the query is one character long.
+function matchSpans(text, query) {
+  var hay = String(text || "").toLowerCase()
+  var words = String(query || "").toLowerCase().trim().split(/\s+/).filter(function(w) { return w.length > 0 })
+  if (!hay || words.length === 0) return []
+  if (words.length > 1) words = words.filter(function(w) { return w.length > 1 })
+  var spans = []
+  for (var i = 0; i < words.length; i++) {
+    var at = hay.indexOf(words[i])
+    if (at >= 0) spans.push([at, at + words[i].length])
+  }
+  spans.sort(function(a, b) { return a[0] - b[0] })
+  var merged = []
+  for (var k = 0; k < spans.length; k++) {
+    var last = merged[merged.length - 1]
+    if (last && spans[k][0] <= last[1]) last[1] = Math.max(last[1], spans[k][1])
+    else merged.push([spans[k][0], spans[k][1]])
+  }
+  return merged
+}
+
+// The label as StyledText with the matched spans wrapped in open/close tags,
+// everything escaped. No match: "" so the caller keeps its plain Text.
+//
+// Every row on screen calls this on each keystroke, and the general path
+// (split, filter, sort, four regexes per piece) cost a row more than the
+// StyledText it feeds. The usual query is one word in a label with nothing
+// to escape: one indexOf does it, with the same answer as matchSpans.
+function highlight(text, query, open, close) {
+  var s = String(text || "")
+  var word = String(query || "").trim().toLowerCase()
+  if (word && !/\s/.test(word) && !/[&<>"]/.test(s)) {
+    var at = s.toLowerCase().indexOf(word)
+    if (at < 0) return ""
+    var end = at + word.length
+    return s.slice(0, at) + open + s.slice(at, end) + close + s.slice(end)
+  }
+  var spans = matchSpans(text, query)
+  if (spans.length === 0) return ""
+  var out = ""
+  var pos = 0
+  for (var i = 0; i < spans.length; i++) {
+    out += escapeHtml(s.slice(pos, spans[i][0])) + open + escapeHtml(s.slice(spans[i][0], spans[i][1])) + close
+    pos = spans[i][1]
+  }
+  return out + escapeHtml(s.slice(pos))
 }
 
 function stripJsonc(raw) {
@@ -1850,6 +1910,9 @@ if (typeof module !== "undefined") {
     sanitizeText: sanitizeText,
     sanitizeRow: sanitizeRow,
     syncRows: syncRows,
+    escapeHtml: escapeHtml,
+    matchSpans: matchSpans,
+    highlight: highlight,
     stripJsonc: stripJsonc,
     normalizeAliases: normalizeAliases,
     normalizeItem: normalizeItem,

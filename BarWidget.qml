@@ -7,6 +7,7 @@ import qs.Ui
 import "Settings.js" as Settings
 import "Roots.js" as Roots
 import "FileSearch.js" as FileSearch
+import "Looks.js" as Looks
 import "Tabs.js" as Tabs
 import "MenuModel.js" as MenuModel
 import "ai/AiAdapters.js" as AiAdapters
@@ -210,6 +211,7 @@ Panel {
       row({ key: "style:fixedHeight", label: "Fixed height", value: onOff(fixedHeight), toggle: true, enabled: styleValid })
       // Alt+arrows move the card from the menu itself; this cycles the presets.
       row({ key: "style:position", label: "Position", value: Settings.positionLabel(Settings.stylePosition(sty)), adjust: true, enabled: styleValid })
+      row({ key: "style:look", label: "Look", value: Looks.lookLabel(Looks.styleLook(sty)), adjust: true, enabled: styleValid })
       row({ key: "style:pickerHeight", label: "Picker height", value: percent(Settings.styleNumber(sty, "pickerHeight")), adjust: true, enabled: styleValid })
       row({ key: "style:tabSlide", label: "Tab animation", value: onOff(tabSlideOn), toggle: true, enabled: styleValid })
     } else if (id === "ai") {
@@ -301,6 +303,7 @@ Panel {
     else if (key === "openTab") setState("openTab", Settings.cycle(Settings.OPEN_TABS, openTab, direction))
     else if (key === "cursorStyle") setState("cursorStyle", Settings.cycle(Settings.CURSOR_STYLES, cursorStyle, direction))
     else if (key === "style:position") setPosition(Settings.cyclePosition(Settings.stylePosition(sty), direction))
+    else if (key === "style:look") setStyle("look", Looks.cycleLook(Looks.styleLook(sty), direction))
     else if (key.indexOf("style:") === 0) {
       var name = key.slice(6)
       setStyle(name, Settings.stepNumber(Settings.styleNumber(sty, name), Settings.STYLE_RANGES[name], direction))
