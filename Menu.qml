@@ -384,7 +384,8 @@ Item {
       return root.systemTwoPane
         ? "↑↓ browse · →/Enter open · ← back · type to search · Tab next tab · Esc close"
         : "Enter open · ←/Backspace back · Tab next tab · Esc close"
-    return (root.allTiles.length > 0 ? "↑↓←→ move" : "↑↓ move") + " · Enter open · Tab next tab · ai <question> ask AI · Esc close"
+    return (root.allTiles.length > 0 ? "↑↓←→ move" : "↑↓ move") + " · Enter open · Ctrl+G apps "
+      + (root.allAppsView === "grid" ? "list" : "grid") + " · Tab next tab · ai <question> ask AI · Esc close"
   }
 
   // What the search field says before anything is typed.
@@ -1131,6 +1132,23 @@ Item {
     if (!settingsStore.saveState("appsView", next)) return
     root.appsView = next
     Qt.callLater(function() { if (displayModel.count > 0) root.revealCursor() })
+  }
+
+  // Ctrl+G in All: its Apps section as tiles or rows, saved like the Apps
+  // tab's own view.
+  function toggleAllAppsView() {
+    var next = root.allAppsView === "grid" ? "list" : "grid"
+    if (!settingsStore.saveState("allAppsView", next)) return
+    root.allAppsView = next
+    root.selectedIndex = 0
+    root.rebuildDisplay()
+  }
+
+  // The view toggle (Ctrl+G and the icon in the search row) for the tab on
+  // show.
+  function toggleViewForTab() {
+    if (root.activeTab === "all") root.toggleAllAppsView()
+    else root.toggleAppsView()
   }
 
   // Arrow keys in the grid: sideways by one tile, up and down by a row.
@@ -2790,9 +2808,9 @@ Item {
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
             event.accepted = true
-          } else if (root.tabsActive && root.activeTab === "apps" && event.key === Qt.Key_G
-                     && event.modifiers === Qt.ControlModifier) {
-            root.toggleAppsView()
+          } else if (root.tabsActive && !root.commandMode && (root.activeTab === "apps" || root.activeTab === "all")
+                     && event.key === Qt.Key_G && event.modifiers === Qt.ControlModifier) {
+            root.toggleViewForTab()
             event.accepted = true
           } else if (root.gridActive && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
                      || event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
@@ -2884,8 +2902,8 @@ Item {
             Text {
               id: viewToggle
               textFormat: Text.PlainText
-              visible: root.tabsActive && root.activeTab === "apps"
-              text: root.appsView === "grid" ? "󰕰" : "󰈚"
+              visible: root.tabsActive && (root.activeTab === "apps" || (root.activeTab === "all" && !root.compact && !root.commandMode))
+              text: (root.activeTab === "all" ? root.allAppsView : root.appsView) === "grid" ? "󰕰" : "󰈚"
               color: root.foreground
               opacity: viewToggleMouse.containsMouse ? 0.9 : 0.5
               font.family: root.fontFamily
@@ -2901,7 +2919,7 @@ Item {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                  root.toggleAppsView()
+                  root.toggleViewForTab()
                   Qt.callLater(function() { keyCatcher.forceActiveFocus() })
                 }
               }
