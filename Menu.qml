@@ -2262,6 +2262,9 @@ Item {
     root.pendingInitialMenu = place.menu
     root.openExistingMenu(place.menu)
     root.systemPane = place.menu === "root" ? "left" : "right"
+    // Every open starts System at the top: the category last browsed is not
+    // remembered from one open to the next.
+    if (place.menu === "root") root.systemCategoryIndex = 0
     if (place.tab === "system") Qt.callLater(root.enterSystemPanes)
     if (place.tab === "apps") root.loadProviderForMenu("apps")
     fileCtl.requestFileSearch()
