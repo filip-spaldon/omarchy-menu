@@ -77,6 +77,7 @@ Panel {
   readonly property var sty: styleData || ({})
 
   readonly property string appsView: Settings.APPS_VIEWS.indexOf(st.appsView) >= 0 ? st.appsView : "list"
+  readonly property string allAppsView: Settings.ALL_APPS_VIEWS.indexOf(st.allAppsView) >= 0 ? st.allAppsView : "list"
   readonly property var tabOrder: Tabs.normalizeOrder(st.tabOrder, Tabs.DEFAULT_TAB_ORDER)
   readonly property var sectionOrder: Tabs.normalizeOrder(st.allSections, Tabs.DEFAULT_ALL_SECTIONS)
   readonly property var disabledTabs: Tabs.normalizeDisabled(st.disabledTabs)
@@ -194,6 +195,8 @@ Panel {
         row({ key: "tab:" + tabs[t].id, label: tabs[t].label, icon: tabs[t].icon,
               value: disabledTabs.indexOf(tabs[t].id) >= 0 ? "Off" : "On", toggle: true, move: true, enabled: stateValid })
     } else if (id === "all") {
+      // The Apps section as list rows or tiles; ← → cycles it.
+      row({ key: "allAppsView", label: "Apps as", value: capitalize(allAppsView), adjust: true, enabled: stateValid })
       note("Enter switches a section on or off, ← → moves")
       var sections = Tabs.orderSections(sectionOrder)
       for (var s = 0; s < sections.length; s++) {
@@ -298,6 +301,7 @@ Panel {
     if (key === "barLeftClick" || key === "barRightClick")
       setState("barLeftClick", Settings.cycle(Settings.BAR_CLICKS, barLeftClick, direction))
     else if (key === "appsView") setState("appsView", Settings.cycle(Settings.APPS_VIEWS, appsView, direction))
+    else if (key === "allAppsView") setState("allAppsView", Settings.cycle(Settings.ALL_APPS_VIEWS, allAppsView, direction))
     else if (key === "openTab") setState("openTab", Settings.cycle(Settings.OPEN_TABS, openTab, direction))
     else if (key === "cursorStyle") setState("cursorStyle", Settings.cycle(Settings.CURSOR_STYLES, cursorStyle, direction))
     else if (key === "style:position") setPosition(Settings.cyclePosition(Settings.stylePosition(sty), direction))

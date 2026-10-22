@@ -9,6 +9,7 @@
 const path = require("path")
 const root = path.join(__dirname, "..")
 const Tabs = require(path.join(root, "Tabs.js"))
+const AllTiles = require(path.join(root, "AllTiles.js"))
 const FileSearch = require(path.join(root, "FileSearch.js"))
 const MenuModel = require(path.join(root, "MenuModel.js"))
 const Settings = require(path.join(root, "Settings.js"))
@@ -84,6 +85,67 @@ eq(original.section, "", "composeSections does not stamp the caller's row object
 eq(Tabs.indexOfItem(sections, "s1"), 2, "indexOfItem finds a row by id")
 eq(Tabs.indexOfItem(sections, "gone"), -1, "indexOfItem misses cleanly")
 eq(Tabs.indexOfItem(sections, ""), -1, "indexOfItem ignores an empty id")
+eq(Tabs.composeSections([
+  { title: "Apps", rows: [{ itemId: "a1" }, { itemId: "a2" }, { itemId: "a3" }], limit: 3 },
+  { title: "System", rows: [{ itemId: "s1" }, { itemId: "s2" }], limit: 0 }
+], 1).map(r => r.itemId), ["a1", "a2", "a3", "s1"], "a section's own limit overrides perSection")
+eq(Tabs.sectionHeader("apps"), Tabs.headerSection("Apps"), "sectionHeader names a section by id")
+eq(Tabs.sectionHeader("bogus"), "", "sectionHeader of an unknown id is empty")
+
+// ------------------------------------------------------------ All's tiles --
+
+{
+  const H = Tabs.sectionHeader("apps")
+  const app = id => ({ itemId: id, kind: "app", section: H, label: id })
+  // answer, 5 apps (3 columns: strips of 3 and 2), then two System rows.
+  const rows = [{ itemId: "calc", kind: "calc", section: "" }, app("a"), app("b"), app("c"), app("d"), app("e"),
+    { itemId: "s1", kind: "action", section: Tabs.sectionHeader("system") },
+    { itemId: "s2", kind: "action", section: Tabs.sectionHeader("system") }]
+  const t = AllTiles.layout(rows, H, 3)
+  eq(t.length, rows.length, "the tile layout has an entry per row")
+  eq([t[0], t[6], t[7]], [null, null, null], "rows outside the Apps section are not tiles")
+  eq(t.slice(1, 6).map(x => [x.lead, x.col, x.count]), [[1, 0, 3], [1, 1, 3], [1, 2, 3], [4, 0, 2], [4, 1, 2]],
+     "apps fill strips of `columns` tiles, the last one shorter")
+  eq(t[1].tiles.map(x => x.index), [1, 2, 3], "a strip's lead carries its tiles")
+  eq(t[2].tiles, undefined, "only the lead carries tiles")
+  eq([t[3].first, t[3].last], [1, 5], "every tile knows the block's ends")
+  eq(AllTiles.layout(rows, H, 0)[2].col, 0, "a zero column count still lays out one per strip")
+  eq(AllTiles.layout([{ kind: "app", section: "" }, { kind: "file", section: H }], H, 3), [],
+     "no app under the Apps header: no tiles")
+  eq(AllTiles.layout(null, H, 3), [], "no rows: no tiles")
+
+  eq(AllTiles.stripHeight(t[1], 1, 100, 4), 92, "a lead gives back the spacing after its empty rows")
+  eq(AllTiles.stripHeight(t[4], 4, 100, 4), 96, "a shorter strip gives back less")
+  eq(AllTiles.stripHeight(t[2], 2, 100, 4), 0, "the rest of a strip takes no room")
+  eq(AllTiles.stripHeight(null, 0, 100, 4), 0, "a list row has no strip height")
+
+  const step = (i, d) => AllTiles.step(t, i, d, rows.length)
+  eq(step(0, 1), 1, "Down into the tiles takes the first tile")
+  eq(step(1, 1), 4, "Down from a tile keeps its column in the next strip")
+  eq(step(3, 1), 5, "Down into a shorter strip takes its last tile")
+  eq(step(5, 1), 6, "Down from the last strip leaves the block")
+  eq(step(6, -1), 4, "Up into the tiles takes the last strip's first tile")
+  eq(step(5, -1), 2, "Up from a tile keeps its column in the strip above")
+  eq(step(2, -1), 0, "Up from the first strip leaves the block")
+  eq(step(0, -1), 7, "Up from the top still wraps to the bottom")
+  eq(step(7, 1), 0, "Down from the bottom still wraps to the top")
+  eq(AllTiles.step([], 2, 1, 3), 0, "without tiles a step is the list's wrap")
+  eq(AllTiles.step(t, 0, 1, 0), 0, "an empty list steps nowhere")
+  const onlyTiles = AllTiles.layout([app("a"), app("b")], H, 3)
+  eq(AllTiles.step(onlyTiles, 1, 1, 2), 0, "Down from the only strip wraps to its first tile")
+  eq(AllTiles.step(onlyTiles, 1, -1, 2), 0, "Up from the only strip wraps to its first tile")
+
+  eq(AllTiles.enter(t, 5), 4, "landing inside a strip takes its first tile")
+  eq(AllTiles.enter(t, 6), 6, "landing on a row stays there")
+
+  eq(AllTiles.side(t, 2, 1), 3, "Right moves to the next tile")
+  eq(AllTiles.side(t, 3, 1), 4, "Right crosses into the next strip")
+  eq(AllTiles.side(t, 5, 1), 5, "Right stops at the last tile")
+  eq(AllTiles.side(t, 1, -1), 1, "Left stops at the first tile")
+  eq(AllTiles.side(t, 6, 1), -1, "Left and Right leave list rows alone")
+  eq(AllTiles.ROWS * 3 >= 5, true, "the Apps section may fill more than one strip")
+  eq(Settings.ALL_APPS_VIEWS, ["list", "grid"], "allAppsView is list or grid, list first (the default)")
+}
 
 // ------------------------------------------------------------ file search --
 
