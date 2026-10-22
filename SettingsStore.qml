@@ -107,6 +107,8 @@ Item {
     store.stateData = state
 
     if (state.appsView === "grid" || state.appsView === "list") store.menu.appsView = state.appsView
+    // All's Apps section while searching: "list" (default) or "grid" tiles.
+    store.menu.allAppsView = Settings.ALL_APPS_VIEWS.indexOf(state.allAppsView) >= 0 ? state.allAppsView : "list"
     store.menu.tabOrder = Tabs.normalizeOrder(state.tabOrder, Tabs.DEFAULT_TAB_ORDER)
     store.menu.allSectionOrder = Tabs.normalizeOrder(state.allSections, Tabs.DEFAULT_ALL_SECTIONS)
     store.menu.disabledTabs = Tabs.normalizeDisabled(state.disabledTabs)
@@ -143,7 +145,7 @@ Item {
 
     // Missing keys are filled under the writer's lock.
     var defaults = {
-      appsView: store.menu.appsView, tabOrder: store.menu.tabOrder,
+      appsView: store.menu.appsView, allAppsView: store.menu.allAppsView, tabOrder: store.menu.tabOrder,
       allSections: store.menu.allSectionOrder, disabledTabs: store.menu.disabledTabs,
       allSectionsOff: store.menu.allSectionsOff, openTab: store.menu.openTab,
       cursorStyle: store.menu.cursorStyle,
@@ -155,6 +157,7 @@ Item {
     // only filled in.
     var valid = {
       appsView: state.appsView === "grid" || state.appsView === "list",
+      allAppsView: Settings.ALL_APPS_VIEWS.indexOf(state.allAppsView) >= 0,
       tabOrder: Array.isArray(state.tabOrder), allSections: Array.isArray(state.allSections),
       disabledTabs: Array.isArray(state.disabledTabs), allSectionsOff: Array.isArray(state.allSectionsOff),
       openTab: Settings.OPEN_TABS.indexOf(state.openTab) >= 0,

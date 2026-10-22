@@ -73,6 +73,9 @@ function tabAnim(style) {
 }
 
 var APPS_VIEWS = ["list", "grid"]
+// state.json "allAppsView": All's Apps section, while searching, as list rows
+// or as a strip of tiles (AllTiles.js).
+var ALL_APPS_VIEWS = ["list", "grid"]
 // state.json "barLeftClick": what the bar button's left click opens; the
 // right click opens the other.
 var BAR_CLICKS = ["settings", "menu"]
@@ -465,6 +468,7 @@ if (typeof module !== "undefined") {
     TAB_EASINGS: TAB_EASINGS,
     tabAnim: tabAnim,
     APPS_VIEWS: APPS_VIEWS,
+    ALL_APPS_VIEWS: ALL_APPS_VIEWS,
     BAR_CLICKS: BAR_CLICKS,
     CURSOR_STYLES: CURSOR_STYLES,
     OPEN_TABS: OPEN_TABS,

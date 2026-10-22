@@ -26,20 +26,26 @@ BorderSurface {
   required property int childCount
   required property string trailText
 
+  // An app of All's Apps section shown as a tile (AllTiles.js): the strip's
+  // first row draws the whole strip, the rest take no room. The row's own
+  // content and highlight stay hidden; each tile has its own.
+  readonly property var tileInfo: row.menu.allTileAt(row.index, row.menu.layoutSerial)
+  readonly property bool tiled: row.tileInfo !== null
+
   readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex && row.kind !== "example"
-    && (!row.menu.systemTwoPane || row.menu.systemPane === "right")
+    && (!row.menu.systemTwoPane || row.menu.systemPane === "right") && !row.tiled
   // Window rows borrow their application's icon when a desktop entry
   // matches the window class, and fall back to a glyph when none does.
-  readonly property bool isApp: row.kind === "app" || (row.kind === "window" && row.appIcon.length > 0)
-  readonly property bool hasIcon: row.icon.length > 0 || row.isApp
+  readonly property bool isApp: !row.tiled && (row.kind === "app" || (row.kind === "window" && row.appIcon.length > 0))
+  readonly property bool hasIcon: !row.tiled && (row.icon.length > 0 || row.isApp)
   // Open windows of an application row, for the running marker.
-  readonly property int windowCount: row.kind === "app" ? row.menu.appWindowCount(row.appId) : 0
-  readonly property string trailShown: row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
+  readonly property int windowCount: row.kind === "app" && !row.tiled ? row.menu.appWindowCount(row.appId) : 0
+  readonly property string trailShown: row.tiled ? "" : row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
 
   // Command examples are a read-only hint.
   opacity: row.kind === "example" ? 0.7 : 1
   width: ListView.view.width
-  height: row.menu.rowHeightForDetail(row.detail, row.kind)
+  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind)
   radius: row.menu.cornerRadius
   color: row.hasCursor ? row.menu.selectedBackground : "transparent"
   borderSpec: row.hasCursor ? row.menu.selectedBorderSpec : Border.none()
@@ -98,6 +104,7 @@ BorderSurface {
 
   Column {
     id: contentColumn
+    visible: !row.tiled
     anchors.left: row.hasIcon ? iconText.right : parent.left
     anchors.leftMargin: row.hasIcon ? Style.space(6) : row.menu.rowReservedBorderLeft + Style.space(18)
     anchors.right: trailLabel.visible ? trailLabel.left : trail.left
@@ -146,6 +153,7 @@ BorderSurface {
 
   Row {
     id: trail
+    visible: !row.tiled
     width: Style.space(14)
     anchors.right: parent.right
     anchors.rightMargin: row.menu.rowReservedBorderRight + Style.space(8)
@@ -175,8 +183,38 @@ BorderSurface {
     }
   }
 
+  // The strip: up to `columns` tiles across the row's width, the whole tile
+  // height tall (the row itself is shorter on purpose; see
+  // AllTiles.stripHeight). Only a lead carries tiles.
+  Repeater {
+    model: row.tiled && row.tileInfo.tiles ? row.tileInfo.tiles : []
+
+    delegate: Item {
+      id: cell
+      required property var modelData
+      readonly property real cellWidth: row.width / Math.max(1, row.menu.allTileColumns)
+
+      x: cell.modelData.col * cell.cellWidth
+      width: cell.cellWidth
+      height: row.menu.allTileHeight
+
+      AppTile {
+        menu: row.menu
+        tileIndex: cell.modelData.index
+        tileLabel: cell.modelData.row.label
+        tileIcon: cell.modelData.row.appIcon
+        tileKind: cell.modelData.row.kind
+        tileAppId: cell.modelData.row.appId
+        width: parent.width - Style.space(6)
+        height: parent.height - Style.space(6)
+        anchors.centerIn: parent
+      }
+    }
+  }
+
   MouseArea {
     id: mouseArea
+    enabled: !row.tiled
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor

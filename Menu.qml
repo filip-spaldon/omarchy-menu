@@ -8,6 +8,7 @@ import qs.Ui
 import "Settings.js" as Settings
 import "MenuModel.js" as MenuModel
 import "Tabs.js" as Tabs
+import "AllTiles.js" as AllTiles
 import "FileSearch.js" as FileSearch
 import "ai/AiBackend.js" as AiBackend
 
@@ -133,6 +134,25 @@ Item {
   // looked like the whole shell restarting.
   property string appsView: "list"
   readonly property bool gridActive: root.tabsActive && !root.commandMode && root.activeTab === "apps" && root.appsView === "grid"
+  // state.json "allAppsView": All's Apps section, while searching, as list
+  // rows ("list") or as strips of tiles ("grid"). allTiles is AllTiles.layout
+  // of the rows on show ([] when none is a tile), set by rebuildDisplay.
+  property string allAppsView: "list"
+  property var allTiles: []
+  // Tiles as wide as the Apps grid's at least, stretched to fill the row.
+  readonly property int allTileColumns: Math.max(1, Math.floor(resultList.width / Math.max(1, Math.round(Style.space(112) * root.menuFontScale))))
+  readonly property int allTileHeight: Math.round(Style.space(104) * root.menuFontScale)
+  // The strips and the Apps section's size follow the column count. (A new
+  // allAppsView arrives with a state.json read, which rebuilds anyway.)
+  onAllTileColumnsChanged: if (root.allTiles.length > 0 && !root.dmenuActive) root.rebuildDisplay(true)
+
+  function allTileAt(index, _serial) {
+    return root.allTiles[index] || null
+  }
+
+  function allTileRowHeight(index) {
+    return AllTiles.stripHeight(root.allTiles[index], index, root.allTileHeight, root.rowSpacing)
+  }
   readonly property string cacheHome: Quickshell.env("XDG_CACHE_HOME") || (root.homeDir + "/.cache")
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (root.homeDir + "/.local/state")) + "/omarchy-menu-omni"
 
@@ -364,7 +384,8 @@ Item {
       return root.systemTwoPane
         ? "↑↓ browse · →/Enter open · ← back · type to search · Tab next tab · Esc close"
         : "Enter open · ←/Backspace back · Tab next tab · Esc close"
-    return "↑↓ move · Enter open · Tab next tab · ai <question> ask AI · Esc close"
+    return (root.allTiles.length > 0 ? "↑↓←→ move" : "↑↓ move") + " · Enter open · Ctrl+G apps "
+      + (root.allAppsView === "grid" ? "list" : "grid") + " · Tab next tab · ai <question> ask AI · Esc close"
   }
 
   // What the search field says before anything is typed.
@@ -544,7 +565,7 @@ Item {
       var row = displayModel.get(i)
       if (i > 0) total += root.rowSpacing
       if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
-      total += root.rowHeightForDetail(row.detail, row.kind)
+      total += root.allTiles[i] ? root.allTileRowHeight(i) : root.rowHeightForDetail(row.detail, row.kind)
       previousSection = row.section
       totals.push(total)
     }
@@ -1113,6 +1134,23 @@ Item {
     Qt.callLater(function() { if (displayModel.count > 0) root.revealCursor() })
   }
 
+  // Ctrl+G in All: its Apps section as tiles or rows, saved like the Apps
+  // tab's own view.
+  function toggleAllAppsView() {
+    var next = root.allAppsView === "grid" ? "list" : "grid"
+    if (!settingsStore.saveState("allAppsView", next)) return
+    root.allAppsView = next
+    root.selectedIndex = 0
+    root.rebuildDisplay()
+  }
+
+  // The view toggle (Ctrl+G and the icon in the search row) for the tab on
+  // show.
+  function toggleViewForTab() {
+    if (root.activeTab === "all") root.toggleAllAppsView()
+    else root.toggleAppsView()
+  }
+
   // Arrow keys in the grid: sideways by one tile, up and down by a row.
   // Unlike the list it does not wrap -- off the edge of a grid is nowhere.
   function gridMove(delta) {
@@ -1663,7 +1701,9 @@ Item {
         : id === "files" ? fileCtl.fileSectionRows(false)
         : id === "folders" ? fileCtl.fileSectionRows(true)
         : root.systemSearchRows(query, "root", false)
-      sections.push({ title: order[i].title, rows: sectionRows })
+      // As tiles, Apps fills up to AllTiles.ROWS strips instead.
+      var limit = id === "apps" && root.allAppsView === "grid" ? AllTiles.ROWS * root.allTileColumns : 0
+      sections.push({ title: order[i].title, rows: sectionRows, limit: limit })
     }
     var rows = root.plainAnswerRows(query).concat(Tabs.composeSections(sections, root.allSectionLimit))
 
@@ -1687,7 +1727,10 @@ Item {
   // results, a provider refresh), so the cursor follows its item rather than
   // staying on an index that now holds something else.
   function rebuildDisplay(keepSelection) {
+    // Only All's branch below lays out tiles; every other list has none.
+    var tiles = []
     if (root.dmenuActive) {
+      root.allTiles = tiles
       root.rebuildDmenuDisplay()
       return
     }
@@ -1702,6 +1745,7 @@ Item {
       previousId = displayModel.get(root.selectedIndex).itemId
 
     if (!root.rowsLoaded) {
+      root.allTiles = tiles
       displayModel.clear()
       return
     }
@@ -1731,7 +1775,11 @@ Item {
     else if (root.activeTab === "system") rows = root.systemTabRows(query, active)
     else if (root.activeTab === "apps") rows = root.appTabRows(query)
     else if (root.activeTab === "windows") rows = windowCtl.windowRows(query)
-    else if (root.activeTab === "all") rows = root.allTabRows(query)
+    else if (root.activeTab === "all") {
+      rows = root.allTabRows(query)
+      if (root.allAppsView === "grid")
+        tiles = AllTiles.layout(rows, Tabs.sectionHeader("apps"), root.allTileColumns)
+    }
     else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
 
     root.showingCommandHints = root.commandMode && rows.length > 0 && rows[0].kind === "example"
@@ -1740,6 +1788,8 @@ Item {
     // Sanitized here rather than in each builder: this is the one place
     // every row passes through on its way to the ListView.
     for (var k = 0; k < rows.length; k++) MenuModel.sanitizeRow(rows[k])
+    // Before the sync, so a delegate made for a tile row already sees it.
+    root.allTiles = tiles
     root.syncDisplayModel(rows)
     layoutSerial += 1
 
@@ -1764,18 +1814,24 @@ Item {
       appGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
       return
     }
-    resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+    // A tile is revealed as its whole strip: the strip's lead row, drawn the
+    // full tile height tall.
+    var tile = root.allTiles[root.selectedIndex]
+    var index = tile ? tile.lead : root.selectedIndex
+    var last = tile ? tile.lead + tile.count - 1 : index
+    resultList.positionViewAtIndex(index, ListView.Contain)
 
-    var item = resultList.itemAtIndex(root.selectedIndex)
+    var item = resultList.itemAtIndex(index)
     if (!item) return
+    var itemHeight = tile ? root.allTileHeight : item.height
 
     var reach = root.rowPeek + root.rowSpacing
-    if (root.selectedIndex < displayModel.count - 1) {
+    if (last < displayModel.count - 1) {
       var maxY = Math.max(resultList.originY, resultList.originY + resultList.contentHeight - resultList.height)
-      var overhang = item.y + item.height + reach - (resultList.contentY + resultList.height)
+      var overhang = item.y + itemHeight + reach - (resultList.contentY + resultList.height)
       if (overhang > 0) resultList.contentY = Math.min(resultList.contentY + overhang, maxY)
     }
-    if (root.selectedIndex > 0) {
+    if (index > 0) {
       var underhang = resultList.contentY - (item.y - reach)
       if (underhang > 0) resultList.contentY = Math.max(resultList.contentY - underhang, resultList.originY)
     }
@@ -1789,11 +1845,15 @@ Item {
     if (displayModel.count === 0 || root.showingCommandHints) return
 
     root.disarmPointer()
+    // All's app tiles (AllTiles.js): Up and Down go strip by strip, and a
+    // move that lands inside a strip from outside it takes its first tile.
     if (!cursorActive) {
       cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
+      selectedIndex = AllTiles.enter(root.allTiles, delta < 0 ? displayModel.count - 1 : 0)
+    } else if (Math.abs(delta) === 1) {
+      selectedIndex = AllTiles.step(root.allTiles, selectedIndex, delta, displayModel.count)
     } else {
-      selectedIndex = (selectedIndex + delta + displayModel.count) % displayModel.count
+      selectedIndex = AllTiles.enter(root.allTiles, (selectedIndex + delta + displayModel.count) % displayModel.count)
     }
     revealCursor()
   }
@@ -2751,15 +2811,23 @@ Item {
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
             event.accepted = true
-          } else if (root.tabsActive && root.activeTab === "apps" && event.key === Qt.Key_G
-                     && event.modifiers === Qt.ControlModifier) {
-            root.toggleAppsView()
+          } else if (root.tabsActive && !root.commandMode && (root.activeTab === "apps" || root.activeTab === "all")
+                     && event.key === Qt.Key_G && event.modifiers === Qt.ControlModifier) {
+            root.toggleViewForTab()
             event.accepted = true
           } else if (root.gridActive && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
                      || event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
             var cols = appGrid.columns
             root.gridMove(event.key === Qt.Key_Left ? -1 : event.key === Qt.Key_Right ? 1
                           : event.key === Qt.Key_Up ? -cols : cols)
+            event.accepted = true
+          } else if (root.cursorActive && root.allTiles[root.selectedIndex]
+                     && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
+            // All's app tiles: sideways through them, stopping at either end
+            // rather than going back (Left) or opening (Right) as on a row.
+            root.disarmPointer()
+            root.selectedIndex = AllTiles.side(root.allTiles, root.selectedIndex, event.key === Qt.Key_Left ? -1 : 1)
+            root.revealCursor()
             event.accepted = true
           } else if ((event.key === Qt.Key_Backspace || event.key === Qt.Key_Left) && !root.filterText) {
             // Only System has submenus to back out of.
@@ -2837,8 +2905,8 @@ Item {
             Text {
               id: viewToggle
               textFormat: Text.PlainText
-              visible: root.tabsActive && root.activeTab === "apps"
-              text: root.appsView === "grid" ? "󰕰" : "󰈚"
+              visible: root.tabsActive && (root.activeTab === "apps" || (root.activeTab === "all" && !root.compact && !root.commandMode))
+              text: (root.activeTab === "all" ? root.allAppsView : root.appsView) === "grid" ? "󰕰" : "󰈚"
               color: root.foreground
               opacity: viewToggleMouse.containsMouse ? 0.9 : 0.5
               font.family: root.fontFamily
@@ -2854,7 +2922,7 @@ Item {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                  root.toggleAppsView()
+                  root.toggleViewForTab()
                   Qt.callLater(function() { keyCatcher.forceActiveFocus() })
                 }
               }

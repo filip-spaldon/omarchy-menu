@@ -169,8 +169,16 @@ function headerTitle(section) {
   return isHeaderSection(section) ? String(section).slice(HEADER_PREFIX.length) : ""
 }
 
-// sections: [{ title, rows }] in display order. Empty sections vanish, each
-// keeps at most `perSection` rows, and every row is stamped with its header.
+// The header All's section `id` stamps on its rows ("" for an unknown id).
+function sectionHeader(id) {
+  for (var i = 0; i < ALL_SECTIONS.length; i++)
+    if (ALL_SECTIONS[i].id === id) return headerSection(ALL_SECTIONS[i].title)
+  return ""
+}
+
+// sections: [{ title, rows, limit }] in display order. Empty sections vanish,
+// each keeps at most its own `limit` rows when it has one, else `perSection`,
+// and every row is stamped with its header.
 // Rows are copied rather than stamped in place: the same row objects may be
 // cached by their builders.
 function composeSections(sections, perSection) {
@@ -180,7 +188,8 @@ function composeSections(sections, perSection) {
     var section = sections[s]
     if (!section || !section.rows || section.rows.length === 0) continue
     var header = section.title ? headerSection(section.title) : ""
-    for (var r = 0; r < section.rows.length && r < limit; r++) {
+    var keep = section.limit > 0 ? section.limit : limit
+    for (var r = 0; r < section.rows.length && r < keep; r++) {
       var copy = {}
       var row = section.rows[r]
       for (var key in row) copy[key] = row[key]
@@ -219,6 +228,7 @@ if (typeof module !== "undefined") {
     cycleTab: cycleTab,
     tabForRoute: tabForRoute,
     headerSection: headerSection,
+    sectionHeader: sectionHeader,
     isHeaderSection: isHeaderSection,
     headerTitle: headerTitle,
     composeSections: composeSections,

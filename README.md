@@ -152,6 +152,7 @@ Settings are read on every open from
 ```json
 {
   "appsView": "grid",
+  "allAppsView": "list",
   "tabOrder": ["all", "apps", "system", "files", "folders"],
   "allSections": ["apps", "system", "files", "folders"],
   "disabledTabs": [],
@@ -168,6 +169,12 @@ Settings are read on every open from
 ```
 
 The initial application view is `list`; the example selects `grid`.
+`allAppsView` does the same for the Apps section of All while searching
+(Ctrl+G there switches it and saves the choice):
+`list` (default) shows up to five rows, `grid` shows the matching apps as tiles,
+up to two rows of them as wide as the card fits. `↑` `↓` move between the tile
+rows and the other sections, `←` `→` between the tiles, Enter opens the
+selected app. Other sections stay rows, and All with nothing typed is unchanged.
 `cursorStyle` sets the search cursor: `block` (default), `beam`, `underline`,
 `outline` or `none`; `cursorBlink: false` keeps it solid, and
 `cursorWhenEmpty: false` hides it until something is typed.
@@ -207,14 +214,13 @@ Add it to the bar with the bar's widget picker, or put
   (Enter or `→`) unfolds the option groups below; each group opens on its own
 (Enter or `→`, `←` closes), and several can be open at once:
   - **Bar button**: which click opens the popup and which the launcher.
-  - **Launcher**: apps view, cursor style, cursor blink, cursor in an empty
-    field, answers without `/`.
+  - **Launcher**: cursor style, cursor blink, cursor in an empty field,
+    answers without `/`. (Grid or list is Ctrl+G in Apps and in All.)
   - **Tabs**: the tab `Super+Space` opens on (**Open on**, `←` `→` cycles
     First tab and each tab; `openTab`), switch each tab on or off, and change
     their order.
-  - **Search in All**: switch each result section on or off, and change
-    their order. A section that is off leaves All only, its tab stays
-    (`allSectionsOff` in `state.json`).
+  - **Search in All**: switch each result section on or off, and change their order. A section that is off leaves All only,
+    its tab stays (`allSectionsOff` in `state.json`).
   - **Look**: the `style.json` geometry, and tab animations on or off
     (`tabSlide`).
   - **Search roots**: folders searched besides your home, and how
