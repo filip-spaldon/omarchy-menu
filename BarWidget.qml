@@ -62,6 +62,12 @@ Panel {
   // The options fold away behind one row; the System actions stay open.
   property bool settingsOpen: false
   property bool modelEditing: false
+  // The model field exists only while it is being edited. A text input reads
+  // the clipboard every time the clipboard changes (to know whether it could
+  // paste), so a field kept around -- even hidden -- would hand any program
+  // that owns the clipboard a way to stall the shell while the popup is open.
+  // Outside an edit the model shows as plain text.
+  property bool modelFieldOpen: false
   signal editModelRequested()
 
   // ---------------------------------------------------------------- values --
@@ -325,6 +331,7 @@ Panel {
   // moving the cursor.
   function endFieldEdit() {
     if (modelEditing) keyCatcher.forceActiveFocus()
+    modelFieldOpen = false
   }
 
   function activate(r) {
@@ -351,7 +358,10 @@ Panel {
       if (r.toggle) setState("allSectionsOff", Settings.toggleListed(sectionsOff, key.slice(8)))
     } else if (key.indexOf("tab:") === 0)
       setState("disabledTabs", Settings.toggleDisabled(disabledTabs, key.slice(4), Tabs.DEFAULT_TAB_ORDER))
-    else if (key === "ai:model") root.editModelRequested()
+    else if (key === "ai:model") {
+      root.modelFieldOpen = true
+      Qt.callLater(root.editModelRequested)
+    }
     else if (key === "open:folder") {
       close()
       Quickshell.execDetached(["bash", "-c", 'mkdir -p -- "$1" && exec xdg-open "$1"', "bash", root.stateDir])
@@ -542,6 +552,7 @@ Panel {
     reload()
     removeArmed = ""
     modelEditing = false
+    modelFieldOpen = false
     settingsOpen = false
     openGroups = []
     Qt.callLater(function() {
@@ -826,7 +837,7 @@ Panel {
     width: content.width
     implicitHeight: Math.max(Style.space(30), labelColumn.implicitHeight + Style.space(10))
     foreground: root.foreground
-    hasCursor: root.cursor === rowIndex && !modelField.activeFocus
+    hasCursor: root.cursor === rowIndex && !(optionRow.row.field && root.modelEditing)
     opacity: row.enabled ? 1 : 0.5
 
     MouseArea {
@@ -890,39 +901,49 @@ Panel {
         }
       }
 
-      TextField {
-        id: modelField
-        visible: !!optionRow.row.field
+      Text {
+        visible: !!optionRow.row.field && !root.modelFieldOpen
         Layout.fillWidth: true
         Layout.alignment: Qt.AlignVCenter
-        text: root.aiModel
-        placeholderText: "CLI default"
-        foreground: root.foreground
+        horizontalAlignment: Text.AlignRight
+        text: root.aiModel || "CLI default"
+        textFormat: Text.PlainText
+        color: root.dim
         font.family: root.fontFamily
-        hasCursor: false
-        onActiveFocusChanged: {
-          root.modelEditing = activeFocus
-          // An edit left without Enter is dropped, not kept on show unsaved.
-          if (!activeFocus) text = root.aiModel
-        }
-        // The row it sits in became another row (a group closed): let go.
-        onVisibleChanged: if (!visible && activeFocus) keyCatcher.forceActiveFocus()
-        onAccepted: {
-          if (!root.saveModel(text)) return
-          focus = false
-          keyCatcher.forceActiveFocus()
-        }
-        Keys.onPressed: function(event) {
-          if (event.key !== Qt.Key_Escape) return
-          text = root.aiModel
-          focus = false
-          keyCatcher.forceActiveFocus()
-          event.accepted = true
-        }
-        Connections {
-          target: root
-          enabled: !!optionRow.row.field
-          function onEditModelRequested() { modelField.forceActiveFocus() }
+        font.pixelSize: Style.font.bodySmall
+        elide: Text.ElideMiddle
+      }
+
+      Loader {
+        active: !!optionRow.row.field && root.modelFieldOpen
+        visible: active
+        Layout.fillWidth: true
+        Layout.alignment: Qt.AlignVCenter
+        sourceComponent: TextField {
+          id: modelField
+          text: root.aiModel
+          placeholderText: "CLI default"
+          foreground: root.foreground
+          font.family: root.fontFamily
+          hasCursor: false
+          onActiveFocusChanged: {
+            root.modelEditing = activeFocus
+            // Leaving the field without Enter drops the edit and the field.
+            if (!activeFocus) root.modelFieldOpen = false
+          }
+          onAccepted: {
+            if (!root.saveModel(text)) return
+            keyCatcher.forceActiveFocus()
+          }
+          Keys.onPressed: function(event) {
+            if (event.key !== Qt.Key_Escape) return
+            keyCatcher.forceActiveFocus()
+            event.accepted = true
+          }
+          Connections {
+            target: root
+            function onEditModelRequested() { modelField.forceActiveFocus() }
+          }
         }
       }
 
