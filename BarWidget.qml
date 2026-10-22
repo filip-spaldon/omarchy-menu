@@ -62,13 +62,10 @@ Panel {
   // The options fold away behind one row; the System actions stay open.
   property bool settingsOpen: false
   property bool modelEditing: false
-  // The model field exists only while it is being edited. A text input reads
-  // the clipboard every time the clipboard changes (to know whether it could
-  // paste), so a field kept around -- even hidden -- would hand any program
-  // that owns the clipboard a way to stall the shell while the popup is open.
-  // Outside an edit the model shows as plain text.
-  property bool modelFieldOpen: false
-  signal editModelRequested()
+  // The model is edited without any text input (see Settings.editModelDraft
+  // for why): while modelEditing, modelEditor takes the keys and the row
+  // shows the draft with a cursor.
+  property string modelDraft: ""
 
   // ---------------------------------------------------------------- values --
 
@@ -330,8 +327,20 @@ Panel {
   // keeps the keyboard (hidden, once its group closes) and the arrows stop
   // moving the cursor.
   function endFieldEdit() {
-    if (modelEditing) keyCatcher.forceActiveFocus()
-    modelFieldOpen = false
+    if (modelEditing) stopModelEdit()
+  }
+
+  function startModelEdit() {
+    modelDraft = aiModel
+    modelEditing = true
+    modelEditor.forceActiveFocus()
+  }
+
+  // Leaving the edit (Esc, a click elsewhere, the popup closing) drops the
+  // draft; only Enter saves it.
+  function stopModelEdit() {
+    modelEditing = false
+    keyCatcher.forceActiveFocus()
   }
 
   function activate(r) {
@@ -358,10 +367,7 @@ Panel {
       if (r.toggle) setState("allSectionsOff", Settings.toggleListed(sectionsOff, key.slice(8)))
     } else if (key.indexOf("tab:") === 0)
       setState("disabledTabs", Settings.toggleDisabled(disabledTabs, key.slice(4), Tabs.DEFAULT_TAB_ORDER))
-    else if (key === "ai:model") {
-      root.modelFieldOpen = true
-      Qt.callLater(root.editModelRequested)
-    }
+    else if (key === "ai:model") root.startModelEdit()
     else if (key === "open:folder") {
       close()
       Quickshell.execDetached(["bash", "-c", 'mkdir -p -- "$1" && exec xdg-open "$1"', "bash", root.stateDir])
@@ -552,7 +558,6 @@ Panel {
     reload()
     removeArmed = ""
     modelEditing = false
-    modelFieldOpen = false
     settingsOpen = false
     openGroups = []
     Qt.callLater(function() {
@@ -738,6 +743,28 @@ Panel {
       onTextKey: function(text) { if (text === "r") root.reindexRoot(root.rowAt(root.cursor)) }
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
+      // Takes the keys while the model is edited (keyCatcher is blocked then).
+      // Not a text input: nothing here reads the clipboard.
+      Item {
+        id: modelEditor
+        onActiveFocusChanged: if (!activeFocus && root.modelEditing) root.modelEditing = false
+        Keys.onPressed: function(event) {
+          event.accepted = true
+          if (event.key === Qt.Key_Escape) { root.stopModelEdit(); return }
+          if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            if (root.saveModel(root.modelDraft)) root.stopModelEdit()
+            return
+          }
+          var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+          if (event.key === Qt.Key_Backspace)
+            root.modelDraft = Settings.editModelDraft(root.modelDraft, "backspace", "", ctrl)
+          else if (ctrl && event.key === Qt.Key_U)
+            root.modelDraft = Settings.editModelDraft(root.modelDraft, "clear", "", true)
+          else if (!(event.modifiers & (Qt.AltModifier | Qt.MetaModifier)))
+            root.modelDraft = Settings.editModelDraft(root.modelDraft, "", event.text, ctrl)
+        }
+      }
+
       Flickable {
         id: flick
         anchors.fill: parent
@@ -901,49 +928,32 @@ Panel {
         }
       }
 
-      Text {
-        visible: !!optionRow.row.field && !root.modelFieldOpen
+      // The model: plain text, or while editing the draft with a cursor and
+      // a frame like a field's.
+      Rectangle {
+        visible: !!optionRow.row.field
         Layout.fillWidth: true
         Layout.alignment: Qt.AlignVCenter
-        horizontalAlignment: Text.AlignRight
-        text: root.aiModel || "CLI default"
-        textFormat: Text.PlainText
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        elide: Text.ElideMiddle
-      }
+        implicitHeight: modelText.implicitHeight + Style.space(8)
+        radius: Style.cornerRadius
+        color: "transparent"
+        border.width: root.modelEditing ? 1 : 0
+        border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.4)
 
-      Loader {
-        active: !!optionRow.row.field && root.modelFieldOpen
-        visible: active
-        Layout.fillWidth: true
-        Layout.alignment: Qt.AlignVCenter
-        sourceComponent: TextField {
-          id: modelField
-          text: root.aiModel
-          placeholderText: "CLI default"
-          foreground: root.foreground
+        Text {
+          id: modelText
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.leftMargin: Style.space(6)
+          anchors.rightMargin: Style.space(6)
+          horizontalAlignment: root.modelEditing ? Text.AlignLeft : Text.AlignRight
+          text: root.modelEditing ? root.modelDraft + "▏" : (root.aiModel || "CLI default")
+          textFormat: Text.PlainText
+          color: root.modelEditing ? root.foreground : root.dim
           font.family: root.fontFamily
-          hasCursor: false
-          onActiveFocusChanged: {
-            root.modelEditing = activeFocus
-            // Leaving the field without Enter drops the edit and the field.
-            if (!activeFocus) root.modelFieldOpen = false
-          }
-          onAccepted: {
-            if (!root.saveModel(text)) return
-            keyCatcher.forceActiveFocus()
-          }
-          Keys.onPressed: function(event) {
-            if (event.key !== Qt.Key_Escape) return
-            keyCatcher.forceActiveFocus()
-            event.accepted = true
-          }
-          Connections {
-            target: root
-            function onEditModelRequested() { modelField.forceActiveFocus() }
-          }
+          font.pixelSize: Style.font.bodySmall
+          elide: root.modelEditing ? Text.ElideLeft : Text.ElideMiddle
         }
       }
 

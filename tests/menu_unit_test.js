@@ -857,6 +857,20 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
      "closing the menu drops the window list instead of keeping it stale")
 }
 
+// ------------------------------------------------- model draft editing --
+{
+  const ed = Settings.editModelDraft
+  eq(ed("hai", "", "k", false), "haik", "a typed character is appended")
+  eq(ed("x", "", "a b;$(rm)", false), "xabrm", "characters a model name cannot hold are dropped")
+  eq(ed("gpt-6/luna", "", ":@._-", false), "gpt-6/luna:@._-", "the model punctuation is kept")
+  eq(ed("haiku", "backspace", "", false), "haik", "Backspace removes one character")
+  eq(ed("haiku", "backspace", "", true), "", "Ctrl+Backspace clears")
+  eq(ed("haiku", "clear", "", true), "", "Ctrl+U clears")
+  eq(ed("haiku", "", "v", true), "haiku", "a Ctrl chord (Ctrl+V) types nothing and pastes nothing")
+  eq(ed("a".repeat(127), "", "bcd", false).length, Settings.MODEL_MAX, "the draft stops at the model name limit")
+  assert(Settings.MODEL_PATTERN.test(ed("", "", "openai-codex/gpt-6-luna", false)), "a typed model name passes the save check")
+}
+
 console.log("")
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

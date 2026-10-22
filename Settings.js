@@ -100,6 +100,24 @@ var AGENT_EFFORTS = {
 // Same pattern ai/AiConfig.js accepts for a model name.
 var MODEL_PATTERN = /^[A-Za-z0-9._:\/@-]{1,128}$/
 
+// The bar popup edits the model name with its own key handling instead of a
+// text input: a Qt text input reads the whole clipboard every time the
+// clipboard changes (to know whether it could paste), an unbounded read any
+// clipboard owner could use to stall the shell. So there is no paste; keys
+// edit the draft. One key press: typed characters a model name may hold are
+// appended (others dropped, at most 128 in all), Backspace removes one,
+// Ctrl+Backspace and Ctrl+U clear.
+var MODEL_MAX = 128
+
+function editModelDraft(draft, key, text, ctrl) {
+  var value = String(draft || "")
+  if (key === "backspace") return ctrl ? "" : value.slice(0, -1)
+  if (key === "clear") return ""
+  if (ctrl) return value
+  var typed = String(text || "").replace(/[^A-Za-z0-9._:\/@-]/g, "")
+  return (value + typed).slice(0, MODEL_MAX)
+}
+
 // A JSON object from a file's text: {} for an empty or missing file, null
 // for one that does not parse or is not an object (left alone, not rewritten).
 function parseObject(text) {
@@ -476,6 +494,8 @@ if (typeof module !== "undefined") {
     STATE_MAX_BYTES: STATE_MAX_BYTES,
     AGENT_EFFORTS: AGENT_EFFORTS,
     MODEL_PATTERN: MODEL_PATTERN,
+    MODEL_MAX: MODEL_MAX,
+    editModelDraft: editModelDraft,
     parseObject: parseObject,
     withKey: withKey,
     cycle: cycle,
