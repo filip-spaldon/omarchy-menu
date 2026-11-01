@@ -51,6 +51,18 @@ node tests/ai_unit_test.js
 These suites exercise the JavaScript models and AI adapters. Use the live shell
 to check QML rendering, keyboard focus, plugin registration.
 
+Typing cost per look (needs PySide6 and Qt's `qmlprofiler`; skips without):
+
+```bash
+python3 tests/typing_cost.py                 # every look
+python3 tests/typing_cost.py --report classic
+```
+
+It types "firefox" into All with the whole menu offscreen (the real QML,
+Quickshell stood in for by `tests/typing/imports`) and fails when a look runs
+more bindings or makes more objects than its ceiling. Counts, not times, so
+a busy machine does not make it flaky.
+
 ## Safety checklist
 
 Anything that starts a process or reads outside input is checked against
