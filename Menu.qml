@@ -141,6 +141,7 @@ Item {
   // of the rows on show ([] when none is a tile), set by rebuildDisplay.
   property string allAppsView: "list"
   property var allTiles: []
+  readonly property bool allTilesShown: root.allTiles.length > 0
   // Tiles as wide as the Apps grid's at least, stretched to fill the row.
   readonly property int allTileColumns: Math.max(1, Math.floor(resultList.width / Math.max(1, Math.round(Style.space(112) * root.menuFontScale))))
   readonly property int allTileHeight: Math.round(Style.space(104) * root.menuFontScale)
@@ -461,7 +462,7 @@ Item {
   // card comes back.
   property string lookView: ""
   readonly property bool overlayActive: root.lookView !== "" && root.tabsActive && !aiCtl.isAiMode
-    && !root.gridActive && !root.commandMode && !root.cheatOpen
+    && !root.gridActive && !root.allTilesShown && !root.commandMode && !root.cheatOpen
 
   // One State per look, all in this one group: switching from one look to
   // another then never leaves the first one's values behind.
@@ -3850,7 +3851,7 @@ Item {
               // reaches the menu through the list (lookMenu).
               readonly property var lookMenu: root
               readonly property Component lookRowComponent: root.lookRows ? Qt.createComponent(Qt.resolvedUrl(root.lookRows)) : null
-              delegate: lookRowComponent && lookRowComponent.status === Component.Ready ? lookRowComponent : resultRowDelegate
+              delegate: !root.allTilesShown && lookRowComponent && lookRowComponent.status === Component.Ready ? lookRowComponent : resultRowDelegate
               Component { id: resultRowDelegate; ResultRow { menu: root } }
             }
 
