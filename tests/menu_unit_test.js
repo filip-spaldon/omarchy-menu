@@ -447,6 +447,8 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   eq(/evaluateGuards\(\)/.test(functionBody("rebuildItemsFromSources")), false, "reloading menu sources does not evaluate guards")
   eq(/showsSystemRows\(\)\) root\.ensureGuards\(\)/.test(functionBody("rebuildDisplay")), true, "showing System rows evaluates guards")
   eq(/root\.activeTab === "apps"/.test(functionBody("showsSystemRows")), false, "Apps never counts as System rows")
+  eq(/panel\.maxRowsHeight = -1/.test(functionBody("openDmenu")), true, "a dmenu prompt does not keep the launcher's frozen rows height")
+  eq(/panel\.cardTop = -1/.test(functionBody("openDmenu")), true, "a dmenu prompt does not keep the launcher's frozen top line")
 }
 
 // ------------------------------------------------------------ kill rows --

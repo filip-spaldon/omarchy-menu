@@ -2182,6 +2182,8 @@ Item {
     selectedIndex = 0
     cursorActive = mode !== "input"
     root.disarmPointer()
+    panel.cardTop = -1
+    panel.maxRowsHeight = -1
     opened = true
     rebuildDisplay()
 
