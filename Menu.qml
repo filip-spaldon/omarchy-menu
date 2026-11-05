@@ -2447,6 +2447,11 @@ Item {
   function openRoute(initialMenu) {
     var id = root.resolveRoute(initialMenu)
     var entry = root.items[id]
+    // Omni's own tabs win over menu entries of the same name: Omarchy 4.5 made
+    // `apps` an action that opens the dock's launcher, which would otherwise
+    // run instead of opening the Apps tab.
+    var tabRoute = Tabs.tabForRoute(String(initialMenu || ""))
+    if (tabRoute.tab === "apps" || tabRoute.tab === "windows") entry = null
     // If the resolved id is an action (i.e. the user invoked an alias for
     // a leaf, e.g. `omarchy menu summon screenrecord-stop`), run it directly
     // instead of opening an action with no children.
@@ -2457,7 +2462,7 @@ Item {
     }
     // If it's a link (a redirect to another menu), follow the link.
     if (entry && entry.kind === "link" && entry.target) id = entry.target
-    var place = Tabs.tabForRoute(id)
+    var place = entry === null && tabRoute.tab !== "system" ? tabRoute : Tabs.tabForRoute(id)
     aiCtl.loadAiConfig()
     settingsStore.loadStyle()
     settingsStore.loadState()
