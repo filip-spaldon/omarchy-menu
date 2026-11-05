@@ -25,6 +25,8 @@ BorderSurface {
   required property string action
   required property int childCount
   required property string trailText
+  // Installed software and `disabled:` guards: listed, dimmed, never picked.
+  required property bool disabled
 
   // An app of All's Apps section shown as a tile (AllTiles.js): the strip's
   // first row draws the whole strip, the rest take no room. The row's own
@@ -43,7 +45,7 @@ BorderSurface {
   readonly property string trailShown: row.tiled ? "" : row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
 
   // Command examples are a read-only hint.
-  opacity: row.kind === "example" ? 0.7 : 1
+  opacity: row.disabled ? 0.4 : (row.kind === "example" ? 0.7 : 1)
   width: ListView.view.width
   height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind)
   radius: row.menu.cornerRadius
@@ -217,7 +219,7 @@ BorderSurface {
     enabled: !row.tiled
     anchors.fill: parent
     hoverEnabled: true
-    cursorShape: Qt.PointingHandCursor
+    cursorShape: row.disabled ? Qt.ArrowCursor : Qt.PointingHandCursor
     onEntered: row.menu.selectFromPointer(row.index, row, {
       x: mouseArea.mouseX,
       y: mouseArea.mouseY
@@ -226,6 +228,7 @@ BorderSurface {
       row.menu.selectFromPointer(row.index, row, mouse)
     }
     onClicked: {
+      if (row.disabled) return
       row.menu.cursorActive = true
       row.menu.selectedIndex = row.index
       row.menu.activateIndex(row.index, true)

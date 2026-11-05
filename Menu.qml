@@ -4,6 +4,7 @@ import Quickshell.Wayland
 import Quickshell.Hyprland
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Settings.js" as Settings
 import "MenuModel.js" as MenuModel
@@ -59,6 +60,14 @@ Item {
   // path doesn't have to shell out to bash + jq on every open.
   property string defaultMenuPath: omarchyPath + "/default/omarchy/omarchy-menu.jsonc"
   property string userMenuPath: Quickshell.env("HOME") + "/.config/omarchy/extensions/omarchy-menu.jsonc"
+  // Display language for the shipped rows. The code lives in
+  // ~/.config/omarchy/language (omarchy-language owns it); a missing file
+  // means English. The catalog at default/i18n/<code>/menu.json is applied
+  // to the default items before the user extension merges on top, so a
+  // user's own rows and retitles always win.
+  property string language: "en"
+  property var menuCatalog: ({})
+  readonly property string languagePath: Quickshell.env("OMARCHY_LANGUAGE_FILE") || ((Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/language")
   property var defaultMenuItems: []
   property var userMenuItems: []
   // The bytes each source last yielded. Compared before anything is rebuilt so
@@ -70,6 +79,12 @@ Item {
   readonly property bool dmenuActive: mode === "select" || mode === "input"
   property string dmenuPrompt: ""
   property var dmenuOptions: []
+  property bool dmenuMultiple: false
+  property var dmenuSelected: []
+  // What the last confirmed change applied; a failed change returns the checks here.
+  property var dmenuSaved: []
+  property string dmenuChangeKey: ""
+  property var dmenuOnChange: []
   property string selectionFile: ""
   property string doneFile: ""
   property int dmenuWidth: 300
@@ -422,7 +437,7 @@ Item {
   property int dividerHeight: Style.space(17)
   property bool searchDivider: false
   property int layoutSerial: 0
-  property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : Style.space(root.launcherCardWidth), panel.width - Style.gapsOut * 2)
+  property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : ((root.activeMenu === "trigger.capture.screenrecord" || root.activeMenu === "appearance.font" || root.activeMenu === "update.kernel") ? Math.max(Style.space(520), Style.space(root.launcherCardWidth)) : Style.space(root.launcherCardWidth)), panel.width - Style.gapsOut * 2)
   readonly property int launcherBodyHeight: Math.max(root.baseRowHeight * 3, Math.round(panel.height * root.launcherBodyFraction))
   // A fitted body still takes the full height for the grid and AI answers,
   // whose size is not a row count.
@@ -492,6 +507,10 @@ Item {
   function runAction(action) {
     var command = String(action || "")
     if (!command) return
+
+    var summon = MenuModel.summonAction(command)
+    // A third-party menu gets a scoped shell API that may not offer summon().
+    if (summon && root.shell && typeof root.shell.summon === "function" && root.shell.summon(summon.id, summon.payload)) return
 
     Util.execDetached(command)
   }
@@ -711,11 +730,35 @@ Item {
     return MenuModel.parseMenuJsonc(raw)
   }
 
+  function parseCatalog(raw) {
+    try {
+      var parsed = JSON.parse(raw || "{}")
+      return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : ({})
+    } catch (e) {
+      return ({})
+    }
+  }
+
+  function setLanguage(raw) {
+    var code = String(raw || "").trim()
+    if (!/^[a-z]{2,3}(-[A-Za-z]{2})?$/.test(code)) code = "en"
+    if (root.language === code) return
+    root.language = code
+    menuCatalogFile.reload()
+  }
+
   // Merge defaults + user extension. Later entries override earlier ones
   // on a per-key basis (so the user can tweak label/icon/action without
   // re-declaring the whole row).
-  function rebuildItemsFromSources() {
-    var mergedMenu = MenuModel.mergeMenuSources(root.defaultMenuItems, root.userMenuItems)
+  // Catalog-only rebuilds pass skipGuards: retitling rows cannot change any
+  // when/checked answer, so re-running the guard batch would be pure waste.
+  function rebuildItemsFromSources(skipGuards) {
+    var translatedDefaults = MenuModel.applyTranslations(root.defaultMenuItems, root.menuCatalog)
+    // The root row is injected by the merge (it has no JSONC entry), so its
+    // "Go" label comes from the catalog's root entry; the merge only uses
+    // it for the injected row, never over a user-supplied heading.
+    var rootCatalog = root.menuCatalog.root
+    var mergedMenu = MenuModel.mergeMenuSources(translatedDefaults, root.userMenuItems, rootCatalog && rootCatalog.label)
     root.providerRevision += 1
     root.providersLoaded = ({})
     root.providerQueue = []
@@ -724,7 +767,7 @@ Item {
     root.rowsLoaded = true
     // New sources, new guards: evaluated again the next time System rows
     // are shown (the rebuild below does it when they are on screen now).
-    root.guardsCurrent = false
+    if (!skipGuards) root.guardsCurrent = false
     if (root.opened) {
       root.rebuildDisplay()
       if (!root.dmenuActive) {
@@ -749,7 +792,31 @@ Item {
     "power-profiles": {
       script: "current=$(powerprofilesctl get 2>/dev/null); omarchy-powerprofiles-list 2>/dev/null | while read -r p; do [[ -z $p ]] && continue; printf '%s\\t%s\\t%s\\n' \"$p\" \"$p\" \"$current\"; done",
       icon: "\udb81\udc0b",
+      // Profile names are powerprofilesctl ids; only the label is translated,
+      // and the id stays searchable through searchTerms.
+      labelFor: function(value) {
+        if (value === "power-saver") return Commons.I18n.t("menu.powerProfilePowerSaver")
+        if (value === "balanced") return Commons.I18n.t("menu.powerProfileBalanced")
+        if (value === "performance") return Commons.I18n.t("menu.powerProfilePerformance")
+        return value
+      },
       actionFor: function(value) { return "omarchy-powerprofiles-set autodetect " + Util.shellQuote(value) }
+    },
+    // Kernel names are package names, the same in every language.
+    "kernels": {
+      script: "current=$(omarchy-kernel get 2>/dev/null); omarchy-kernel list 2>/dev/null | while read -r k; do [[ -z $k ]] && continue; printf '%s\\t%s\\t%s\\n' \"$k\" \"$k\" \"$current\"; done",
+      icon: "\uf17c",
+      volatile: true,
+      actionFor: function(value) { return "omarchy-kernel set " + Util.shellQuote(value) }
+    },
+    // Rows carry a fourth field (the English name) so searching "danish"
+    // finds the row labeled with its native name; mergeProviderRows turns
+    // it into an alias.
+    "languages": {
+      script: "current=$(omarchy-language 2>/dev/null); omarchy-language list 2>/dev/null | while IFS=$'\\t' read -r name code english; do [[ -z $code ]] && continue; printf '%s\\t%s\\t%s\\t%s\\n' \"$name\" \"$code\" \"$current\" \"$english\"; done",
+      icon: "\uf1ab",
+      volatile: true,
+      actionFor: function(value) { return "omarchy-language " + Util.shellQuote(value) }
     }
   })
 
@@ -910,8 +977,10 @@ Item {
         action: "",
         provider: "",
         aliases: aliases,
+        searchTerms: [],
         when: "",
         checked: "",
+        disabled: "",
         order: 0
       })
     }
@@ -952,7 +1021,8 @@ Item {
       var line = lines[i].trim()
       if (!line) continue
       var parts = line.split("\t")
-      var label = parts[0] || ""
+      var rawLabel = parts[0] || ""
+      var label = spec.labelFor ? spec.labelFor(rawLabel) : rawLabel
       var value = parts[1] || parts[0] || ""
       var current = parts[2] || ""
       if (!label) continue
@@ -975,8 +1045,10 @@ Item {
         action: spec.actionFor(value),
         provider: "",
         aliases: [],
+        searchTerms: (parts[3] ? [parts[3]] : []).concat(label !== rawLabel ? [rawLabel] : []),
         when: "",
         checked: "",
+        disabled: "",
         order: 0
       })
     }
@@ -1355,9 +1427,10 @@ Item {
     return memo.visible[id]
   }
 
-  // Label with the ✓ marker baked in when `checked:` evaluated truthy.
+  // Label with the ✓ marker baked in when `checked:` or `disabled:` evaluated
+  // truthy.
   function labelFor(entry) {
-    return MenuModel.labelFor(entry, root.checkedResults)
+    return MenuModel.labelFor(entry, root.checkedResults, root.disabledResults)
   }
 
   function searchableToken(value) {
@@ -1380,8 +1453,17 @@ Item {
     return MenuModel.descriptionTextMatches(query, text)
   }
 
+  // Rows whose `disabled:` evaluated truthy stay listed but dimmed, and the
+  // cursor steps over them.
+  function isDisabled(entry) {
+    return MenuModel.isDisabled(root.disabledResults, entry)
+  }
+
+  // A disabled row earns its place in the submenu it belongs to, where the
+  // list around it is the point. Search is a list of what you can do, so it
+  // leaves them out.
   function matchesQuery(entry, query) {
-    return MenuModel.matchesQuery(entry, query, root.isVisible(entry))
+    return MenuModel.matchesQuery(entry, query, root.isVisible(entry) && !root.isDisabled(entry))
   }
 
   function searchScore(entry, query) {
@@ -1389,7 +1471,38 @@ Item {
   }
 
   function displayRow(entry, detail, score, section) {
-    return MenuModel.displayRow(root.items, root.itemOrder, root.checkedResults, entry, detail, score, section)
+    return MenuModel.displayRow(root.items, root.itemOrder, root.checkedResults, root.disabledResults, entry, detail, score, section)
+  }
+
+  function rowSelectable(index) {
+    if (index < 0 || index >= displayModel.count) return false
+    return !displayModel.get(index).disabled
+  }
+
+  // First selectable row at or past `from`, continuing in the direction of
+  // travel and wrapping. -1 when every row is disabled, which leaves the menu
+  // with no cursor at all rather than one parked on a row Enter won't run.
+  function nextSelectable(from, direction) {
+    var count = displayModel.count
+    if (count === 0) return -1
+
+    var step = direction < 0 ? -1 : 1
+    var index = ((from % count) + count) % count
+    for (var i = 0; i < count; i++) {
+      if (root.rowSelectable(index)) return index
+      index = (index + step + count) % count
+    }
+
+    return -1
+  }
+
+  // Park the cursor on a selectable row after the rows underneath it changed.
+  // A menu with nothing selectable in it -- every app in it already installed
+  // -- shows no cursor at all, and grows one the moment a row can take it.
+  function settleCursor() {
+    var target = root.nextSelectable(root.selectedIndex, 1)
+    root.selectedIndex = target >= 0 ? target : 0
+    root.cursorActive = target >= 0
   }
 
   // Some searches answer themselves. They all end up as one row at the top of
@@ -1487,27 +1600,6 @@ Item {
 
 
 
-  function rowSelectable(index) {
-    if (index < 0 || index >= displayModel.count) return false
-    return !displayModel.get(index).disabled
-  }
-
-  // First selectable row at or past `from`, continuing in the direction of
-  // travel and wrapping. -1 when every row is disabled, which leaves the menu
-  // with no cursor at all rather than one parked on a row Enter won't run.
-  function nextSelectable(from, direction) {
-    var count = displayModel.count
-    if (count === 0) return -1
-
-    var step = direction < 0 ? -1 : 1
-    var index = ((from % count) + count) % count
-    for (var i = 0; i < count; i++) {
-      if (root.rowSelectable(index)) return index
-      index = (index + step + count) % count
-    }
-
-    return -1
-  }
 
   // Goes through the same in-place sync as rebuildDisplay: both fill the one
   // displayModel, and a direct append would bypass the role bookkeeping that
@@ -1522,6 +1614,14 @@ Item {
     }
 
     var rows = []
+    if (root.dmenuMultiple && root.dmenuOnChange.length === 0) {
+      rows.push(MenuModel.sanitizeRow({
+        itemId: "dmenu.apply", disabled: false, kind: "dmenu", icon: "", iconFont: "",
+        appIcon: "", appId: "", label: Commons.I18n.t("common.apply"), target: "",
+        detail: Commons.I18n.tn("menu.selectedCount", root.dmenuSelected.length).arg(Commons.I18n.formatNumber(root.dmenuSelected.length)), path: "", childCount: 0,
+        action: "", provider: "", score: -1, section: "", trailText: ""
+      }))
+    }
     var query = root.filterText.trim().toLowerCase()
     for (var i = 0; i < root.dmenuOptions.length; i++) {
       // An option is "<label>", "<glyph>\t<label>", or
@@ -1538,7 +1638,7 @@ Item {
         itemId: "dmenu." + i,
         disabled: false,
         kind: "dmenu",
-        icon: icon,
+        icon: root.dmenuMultiple ? (root.dmenuSelected.indexOf(MenuModel.dmenuValue(root.dmenuOptions[i])) !== -1 ? "✓" : "○") : icon,
         iconFont: "",
         appIcon: "",
         appId: "",
@@ -1565,6 +1665,18 @@ Item {
     Qt.callLater(function() {
       if (displayModel.count > 0) root.revealCursor()
     })
+  }
+
+  function updateDmenuChecks() {
+    for (var i = 0; i < displayModel.count; i++) {
+      var row = displayModel.get(i)
+      if (row.itemId === "dmenu.apply") {
+        displayModel.setProperty(i, "detail", Commons.I18n.tn("menu.selectedCount", root.dmenuSelected.length).arg(Commons.I18n.formatNumber(root.dmenuSelected.length)))
+      } else if (row.kind === "dmenu") {
+        var value = MenuModel.dmenuValue(root.dmenuOptions[Number(row.itemId.substring(6))])
+        displayModel.setProperty(i, "icon", root.dmenuSelected.indexOf(value) !== -1 ? "✓" : "○")
+      }
+    }
   }
 
   // How many rows each source gets in All before its own tab is the place to
@@ -1796,9 +1908,7 @@ Item {
     var kept = Tabs.indexOfItem(rows, previousId)
     if (kept >= 0) selectedIndex = kept
 
-    if (displayModel.count === 0) selectedIndex = 0
-    else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
-    else if (selectedIndex < 0) selectedIndex = 0
+    root.settleCursor()
 
     Qt.callLater(function() {
       if (displayModel.count > 0) root.revealCursor()
@@ -1847,14 +1957,19 @@ Item {
     root.disarmPointer()
     // All's app tiles (AllTiles.js): Up and Down go strip by strip, and a
     // move that lands inside a strip from outside it takes its first tile.
+    var target
     if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = AllTiles.enter(root.allTiles, delta < 0 ? displayModel.count - 1 : 0)
+      target = AllTiles.enter(root.allTiles, delta < 0 ? displayModel.count - 1 : 0)
     } else if (Math.abs(delta) === 1) {
-      selectedIndex = AllTiles.step(root.allTiles, selectedIndex, delta, displayModel.count)
+      target = AllTiles.step(root.allTiles, selectedIndex, delta, displayModel.count)
     } else {
-      selectedIndex = AllTiles.enter(root.allTiles, (selectedIndex + delta + displayModel.count) % displayModel.count)
+      target = AllTiles.enter(root.allTiles, (selectedIndex + delta + displayModel.count) % displayModel.count)
     }
+    // Disabled rows (installed software, `disabled:` guards) never take the cursor.
+    target = root.nextSelectable(target, delta)
+    if (target < 0) return
+    cursorActive = true
+    selectedIndex = target
     revealCursor()
   }
 
@@ -1936,16 +2051,33 @@ Item {
     if (root.activeMenu === "root") return false
     if (root.systemTwoPane) Qt.callLater(root.syncSystemCategory)
 
+    // Coming back lands on the row that was opened, not the top of the list.
+    var left = root.activeMenu
     if (root.navStack.length > 0) {
       var previous = root.navStack[root.navStack.length - 1]
       root.navStack = root.navStack.slice(0, root.navStack.length - 1)
       root.setActiveMenu(previous, false)
-      return true
+    } else {
+      var active = root.item(root.activeMenu)
+      root.setActiveMenu((active && active.parent) ? active.parent : "root", false)
     }
-
-    var active = root.item(root.activeMenu)
-    root.setActiveMenu((active && active.parent) ? active.parent : "root", false)
+    root.selectRowFor(left)
     return true
+  }
+
+  // Put the cursor on the row that opens `id` (a submenu, or a link to it).
+  function selectRowFor(id) {
+    for (var i = 0; i < displayModel.count; i++) {
+      var row = displayModel.get(i)
+      if (row.itemId === id || (row.kind === "link" && row.target === id)) {
+        if (!root.rowSelectable(i)) return false
+        root.selectedIndex = i
+        root.cursorActive = true
+        Qt.callLater(root.revealCursor)
+        return true
+      }
+    }
+    return false
   }
 
   // launchNew: Shift+Enter on an application starts another instance even
@@ -1959,11 +2091,26 @@ Item {
       }
       if (index < 0 || index >= displayModel.count) return
       var picked = displayModel.get(index)
-      root.applyDmenuSelection(picked.detail ? picked.label + "\t" + picked.detail : picked.label)
+      if (root.dmenuMultiple) {
+        if (picked.itemId === "dmenu.apply") {
+          root.applyDmenuSelection(JSON.stringify(MenuModel.dmenuSelections(root.dmenuOptions, root.dmenuSelected)))
+        } else {
+          var value = MenuModel.dmenuValue(root.dmenuOptions[Number(picked.itemId.substring(6))])
+          var selected = MenuModel.toggleDmenuSelection(selectionProc.requestedSelection(), value)
+          if (root.dmenuOnChange.length > 0) {
+            selectionProc.enqueue(selected)
+          } else {
+            root.dmenuSelected = selected
+            root.updateDmenuChecks()
+          }
+        }
+      } else {
+        root.applyDmenuSelection(picked.detail ? picked.label + "\t" + picked.detail : picked.label)
+      }
       return
     }
 
-    if (index < 0 || index >= displayModel.count) return
+    if (!root.rowSelectable(index)) return
 
     var row = displayModel.get(index)
     if (row.kind === "menu" || row.kind === "link") {
@@ -2160,7 +2307,7 @@ Item {
   function openDmenu(payload) {
     requestSerial += 1
     mode = payload.mode === "input" ? "input" : "select"
-    dmenuPrompt = MenuModel.sanitizeText(String(payload.prompt || (mode === "input" ? "Input" : "Select")), 256)
+    dmenuPrompt = MenuModel.sanitizeText(String(payload.prompt || (mode === "input" ? Commons.I18n.t("menu.inputPrompt") : Commons.I18n.t("menu.selectPrompt"))), 256)
     // Whatever a caller sends over IPC: at most 100000 options, and none
     // over 64 KiB (the value is returned as typed, so a longer one is left
     // out rather than cut).
@@ -2171,6 +2318,14 @@ Item {
       if (option.length <= 65536) options.push(option)
     }
     dmenuOptions = options
+    dmenuMultiple = mode === "select" && payload.multiple === true
+    dmenuOnChange = dmenuMultiple && Array.isArray(payload.onChange)
+      && payload.onChange.every(function(arg) { return typeof arg === "string" }) ? payload.onChange : []
+    dmenuChangeKey = String(payload.changeKey || JSON.stringify(dmenuOnChange))
+    dmenuSelected = MenuModel.dmenuSelections(dmenuOptions, Array.isArray(payload.selected) ? payload.selected : [], dmenuOnChange.length > 0)
+    dmenuSaved = dmenuSelected
+    if (dmenuOnChange.length > 0)
+      dmenuSelected = MenuModel.dmenuSelections(dmenuOptions, selectionProc.requestedSelection(), true)
     selectionFile = String(payload.selectionFile || "")
     doneFile = String(payload.doneFile || "")
     requestActive = !!doneFile
@@ -2339,6 +2494,7 @@ Item {
   function selectFromPointer(index, item, mouse) {
     if (root.showingCommandHints) return
     if (!pointerGate.moved(item, mouse)) return
+    if (!root.rowSelectable(index)) return
     root.cursorActive = true
     root.selectedIndex = index
   }
@@ -2387,6 +2543,66 @@ Item {
       clipboardProc.stdinEnabled = false
     }
     onExited: if (clipboardProc.hasQueued) Qt.callLater(clipboardProc.startNext)
+  }
+
+  Process {
+    id: selectionProc
+    property int serial: 0
+    property string changeKey: ""
+    property var selected: []
+    property var queue: []
+    property string collected: ""
+
+    function requestedSelection() {
+      for (var i = queue.length - 1; i >= 0; i--) {
+        if (queue[i].key === root.dmenuChangeKey) return queue[i].selected
+      }
+      if (running && changeKey === root.dmenuChangeKey) return selected
+      return root.dmenuSelected
+    }
+
+    function enqueue(values) {
+      var selected = MenuModel.dmenuSelections(root.dmenuOptions, values, true)
+      queue = queue.concat([{
+        serial: root.requestSerial, key: root.dmenuChangeKey, selected: selected,
+        command: root.dmenuOnChange.concat([JSON.stringify(selected)])
+      }])
+      if (!running) startNext()
+    }
+
+    function startNext() {
+      if (queue.length === 0) return
+      var change = queue[0]
+      queue = queue.slice(1)
+      serial = change.serial
+      changeKey = change.key
+      selected = change.selected
+      collected = ""
+      command = change.command
+      running = true
+    }
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: selectionProc.collected = text
+    }
+    onExited: function(exitCode) {
+      if (changeKey === root.dmenuChangeKey && root.dmenuActive && root.dmenuOnChange.length > 0) {
+        if (exitCode === 0) {
+          var applied = selected
+          if (collected.trim()) {
+            try { applied = JSON.parse(collected) } catch (error) { applied = root.dmenuSelected }
+          }
+          if (Array.isArray(applied))
+            root.dmenuSelected = MenuModel.dmenuSelections(root.dmenuOptions, applied, true)
+          root.dmenuSaved = root.dmenuSelected
+        } else {
+          root.dmenuSelected = root.dmenuSaved
+        }
+        root.updateDmenuChecks()
+      }
+      startNext()
+    }
   }
 
   Process {
@@ -2510,6 +2726,28 @@ Item {
     }
   }
 
+  // The language choice and its catalog are watched the same way, so
+  // picking a language under Setup retitles the menu with no shell restart.
+  FileView {
+    id: languageFile
+    path: root.languagePath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.setLanguage(text())
+    onLoadFailed: root.setLanguage("")
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: menuCatalogFile
+    path: root.omarchyPath + "/default/i18n/" + root.language + "/menu.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: { root.menuCatalog = root.parseCatalog(text()); root.rebuildItemsFromSources(true) }
+    onLoadFailed: { root.menuCatalog = ({}); root.rebuildItemsFromSources(true) }
+    onFileChanged: reload()
+  }
+
 
 
 
@@ -2523,6 +2761,7 @@ Item {
 
   property var whenResults: ({})       // id → true|false (allow visibility)
   property var checkedResults: ({})    // id → true|false (show ✓)
+  property var disabledResults: ({})   // id → true|false (dim, skip cursor)
   property bool guardsPending: false
   // Whether the guards have been evaluated during this open. The batch runs
   // every `when:`/`checked:` expression of the menu -- about 180 of them,
@@ -2564,6 +2803,7 @@ Item {
     if (!script) {
       root.whenResults = ({})
       root.checkedResults = ({})
+      root.disabledResults = ({})
       return
     }
     guardProc.collected = ""
@@ -2598,6 +2838,7 @@ Item {
 
       var nextWhen = ({})
       var nextChecked = ({})
+      var nextDisabled = ({})
       var lines = guardProc.collected.split("\n")
       for (var i = 0; i < lines.length; i++) {
         var line = lines[i].trim()
@@ -2612,9 +2853,11 @@ Item {
         var tag = rest.substring(tagAt + 1)
         if (tag === "w") nextWhen[id] = value
         else if (tag === "c") nextChecked[id] = value
+        else if (tag === "d") nextDisabled[id] = value
       }
       root.whenResults = nextWhen
       root.checkedResults = nextChecked
+      root.disabledResults = nextDisabled
       if (root.opened) root.rebuildDisplay()
       // Run the evaluation that had to stand aside. Deferred by a turn so the
       // process is settled before its command is set again.
@@ -2691,7 +2934,9 @@ Item {
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
           if (root.deleteConfirmOpen) {
-            if (deleteConfirm.handleKey(event)) event.accepted = true
+            // Swallow the rest too, or it would type into the search line behind the dialog.
+            deleteConfirm.handleKey(event)
+            event.accepted = true
             return
           }
 
@@ -2829,7 +3074,7 @@ Item {
             root.selectedIndex = AllTiles.side(root.allTiles, root.selectedIndex, event.key === Qt.Key_Left ? -1 : 1)
             root.revealCursor()
             event.accepted = true
-          } else if ((event.key === Qt.Key_Backspace || event.key === Qt.Key_Left) && !root.filterText) {
+          } else if ((event.key === Qt.Key_Backspace || Util.readingKey(event) === Qt.Key_Left) && !root.filterText) {
             // Only System has submenus to back out of.
             if (!root.tabsActive || root.activeTab === "system") root.goBack()
             event.accepted = true
@@ -2845,12 +3090,12 @@ Item {
           } else if (event.key === Qt.Key_PageDown) {
             root.select(6)
             event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Right) {
+          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || Util.readingKey(event) === Qt.Key_Right) {
             if (root.dmenuActive) {
               if (root.mode === "input") root.applyDmenuSelection(root.filterText)
               else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
             } else if (root.cursorActive) root.activateIndex(root.selectedIndex, false, (event.modifiers & Qt.ShiftModifier) !== 0)
-            else if (displayModel.count > 0 && !root.showingCommandHints) root.cursorActive = true
+            else if (!root.showingCommandHints) root.settleCursor()
             event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
             root.setFilter(root.filterText + event.text)
@@ -2864,8 +3109,8 @@ Item {
           anchors.fill: parent
           opened: root.deleteConfirmOpen
           z: 10
-          message: "Do you want to uninstall " + ((root.deleteTarget && root.deleteTarget.label) || "") + "?"
-          confirmText: "Uninstall"
+          message: Commons.I18n.t("common.uninstallConfirm").arg((root.deleteTarget && root.deleteTarget.label) || "")
+          confirmText: Commons.I18n.t("common.uninstall")
           background: root.background
           foreground: root.foreground
           scrim: root.scrim
