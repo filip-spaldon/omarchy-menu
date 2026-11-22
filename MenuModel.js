@@ -1375,16 +1375,23 @@ function webSearchUrl(query, template) {
 
 var UNITS = ({})
 
+// Every unit once, in the order defined, for stepping through a dimension
+// (Up/Down on a unit field of an answer form). `name` is the first spelling,
+// which is one unitFor reads back -- unlike the symbol, which can be "m/s".
+var UNIT_ORDER = []
+
 function defineUnit(dimension, factor, symbol, names) {
-  var unit = { dimension: dimension, factor: factor, symbol: symbol }
   var list = names.split(" ")
+  var unit = { dimension: dimension, factor: factor, symbol: symbol, name: list[0] }
   for (var i = 0; i < list.length; i++) UNITS[list[i]] = unit
+  UNIT_ORDER.push(unit)
 }
 
 function defineTemperature(symbol, names, toKelvin, fromKelvin) {
-  var unit = { dimension: "temperature", symbol: symbol, toKelvin: toKelvin, fromKelvin: fromKelvin }
   var list = names.split(" ")
+  var unit = { dimension: "temperature", symbol: symbol, name: list[0], toKelvin: toKelvin, fromKelvin: fromKelvin }
   for (var i = 0; i < list.length; i++) UNITS[list[i]] = unit
+  UNIT_ORDER.push(unit)
 }
 
 // Length, against the metre.
@@ -1520,6 +1527,364 @@ function formatUnitValue(value) {
   if (typeof value !== "number" || !isFinite(value)) return ""
   var text = String(parseFloat(value.toPrecision(6)))
   return text === "-0" ? "0" : text
+}
+
+// --- Percentages and work time -----------------------------------------------
+// The sums people otherwise open a spreadsheet for: "$30 + 20%", "20% off 50",
+// "50 as a % of 200", "40 hours in work days". Each is a short fixed sentence
+// with numbers in it, so each is one regular expression whose capture groups
+// cover the whole query end to end. That partition is what lets the same match
+// both answer the query and say where its numbers sit on the search line --
+// which is what the answer forms below are made of.
+
+var FORM_NUMBER = "(?:\\d+(?:[.,]\\d+)?|[.,]\\d+)"
+var FORM_MONEY = "[$€£¥₹]?"
+var FORM_CODE = "[^\\s0-9.,()+\\-*\\/%^=]+"
+var FORM_CONNECTOR = "(?:\\s+(?:to|into|in|as)\\s+|\\s*(?:->|=>|→)\\s*)"
+
+function compileForm(pattern) {
+  return new RegExp(pattern
+    .replace(/\{N\}/g, FORM_NUMBER)
+    .replace(/\{M\}/g, FORM_MONEY)
+    .replace(/\{C\}/g, FORM_CODE)
+    .replace(/\{TO\}/g, FORM_CONNECTOR), "i")
+}
+
+// A number as typed by hand, with either decimal mark: "2.5" or "2,5". The one
+// spelling that reads both ways -- "1,000" -- reads as neither, which is the
+// line the calculator draws too.
+function parseLooseNumber(text) {
+  var raw = String(text === undefined || text === null ? "" : text).trim()
+  if (!new RegExp("^" + FORM_NUMBER + "$").test(raw)) return null
+  if (/^\d+,\d{3}$/.test(raw)) return null
+  var value = parseFloat(raw.replace(",", "."))
+  return isFinite(value) ? value : null
+}
+
+// The part of the search line an answer reads -- past a leading "/" and short
+// of a trailing "=" -- and the offset it starts at, so a span found in the
+// body maps back onto the line as typed.
+function answerBody(text) {
+  var src = String(text || "")
+  var lead = src.match(/^\s*\/?\s*/)[0].length
+  var tail = src.slice(lead).match(/\s*=?\s*$/)[0].length
+  return { start: lead, text: src.slice(lead, src.length - tail) }
+}
+
+// Where each capture group of a full-length match sits, offset onto the line.
+// Index 0 is unused so the list lines up with the groups. Null when the
+// groups do not tile the match, which would make every span after it wrong.
+function formGroupSpans(match, offset) {
+  var spans = [null]
+  var at = offset
+  for (var i = 1; i < match.length; i++) {
+    var length = (match[i] || "").length
+    spans.push({ start: at, end: at + length })
+    at += length
+  }
+  return at === offset + match[0].length ? spans : null
+}
+
+// `a` and `b` are the groups holding the two numbers, `money` the one holding
+// a currency symbol to carry over onto the answer.
+var PERCENT_FORMS = [
+  { op: "add", re: compileForm("^({M})({N})(\\s*\\+\\s*)({N})(\\s*%)$"), money: 1, a: 2, b: 4 },
+  { op: "sub", re: compileForm("^({M})({N})(\\s*[-−]\\s*)({N})(\\s*%)$"), money: 1, a: 2, b: 4 },
+  { op: "off", re: compileForm("^({N})(\\s*%\\s*off\\s+)({M})({N})$"), money: 3, a: 1, b: 4 },
+  { op: "of", re: compileForm("^({N})(\\s*%\\s*of\\s+)({M})({N})$"), money: 3, a: 1, b: 4 },
+  { op: "on", re: compileForm("^({N})(\\s*%\\s*on\\s+)({M})({N})$"), money: 3, a: 1, b: 4 },
+  { op: "ratio", re: compileForm("^({M})({N})(\\s+(?:as\\s+(?:an?\\s+)?|is\\s+what\\s+)(?:%|percent(?:age)?)\\s+of\\s+)({M})({N})$"),
+    money: 0, a: 2, b: 5 }
+]
+
+function percentForm(text) {
+  var body = answerBody(text)
+  if (!body.text) return null
+  for (var i = 0; i < PERCENT_FORMS.length; i++) {
+    var match = body.text.match(PERCENT_FORMS[i].re)
+    if (match) return { form: PERCENT_FORMS[i], match: match, start: body.start }
+  }
+  return null
+}
+
+// { value, label, detail, copy } for a percentage sum, or null. A currency
+// symbol typed on the amount stays on the answer; the copied value is the
+// number alone, ready to paste into something that does its own formatting.
+function evaluatePercent(query) {
+  var found = percentForm(query)
+  if (!found) return null
+
+  var form = found.form
+  var a = parseLooseNumber(found.match[form.a])
+  var b = parseLooseNumber(found.match[form.b])
+  if (a === null || b === null) return null
+
+  var money = form.money ? found.match[form.money] : ""
+  var value = 0
+  var detail = ""
+  if (form.op === "add" || form.op === "sub") {
+    var share = a * b / 100
+    value = form.op === "add" ? a + share : a - share
+    detail = formatMathResult(b) + "% of " + money + formatMathResult(a) + " is " + money + formatMathResult(share)
+  } else if (form.op === "off" || form.op === "on" || form.op === "of") {
+    var part = b * a / 100
+    value = form.op === "off" ? b - part : form.op === "on" ? b + part : part
+    detail = form.op === "of"
+      ? formatMathResult(a) + "% of " + money + formatMathResult(b)
+      : (form.op === "off" ? "Saves " : "Adds ") + money + formatMathResult(part)
+  } else {
+    if (b === 0) return null
+    value = a / b * 100
+    detail = formatMathResult(a) + " of " + formatMathResult(b)
+  }
+
+  var number = formatMathResult(value)
+  if (!number) return null
+  var ratio = form.op === "ratio"
+  return {
+    value: value,
+    label: ratio ? number + "%" : money + number,
+    detail: detail,
+    copy: ratio ? number + "%" : number
+  }
+}
+
+// Work time: hours against an 8-hour day and a 5-day week. A question about
+// work time always names a work day or week, which is what keeps "40 hours in
+// days" an ordinary (calendar) unit conversion.
+var WORK_HOURS_PER_DAY = 8
+var WORK_DAYS_PER_WEEK = 5
+
+var WORK_TIME_UNITS = [
+  { id: "hours", hours: 1, one: "hour", many: "hours", re: /^(?:h|hrs?|hours?)$/i },
+  { id: "days", hours: WORK_HOURS_PER_DAY, one: "work day", many: "work days", re: /^(?:work(?:ing)?\s*days?|wd)$/i },
+  { id: "weeks", hours: WORK_HOURS_PER_DAY * WORK_DAYS_PER_WEEK, one: "work week", many: "work weeks",
+    re: /^(?:work(?:ing)?\s*weeks?|ww)$/i }
+]
+
+var WORK_UNIT_PATTERN = "(?:h|hrs?|hours?|work(?:ing)?\\s*days?|wd|work(?:ing)?\\s*weeks?|ww)"
+var WORK_TIME_FORM = compileForm("^({N})(\\s*)(" + WORK_UNIT_PATTERN + ")({TO})(" + WORK_UNIT_PATTERN + ")$")
+
+function workTimeUnit(token) {
+  var raw = String(token || "").trim()
+  for (var i = 0; i < WORK_TIME_UNITS.length; i++)
+    if (WORK_TIME_UNITS[i].re.test(raw)) return WORK_TIME_UNITS[i]
+  return null
+}
+
+function workTimeForm(text) {
+  var body = answerBody(text)
+  var match = body.text.match(WORK_TIME_FORM)
+  if (!match) return null
+  var from = workTimeUnit(match[3])
+  var to = workTimeUnit(match[5])
+  if (!from || !to || from.id === to.id) return null
+  if (from.id === "hours" && to.id === "hours") return null
+  return { match: match, start: body.start, from: from, to: to }
+}
+
+// { value, label, detail, copy } for "40 hours in work days", or null.
+function evaluateWorkTime(query) {
+  var found = workTimeForm(query)
+  if (!found) return null
+  var amount = parseLooseNumber(found.match[1])
+  if (amount === null) return null
+
+  var value = amount * found.from.hours / found.to.hours
+  var number = formatMathResult(value)
+  if (!number) return null
+  return {
+    value: value,
+    label: number + " " + (value === 1 ? found.to.one : found.to.many),
+    detail: formatMathResult(amount) + " " + (amount === 1 ? found.from.one : found.from.many)
+          + " · " + WORK_HOURS_PER_DAY + " h/day, " + WORK_DAYS_PER_WEEK + " days/week",
+    copy: number
+  }
+}
+
+// --- Answer forms ------------------------------------------------------------
+// A recognised conversion or sum turns the search line into a form: its values
+// are fields the keyboard can step between and retype one at a time, so
+// changing the amount in "100 eur to usd" does not mean retyping the rest.
+// The line itself stays the only state -- a field is a span of it, and editing
+// one splices the line -- so search, history and the answer rows never learn
+// the form exists.
+
+var CONVERSION_FORMS = [
+  // "100 eur to usd", "5ft in cm"
+  { re: compileForm("^({N})(\\s*)({C})({TO})({C})$"), fields: [[1, "number"], [3, "code"], [5, "code"]] },
+  // "$120 to eur", "usd 100 to eur"
+  { re: compileForm("^({C})(\\s*)({N})({TO})({C})$"), fields: [[1, "code"], [3, "number"], [5, "code"]] },
+  // "eur to usd": the rate for one unit
+  { re: compileForm("^({C})({TO})({C})$"), fields: [[1, "code"], [3, "code"]] }
+]
+
+function formFields(spans, list) {
+  var fields = []
+  for (var i = 0; i < list.length; i++)
+    fields.push({ start: spans[list[i][0]].start, end: spans[list[i][0]].end, kind: list[i][1] })
+  return fields
+}
+
+// { kind, fields: [{ start, end, kind }] } for a line that is an answer form,
+// or null. Field ranges are offsets into `text` exactly as given, leading
+// slash and spaces included. Field kinds: "number", "currency", "unit",
+// "workunit". The form kinds are the answer kinds: "percent", "worktime",
+// "currency", "unit".
+function answerFormFields(text) {
+  var src = String(text || "")
+  var spans = null
+
+  var percent = percentForm(src)
+  if (percent && evaluatePercent(src)) {
+    spans = formGroupSpans(percent.match, percent.start)
+    if (!spans) return null
+    return { kind: "percent", fields: formFields(spans, [[percent.form.a, "number"], [percent.form.b, "number"]]) }
+  }
+
+  var work = workTimeForm(src)
+  if (work && evaluateWorkTime(src)) {
+    spans = formGroupSpans(work.match, work.start)
+    if (!spans) return null
+    return { kind: "worktime", fields: formFields(spans, [[1, "number"], [3, "workunit"], [5, "workunit"]]) }
+  }
+
+  var body = answerBody(src)
+  if (!body.text) return null
+  var kind = parseCurrencyQuery(body.text) ? "currency" : parseUnitQuery(body.text) ? "unit" : ""
+  if (!kind) return null
+
+  for (var i = 0; i < CONVERSION_FORMS.length; i++) {
+    var match = body.text.match(CONVERSION_FORMS[i].re)
+    if (!match) continue
+    spans = formGroupSpans(match, body.start)
+    if (!spans) return null
+    var fields = formFields(spans, CONVERSION_FORMS[i].fields)
+    for (var j = 0; j < fields.length; j++)
+      if (fields[j].kind === "code") fields[j].kind = kind
+    return { kind: kind, fields: fields }
+  }
+  return null
+}
+
+// Fields in order, each inside the line and none overlapping.
+function formFieldsValid(text, fields) {
+  var src = String(text || "")
+  if (!(fields instanceof Array) || fields.length === 0) return false
+  var at = 0
+  for (var i = 0; i < fields.length; i++) {
+    var field = fields[i]
+    if (!field || typeof field.start !== "number" || typeof field.end !== "number") return false
+    if (field.start < at || field.end < field.start || field.end > src.length) return false
+    at = field.end
+  }
+  return true
+}
+
+// The line cut into what the prompt draws: [{ text, field }], `field` being
+// the index of the field a piece is, or -1 for the text between fields. An
+// empty field still gets its (empty) piece, so it can be drawn as a gap to
+// type into. Spans that do not fit the line give the line as one plain piece.
+function formSegments(text, fields) {
+  var src = String(text || "")
+  if (!formFieldsValid(src, fields)) return src ? [{ text: src, field: -1 }] : []
+
+  var segments = []
+  var at = 0
+  for (var i = 0; i < fields.length; i++) {
+    if (fields[i].start > at) segments.push({ text: src.slice(at, fields[i].start), field: -1 })
+    segments.push({ text: src.slice(fields[i].start, fields[i].end), field: i })
+    at = fields[i].end
+  }
+  if (at < src.length) segments.push({ text: src.slice(at), field: -1 })
+  return segments
+}
+
+function sameFormShape(a, b) {
+  if (a.length !== b.length) return false
+  for (var i = 0; i < a.length; i++)
+    if ((a[i].kind === "number") !== (b[i].kind === "number")) return false
+  return true
+}
+
+// Replace field `index` with `replacement`. Returns { text, kind, fields,
+// parsed }, or null for spans that do not fit the line.
+//
+// The fields after the edited one shift by however much it grew or shrank. A
+// half-typed field ("" or "1.") usually leaves the line no longer a form, and
+// the shifted spans are what keep the form editable through that; once the
+// line reads as the same form again, its freshly derived spans take over
+// (`parsed` true), which is also how a unit field that now names money picks
+// up the currency kind.
+function editFormField(text, fields, index, replacement) {
+  var src = String(text || "")
+  if (!formFieldsValid(src, fields) || !(index >= 0 && index < fields.length)) return null
+
+  var value = String(replacement === undefined || replacement === null ? "" : replacement)
+  var field = fields[index]
+  var next = src.slice(0, field.start) + value + src.slice(field.end)
+  var delta = value.length - (field.end - field.start)
+
+  var shifted = []
+  for (var i = 0; i < fields.length; i++) {
+    var f = fields[i]
+    if (i < index) shifted.push({ start: f.start, end: f.end, kind: f.kind })
+    else if (i === index) shifted.push({ start: f.start, end: f.start + value.length, kind: f.kind })
+    else shifted.push({ start: f.start + delta, end: f.end + delta, kind: f.kind })
+  }
+
+  var fresh = answerFormFields(next)
+  if (fresh && sameFormShape(fresh.fields, shifted))
+    return { text: next, kind: fresh.kind, fields: fresh.fields, parsed: true }
+  return { text: next, kind: "", fields: shifted, parsed: false }
+}
+
+// The codes Up/Down steps a currency field through. Short on purpose: these
+// are the ones worth reaching by arrow key, and any other is a few letters.
+var FORM_CURRENCIES = ["EUR", "USD", "GBP", "CHF", "CZK", "PLN", "HUF", "SEK", "NOK", "DKK", "JPY", "CNY", "CAD", "AUD"]
+
+function cycleIn(list, index, step) {
+  if (list.length === 0) return ""
+  if (index < 0) return step > 0 ? list[0] : list[list.length - 1]
+  return list[((index + step) % list.length + list.length) % list.length]
+}
+
+// The next value for a field on Up (step 1) or Down (step -1), or "" when
+// there is nothing sensible to step to. Numbers step by one and keep a typed
+// decimal comma; currency walks FORM_CURRENCIES (an unknown code starts it);
+// a unit walks the other units of its own dimension, so the pair stays one
+// that converts.
+function cycleFormValue(kind, value, step) {
+  var direction = step < 0 ? -1 : 1
+  var raw = String(value === undefined || value === null ? "" : value).trim()
+
+  if (kind === "number") {
+    var number = parseLooseNumber(raw)
+    if (number === null) return ""
+    var stepped = formatMathResult(number + direction)
+    return raw.indexOf(",") >= 0 ? stepped.replace(".", ",") : stepped
+  }
+
+  if (kind === "currency")
+    return cycleIn(FORM_CURRENCIES, FORM_CURRENCIES.indexOf(currencyCodeFor(raw)), direction)
+
+  if (kind === "unit") {
+    var unit = unitFor(raw)
+    if (!unit) return ""
+    var same = []
+    for (var i = 0; i < UNIT_ORDER.length; i++)
+      if (UNIT_ORDER[i].dimension === unit.dimension) same.push(UNIT_ORDER[i])
+    var nextUnit = cycleIn(same, same.indexOf(unit), direction)
+    return nextUnit ? nextUnit.name : ""
+  }
+
+  if (kind === "workunit") {
+    var names = []
+    for (var j = 0; j < WORK_TIME_UNITS.length; j++) names.push(WORK_TIME_UNITS[j].many)
+    return cycleIn(names, WORK_TIME_UNITS.indexOf(workTimeUnit(raw)), direction)
+  }
+
+  return ""
 }
 
 // --- Utilities ---------------------------------------------------------------
@@ -2104,6 +2469,17 @@ if (typeof module !== "undefined") {
     parseUnitQuery: parseUnitQuery,
     convertUnit: convertUnit,
     formatUnitValue: formatUnitValue,
+    parseLooseNumber: parseLooseNumber,
+    evaluatePercent: evaluatePercent,
+    WORK_HOURS_PER_DAY: WORK_HOURS_PER_DAY,
+    WORK_DAYS_PER_WEEK: WORK_DAYS_PER_WEEK,
+    evaluateWorkTime: evaluateWorkTime,
+    answerFormFields: answerFormFields,
+    formFieldsValid: formFieldsValid,
+    formSegments: formSegments,
+    editFormField: editFormField,
+    cycleFormValue: cycleFormValue,
+    FORM_CURRENCIES: FORM_CURRENCIES,
     base64Encode: base64Encode,
     base64Decode: base64Decode,
     sha256Hex: sha256Hex,

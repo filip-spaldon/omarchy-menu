@@ -97,12 +97,16 @@ Item {
   // Order settles the overlaps. Arithmetic goes first because it is the
   // strictest grammar. Currency goes before units so that "100 cup to eur" is
   // the Cuban peso, while units still take "2 cup to ml" -- currency declines
-  // it, since "ml" is not money.
+  // it, since "ml" is not money. Percentages are sentences the calculator
+  // refuses ("30 + 20%" leaves its % without an operand), and work time names
+  // work days or weeks, which no unit does, so neither argues with anything.
   function queryRows(query) {
     var builders = [
       answers.shellRow,
       answers.calculatorRow,
+      answers.percentRow,
       answers.currencyRow,
+      answers.workTimeRow,
       answers.unitRow,
       answers.timeRow,
       answers.utilityRow,
@@ -143,6 +147,36 @@ Item {
       icon: "󰃬",
       label: result,
       detail: "Copy to clipboard"
+    })
+  }
+
+  // "$30 + 20%", "20% off 50", "50 as a % of 200". Copied like a calculator
+  // result: the number alone, without any currency symbol it was typed with.
+  function percentRow(query) {
+    var result = MenuModel.evaluatePercent(query)
+    if (!result) return null
+
+    return answers.menu.queryRow({
+      kind: "calc",
+      icon: "󰏰",
+      label: result.label,
+      detail: result.detail,
+      payload: result.copy
+    })
+  }
+
+  // "40 hours in work days": an 8-hour day and a 5-day week, which the
+  // detail line says, since that is the whole of the assumption.
+  function workTimeRow(query) {
+    var result = MenuModel.evaluateWorkTime(query)
+    if (!result) return null
+
+    return answers.menu.queryRow({
+      kind: "calc",
+      icon: "󰔟",
+      label: result.label,
+      detail: result.detail,
+      payload: result.copy
     })
   }
 

@@ -1125,6 +1125,130 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(SystemShortcuts.bindingChord({ modmask: 0, key: "<img>" }), "", "untrusted markup is not a key")
 }
 
+// ---------------------------------------------------- percent and work time --
+
+{
+  const P = q => { const r = MenuModel.evaluatePercent(q); return r && [r.label, r.copy] }
+  eq(P("$30 + 20%"), ["$36", "36"], "add a percent, money symbol kept on the label only")
+  eq(P("30 + 20%"), ["36", "36"], "add a percent")
+  eq(P("30+20%"), ["36", "36"], "no spaces")
+  eq(P("50 - 10%"), ["45", "45"], "subtract a percent")
+  eq(P("20% off 50"), ["40", "40"], "percent off")
+  eq(P("20 % OFF $50"), ["$40", "40"], "case and spacing, symbol on the base")
+  eq(P("20% of 50"), ["10", "10"], "percent of")
+  eq(P("15% on 80"), ["92", "92"], "percent on")
+  eq(P("50 as a % of 200"), ["25%", "25%"], "as a % of")
+  eq(P("50 as % of 200"), ["25%", "25%"], "as % of")
+  eq(P("50 is what % of 200"), ["25%", "25%"], "is what % of")
+  eq(P("50 is what percent of 200"), ["25%", "25%"], "is what percent of")
+  eq(P("/ 20% off 50 ="), ["40", "40"], "command slash and trailing =")
+  eq(P("2,5% of 200"), ["5", "5"], "decimal comma")
+  eq(P("1,000 + 5%"), null, "ambiguous thousands comma is refused")
+  eq(P("5 as a % of 0"), null, "no share of zero")
+  eq(P("20% off"), null, "missing base")
+  eq(P("20%"), null, "bare percent")
+  eq(MenuModel.evaluateMath("50 % 3"), "2", "% between numbers is still modulo")
+  eq(MenuModel.evaluateMath("30 + 20%"), "", "the calculator leaves percentages alone")
+  eq(MenuModel.evaluatePercent("30 + 20%").detail, "20% of 30 is 6", "percent detail")
+
+  const W = q => { const r = MenuModel.evaluateWorkTime(q); return r && r.label }
+  eq(W("40 hours in work days"), "5 work days", "hours to work days")
+  eq(W("3 work weeks in hours"), "120 hours", "work weeks to hours")
+  eq(W("2.5 work days in hours"), "20 hours", "decimal work days")
+  eq(W("2,5 workdays to h"), "20 hours", "comma decimal and short spellings")
+  eq(W("120 hours in work weeks"), "3 work weeks", "hours to work weeks")
+  eq(W("10 wd in ww"), "2 work weeks", "work days to work weeks")
+  eq(W("8 h in work days"), "1 work day", "singular")
+  eq(W("40 hours in days"), null, "calendar days are a unit conversion")
+  eq(W("40 hours in hours"), null, "no work unit")
+  eq(W("2 work days in work days"), null, "same unit")
+  eq(MenuModel.evaluateWorkTime("3 work weeks in hours").copy, "120", "copies the number")
+  eq(MenuModel.parseUnitQuery("40 hours in work days"), null, "units do not claim work days")
+  eq(MenuModel.parseCurrencyQuery("40 hours in work days"), null, "currency does not claim work days")
+}
+
+// ------------------------------------------------------------ answer forms --
+
+{
+  const F = q => { const f = MenuModel.answerFormFields(q); return f && [f.kind, f.fields.map(x => q.slice(x.start, x.end) + ":" + x.kind)] }
+  eq(F("100 eur to usd"), ["currency", ["100:number", "eur:currency", "usd:currency"]], "currency form")
+  eq(F("  /  100   EUR   to  usd  = "), ["currency", ["100:number", "EUR:currency", "usd:currency"]], "extra spaces, slash and =")
+  eq(F("$120 to eur"), ["currency", ["$:currency", "120:number", "eur:currency"]], "symbol before the amount")
+  eq(F("usd 100 to eur"), ["currency", ["usd:currency", "100:number", "eur:currency"]], "code before the amount")
+  eq(F("eur to usd"), ["currency", ["eur:currency", "usd:currency"]], "rate only")
+  eq(F("100eur→usd"), ["currency", ["100:number", "eur:currency", "usd:currency"]], "glued with an arrow")
+  eq(F("5 ft to cm"), ["unit", ["5:number", "ft:unit", "cm:unit"]], "unit form")
+  eq(F("2 cup to ml"), ["unit", ["2:number", "cup:unit", "ml:unit"]], "cup is a volume next to ml")
+  eq(F("100 cup to eur"), ["currency", ["100:number", "cup:currency", "eur:currency"]], "cup is money next to eur")
+  eq(F("20% off 50"), ["percent", ["20:number", "50:number"]], "percent form")
+  eq(F("$30 + 20%"), ["percent", ["30:number", "20:number"]], "percent add form")
+  eq(F("50 is what % of 200"), ["percent", ["50:number", "200:number"]], "ratio form")
+  eq(F("40 hours in work days"), ["worktime", ["40:number", "hours:workunit", "work days:workunit"]], "work time form")
+  eq(F("1,5 eur to usd"), null, "comma amount is not a conversion")
+  eq(F("100 xyz to usd"), null, "unknown code")
+  eq(F("5 kg to km"), null, "mismatched units")
+  eq(F("time in tokyo"), null, "time query")
+  eq(F("(20+5) eur to usd"), null, "expression amounts answer but are not forms")
+  eq(F("2+3"), null, "calculator")
+  eq(F(""), null, "empty")
+
+  const text = "/100 eur to usd"
+  const form = MenuModel.answerFormFields(text)
+  eq(MenuModel.formSegments(text, form.fields),
+     [{ text: "/", field: -1 }, { text: "100", field: 0 }, { text: " ", field: -1 }, { text: "eur", field: 1 },
+      { text: " to ", field: -1 }, { text: "usd", field: 2 }], "segments cover the line")
+  eq(MenuModel.formSegments("ab", [{ start: 1, end: 5 }]), [{ text: "ab", field: -1 }], "out of range spans fall back to plain")
+  eq(MenuModel.formSegments("abc", [{ start: 2, end: 3 }, { start: 0, end: 1 }]), [{ text: "abc", field: -1 }], "unordered spans fall back")
+  eq(MenuModel.formSegments("", null), [], "empty line")
+  eq(MenuModel.formSegments("a  b", [{ start: 0, end: 1 }, { start: 3, end: 3 }, { start: 3, end: 4 }]),
+     [{ text: "a", field: 0 }, { text: "  ", field: -1 }, { text: "", field: 1 }, { text: "b", field: 2 }], "empty field keeps its piece")
+
+  // Editing: splice the focused field, shift the rest.
+  let e = MenuModel.editFormField(text, form.fields, 0, "250")
+  eq([e.text, e.kind, e.parsed], ["/250 eur to usd", "currency", true], "replace the amount")
+  e = MenuModel.editFormField(text, form.fields, 0, "")
+  eq([e.text, e.parsed, e.fields.map(f => [f.start, f.end])], ["/ eur to usd", false, [[1, 1], [2, 5], [9, 12]]],
+     "an emptied amount keeps shifted spans")
+  e = MenuModel.editFormField(e.text, e.fields, 0, "7")
+  eq([e.text, e.parsed, e.fields.length], ["/7 eur to usd", true, 3], "typing into the empty field re-derives the form")
+  e = MenuModel.editFormField(text, form.fields, 2, "gbp")
+  eq([e.text, e.parsed], ["/100 eur to gbp", true], "edit the last field (cursor at the end)")
+  e = MenuModel.editFormField(text, form.fields, 2, "")
+  eq([e.text, e.fields[2]], ["/100 eur to ", { start: 12, end: 12, kind: "currency" }], "empty last field at the line end")
+  e = MenuModel.editFormField(text, form.fields, 1, "xyz")
+  eq([e.text, e.parsed, e.fields[2].start], ["/100 xyz to usd", false, 12], "unknown code keeps the form editable")
+  e = MenuModel.editFormField(text, form.fields, 0, "1.5")
+  eq([e.text, e.parsed], ["/1.5 eur to usd", true], "decimal point")
+  e = MenuModel.editFormField(text, form.fields, 0, "1,5")
+  eq([e.text, e.parsed], ["/1,5 eur to usd", false], "decimal comma edits but is not a conversion")
+  e = MenuModel.editFormField("100 cup to eur", MenuModel.answerFormFields("100 cup to eur").fields, 2, "ml")
+  eq([e.text, e.kind, e.fields[1].kind], ["100 cup to ml", "unit", "unit"], "a field that turns into a unit takes the unit kind")
+  const pf = MenuModel.answerFormFields("20% off 50")
+  e = MenuModel.editFormField("20% off 50", pf.fields, 1, "80")
+  eq([e.text, MenuModel.evaluatePercent(e.text).label], ["20% off 80", "64"], "percent base edit")
+  e = MenuModel.editFormField("20% off 50", pf.fields, 0, "")
+  eq([e.text, e.fields[1]], ["% off 50", { start: 6, end: 8, kind: "number" }], "emptied percent shifts the base")
+  eq(MenuModel.editFormField("abc", [{ start: 0, end: 9 }], 0, "x"), null, "bad spans are refused")
+  eq(MenuModel.editFormField(text, form.fields, 5, "x"), null, "bad index is refused")
+
+  // Up/Down stepping.
+  const C = MenuModel.cycleFormValue
+  eq(C("number", "100", 1), "101", "number up")
+  eq(C("number", "1,5", -1), "0,5", "number down keeps the comma")
+  eq(C("number", "", 1), "", "empty number does not step")
+  eq(C("currency", "eur", 1), "USD", "currency up")
+  eq(C("currency", "EUR", -1), "AUD", "currency wraps")
+  eq(C("currency", "xyz", 1), "EUR", "unknown code starts the list")
+  eq(C("currency", "$", 1), "GBP", "symbol is read as its code")
+  eq(C("unit", "ft", 1), "yd", "unit steps within length")
+  eq(C("unit", "mm", -1), "nmi", "unit wraps within length")
+  eq(C("unit", "f", 1), "k", "temperature by name")
+  eq(C("unit", "bogus", 1), "", "unknown unit")
+  eq(C("workunit", "hours", 1), "work days", "work unit up")
+  eq(C("workunit", "ww", 1), "hours", "work unit wraps")
+  eq(C("other", "x", 1), "", "unknown kind")
+}
+
 console.log("")
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)
