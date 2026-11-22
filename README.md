@@ -18,7 +18,9 @@ https://github.com/user-attachments/assets/51d2cada-dd4d-4596-9a6c-2e71191caf62
 ## Open and navigate
 
 `Super+Space` opens the compact search prompt. Start typing, click a tab, use
-Tab / Shift+Tab to cycle, or Ctrl+1…7 to select a visible tab by position.
+Tab / Shift+Tab (or Ctrl+Tab) to cycle, or Ctrl+1…7 to select a visible tab by
+position. Tab switches tabs only when no [answer form](#instant-answers) is on
+the line.
 Switching tabs preserves the query. Arrow keys select a result; Enter activates
 it. Esc clears the query, then closes the menu; Left or Backspace on an empty
 query goes back a level in System.
@@ -315,6 +317,8 @@ answer.
 | `100 km to miles` | Unit conversion |
 | `20 c to f` | Temperature conversion |
 | `123 eur to usd` | Currency conversion with rate date |
+| `$30 + 20%`, `20% off 50`, `50 as a % of 200` | Percentages |
+| `40 hours in work days` | Work time (8 h/day, 5 days/week) |
 | `time in tokyo` | Local time and offset |
 | `uuid`, `password 24`, `epoch` | Generated values; Ctrl+R refreshes them |
 | `sha256 omarchy`, `base64 hello` | Developer utilities |
@@ -329,6 +333,12 @@ example per command as a read-only hint; typing narrows the hints to the
 commands that still fit (`/pa` → `/password 24`) and they give way to the
 answer once it is unambiguous. Without the slash
 the same text is a normal search with any answer on top.
+
+Currency, unit, percentage and work-time answers turn the line into a form:
+Tab / Shift+Tab steps between the values, typing replaces the focused one,
+Up/Down steps it (common currencies, units of the same kind), and Esc returns
+to plain text. While a form is on the line Tab edits it instead of switching
+tabs; Ctrl+Tab and Ctrl+1…7 still switch.
 
 Unmatched text offers web search. Chromium-family browsers use their configured
 search engine; Firefox uses the fallback template (DuckDuckGo by default).

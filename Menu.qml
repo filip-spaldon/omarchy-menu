@@ -109,6 +109,24 @@ Item {
   // any answer on top. answerQuery is the text the answer builders read.
   readonly property bool commandMode: root.tabsActive && /^\s*\//.test(root.filterText) && !aiCtl.isAiMode
   readonly property string answerQuery: root.filterText.replace(/^\s*\//, "").trim()
+  // Answer forms: a conversion or sum on show ("100 eur to usd", "20% off
+  // 50", "40 hours in work days") draws its values as fields, and Tab steps
+  // into them to retype one value without touching the rest. answerForm is
+  // { kind, fields: [{ start, end, kind }] } (MenuModel.answerFormFields), or
+  // null; formField is the focused field, -1 while the line is plain text.
+  // filterText stays the only state: a field is a span of it, and an edit is
+  // a splice (MenuModel.editFormField). While a field is focused the spans are
+  // carried through the edit rather than re-derived, so a field emptied on the
+  // way to a new value does not end the form.
+  property var answerForm: null
+  property int formField: -1
+  // A freshly focused field is replaced by the first key typed into it.
+  property bool formFresh: false
+  // Set around the form's own writes to filterText; any other write (paste,
+  // Ctrl+U, a tab switch) leaves the form.
+  property bool formWriting: false
+  readonly property bool formEditing: root.formField >= 0 && root.answerForm !== null
+  readonly property var answerFormSegments: root.answerForm ? MenuModel.formSegments(root.filterText, root.answerForm.fields) : []
   // Search cursor look, from state.json (SettingsStore.qml).
   property string cursorStyle: "block"
   property bool cursorBlink: true
@@ -316,7 +334,13 @@ Item {
   // the re-read on open can still change it (SettingsStore.applyState), until
   // the user switches tab or types.
   property bool openTabPending: false
-  onFilterTextChanged: if (root.filterText) root.openTabPending = false
+  onFilterTextChanged: {
+    if (root.filterText) root.openTabPending = false
+    if (!root.formWriting && root.formField >= 0) {
+      root.formField = -1
+      root.formFresh = false
+    }
+  }
   readonly property var orderedTabs: Tabs.visibleTabs(root.tabOrder, root.disabledTabs, root.activeTab)
 
   function tabEnabled(id) {
@@ -508,6 +532,8 @@ Item {
 
   // The key hints under the results, for what the current tab can do.
   function footerHints() {
+    if (root.formEditing) return "Tab next field · type to edit · ↑↓ step · Enter copy · Esc text"
+    if (root.answerForm) return "Tab edit values · Enter copy · Esc clear"
     if (answerEngine.killActive)
       return "Enter end process · Ctrl+E " + (answerEngine.killExpanded ? "one row per app" : "every process") + " · Esc clear"
     if (root.commandMode) return root.answerQuery ? "Answers only · Enter use · Ctrl+R new value · Esc clear"
@@ -1503,6 +1529,10 @@ Item {
     if (!Tabs.isTab(id) || root.dmenuActive) return
     root.openTabPending = false
     panel.freezeCardTop()
+    // The new tab may not show the answer the form edits; it is offered
+    // again by the rebuild if it does.
+    root.formField = -1
+    root.formFresh = false
     root.activeTab = id
     root.selectedIndex = 0
     root.cursorActive = true
@@ -1998,6 +2028,7 @@ Item {
     root.pinnedCount = 0
     if (root.dmenuActive) {
       root.allTiles = tiles
+      root.refreshAnswerForm([])
       root.rebuildDmenuDisplay()
       return
     }
@@ -2015,6 +2046,7 @@ Item {
     }
 
     if (!root.rowsLoaded) {
+      root.refreshAnswerForm([])
       root.allTiles = tiles
       displayModel.clear()
       return
@@ -2068,6 +2100,7 @@ Item {
     else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
 
     root.showingCommandHints = root.commandMode && rows.length > 0 && rows[0].kind === "example"
+    root.refreshAnswerForm(rows)
     if (root.showingCommandHints) root.cursorActive = false
 
     // Sanitized here rather than in each builder: this is the one place
@@ -2169,6 +2202,94 @@ Item {
     root.rebuildDisplay()
     if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
     fileCtl.requestFileSearch()
+  }
+
+  // ------------------------------------------------------------ answer forms
+
+  // Whether the line reads as a form. Only offered while its answer leads the
+  // rows -- a form for an answer that is not on show would edit nothing
+  // visible -- and left alone while a field is focused, where the spans are
+  // the ones the edits carried along.
+  function refreshAnswerForm(rows) {
+    if (root.formField >= 0) return
+    var lead = rows.length > 0 ? rows[0] : null
+    var shown = !!lead && (lead.kind === "calc" || lead.kind === "currency" || lead.kind === "unit")
+    var form = shown && !aiCtl.isAiMode ? MenuModel.answerFormFields(root.filterText) : null
+    if (JSON.stringify(form) !== JSON.stringify(root.answerForm)) root.answerForm = form
+  }
+
+  // Tab focuses the first value, Shift+Tab the last.
+  function enterForm(back) {
+    if (!root.answerForm || root.answerForm.fields.length === 0) return false
+    root.formField = back ? root.answerForm.fields.length - 1 : 0
+    root.formFresh = true
+    return true
+  }
+
+  function leaveForm() {
+    root.formField = -1
+    root.formFresh = false
+    root.rebuildDisplay(true)
+  }
+
+  function moveFormField(step) {
+    var count = root.answerForm.fields.length
+    root.formField = ((root.formField + step) % count + count) % count
+    root.formFresh = true
+  }
+
+  function focusedFieldText() {
+    var field = root.answerForm.fields[root.formField]
+    return root.filterText.slice(field.start, field.end)
+  }
+
+  // Splice the focused field and keep the spans the edit worked out.
+  function applyFormEdit(replacement) {
+    var edited = MenuModel.editFormField(root.filterText, root.answerForm.fields, root.formField, replacement)
+    if (!edited) {
+      root.leaveForm()
+      return
+    }
+    root.answerForm = { kind: edited.kind || root.answerForm.kind, fields: edited.fields }
+    root.formFresh = false
+    root.formWriting = true
+    try {
+      root.setFilter(edited.text)
+    } finally {
+      root.formWriting = false
+    }
+  }
+
+  // Keys while a field is focused. Returns false for anything that should
+  // fall through to the menu: Enter, Ctrl+1..7, Ctrl+Tab, paste, Ctrl+U.
+  function handleFormKey(event) {
+    var plain = event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier
+    if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && !(event.modifiers & Qt.ControlModifier)) {
+      root.moveFormField(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
+      return true
+    }
+    if (event.key === Qt.Key_Escape) {
+      root.leaveForm()
+      return true
+    }
+    if (event.key === Qt.Key_Backspace && !(event.modifiers & (Qt.AltModifier | Qt.MetaModifier))) {
+      root.applyFormEdit((event.modifiers & Qt.ControlModifier) ? "" : root.focusedFieldText().slice(0, -1))
+      return true
+    }
+    if ((event.key === Qt.Key_Up || event.key === Qt.Key_Down) && event.modifiers === Qt.NoModifier) {
+      var field = root.answerForm.fields[root.formField]
+      var next = MenuModel.cycleFormValue(field.kind, root.focusedFieldText(), event.key === Qt.Key_Up ? 1 : -1)
+      if (!next) return false
+      root.applyFormEdit(next)
+      // Still a value picked, not one being typed: the next key replaces it.
+      root.formFresh = true
+      return true
+    }
+    if (plain && event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+      root.applyFormEdit(root.formFresh ? event.text : root.focusedFieldText() + event.text)
+      return true
+    }
+    return false
   }
 
   // Menu entries matching the query, best first (ids).
@@ -3221,6 +3342,14 @@ Item {
                      && event.key >= Qt.Key_1 && event.key < Qt.Key_1 + aiCtl.aiAgents.length) {
             aiCtl.setAiAgent(aiCtl.aiAgents[event.key - Qt.Key_1])
             event.accepted = true
+          } else if (root.formEditing && root.handleFormKey(event)) {
+            event.accepted = true
+          } else if (root.tabsActive && root.answerForm && !(event.modifiers & Qt.ControlModifier)
+                     && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
+            // A form on the line: Tab steps into its values instead of the
+            // next tab. Ctrl+Tab and Ctrl+1..7 still switch tabs.
+            root.enterForm(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier))
+            event.accepted = true
           } else if (root.tabsActive && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
             // Claimed before anything else: left alone, Tab moves QML focus
             // off the key catcher and the menu stops hearing the keyboard.
@@ -3484,10 +3613,13 @@ Item {
               id: searchCursor
               readonly property real textEnd: searchText.x + (root.filterText ? Math.min(searchText.contentWidth, searchText.width) : 0)
               readonly property int cellWidth: Math.max(2, Math.round(searchText.font.pixelSize * 0.55))
+              // A focused form field draws its own caret.
               visible: root.opened && root.cursorStyle !== "none" && (root.cursorWhenEmpty || root.filterText !== "")
+                       && !root.formEditing
               width: root.cursorStyle === "beam" ? Math.max(2, Math.round(searchText.font.pixelSize / 8)) : cellWidth
               height: Math.round(searchText.font.pixelSize * 1.15)
-              x: root.filterText ? textEnd + 1 : searchText.x
+              x: root.answerForm ? formLine.x + Math.min(formRow.width, formLine.width) + 1
+                 : root.filterText ? textEnd + 1 : searchText.x
               anchors.verticalCenter: parent.verticalCenter
               // Over the placeholder a filled block stays see-through enough
               // to leave its letter readable.
@@ -3506,7 +3638,7 @@ Item {
 
               CursorBlink {
                 id: cursorBlink
-                active: searchCursor.visible && root.cursorBlink
+                active: (searchCursor.visible || root.formEditing) && root.cursorBlink
               }
               Connections {
                 target: root
@@ -3527,10 +3659,83 @@ Item {
               // the dmenu, and the title from the JSONC.
               text: MenuModel.sanitizeText(root.filterText || root.positionHint || root.promptText())
               color: root.foreground
-              opacity: root.filterText ? 1 : 0.58
+              // Kept for its layout while a form draws the line instead.
+              opacity: root.answerForm ? 0 : root.filterText ? 1 : 0.58
               font.family: root.fontFamily
               font.pixelSize: root.scaledFont(Style.font.heading)
               elide: Text.ElideRight
+            }
+
+            // The line as an answer form: the same text, with each value on a
+            // pill. The focused one is filled while the next key would replace
+            // it, and outlined with a caret once it is being typed into.
+            Item {
+              id: formLine
+              visible: root.answerForm !== null
+              anchors.left: searchText.left
+              anchors.right: searchText.right
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              clip: true
+
+              Row {
+                id: formRow
+                anchors.verticalCenter: parent.verticalCenter
+
+                Repeater {
+                  model: root.answerFormSegments
+
+                  delegate: Item {
+                    id: formPiece
+                    required property var modelData
+                    readonly property bool isField: modelData.field >= 0
+                    readonly property bool focused: root.formEditing && modelData.field === root.formField
+                    readonly property int pad: isField ? Style.space(3) : 0
+                    width: Math.max(pieceText.implicitWidth, isField ? searchCursor.cellWidth : 0) + pad * 2
+                    height: pieceText.implicitHeight + (isField ? Style.space(2) : 0)
+
+                    Rectangle {
+                      anchors.fill: parent
+                      visible: formPiece.isField
+                      radius: Math.round(height / 4)
+                      color: formPiece.focused && root.formFresh ? root.selectedBackground : "transparent"
+                      border.width: formPiece.focused && !root.formFresh ? 1 : 0
+                      border.color: Color.accent
+
+                      Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        visible: !(formPiece.focused && root.formFresh)
+                        color: root.foreground
+                        opacity: formPiece.focused ? 0.16 : 0.1
+                      }
+                    }
+
+                    Text {
+                      id: pieceText
+                      textFormat: Text.PlainText
+                      x: formPiece.pad
+                      anchors.verticalCenter: parent.verticalCenter
+                      // Spaces kept as spaces: a trailing one would otherwise
+                      // not count towards the width.
+                      text: MenuModel.sanitizeText(formPiece.modelData.text).replace(/ /g, "\u00a0")
+                      color: formPiece.focused && root.formFresh ? root.selectedText : root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: root.scaledFont(Style.font.heading)
+                    }
+
+                    Rectangle {
+                      visible: formPiece.focused && !root.formFresh
+                      x: formPiece.pad + pieceText.implicitWidth
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: Math.max(2, Math.round(pieceText.font.pixelSize / 8))
+                      height: Math.round(pieceText.font.pixelSize * 1.15)
+                      color: root.foreground
+                      opacity: (!root.cursorBlink || cursorBlink.on) ? 0.85 : 0
+                    }
+                  }
+                }
+              }
             }
 
           }
