@@ -1571,9 +1571,7 @@ Item {
     root.disarmPointer()
     if (id === "apps") root.loadProviderForMenu("apps")
     if (root.filterText.trim()) root.loadProvidersForSearch()
-    root.updateSystemMatches()
-    root.rebuildDisplay()
-    if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
+    root.rebuildForQuery()
     fileCtl.requestFileSearch()
   }
 
@@ -2221,9 +2219,7 @@ Item {
     root.cursorActive = root.mode !== "input"
     root.disarmPointer()
     if (!root.dmenuActive && !root.commandMode && root.filterText.trim()) root.loadProvidersForSearch()
-    root.updateSystemMatches()
-    root.rebuildDisplay()
-    if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
+    root.rebuildForQuery()
     fileCtl.requestFileSearch()
   }
 
@@ -2333,13 +2329,20 @@ Item {
   // Put the tree on a match: open the menu it lives in and park the cursor on
   // it, or -- for a top-level category -- highlight it on the left. The query
   // stays; Esc clears it and leaves the tree where it is.
+  function rebuildForQuery() {
+    root.updateSystemMatches()
+    // A jump commits the destination rows before selecting the hit. Only
+    // build here when there was no jump; keep the result ready for Enter.
+    if (!root.systemTwoPane || !root.jumpToSystemMatch(0)) root.rebuildDisplay()
+  }
+
   function jumpToSystemMatch(index) {
     var count = root.systemMatches.length
-    if (count === 0) return
+    if (count === 0) return false
     index = ((index % count) + count) % count
     root.systemMatchIndex = index
     var entry = root.item(root.systemMatches[index])
-    if (!entry) return
+    if (!entry) return false
     root.navStack = []
     root.cursorActive = true
     if (entry.parent === "root") {
@@ -2348,7 +2351,7 @@ Item {
       root.syncSystemCategoryTo(entry.id)
       root.systemPane = "left"
       root.selectedIndex = 0
-      return
+      return true
     }
     root.activeMenu = entry.parent
     root.rebuildDisplay()
@@ -2358,6 +2361,7 @@ Item {
       if (displayModel.get(i).itemId === entry.id) { root.selectedIndex = i; break }
     }
     root.revealCursor()
+    return true
   }
 
   function setActiveMenu(id, pushHistory, fromPointer) {
