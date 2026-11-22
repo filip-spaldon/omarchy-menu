@@ -2,6 +2,7 @@
 """Exercise the shipped cursor and geometry components in the real Qt engine."""
 import os
 from pathlib import Path
+import re
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -9,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORMTHEME", "generic")
 
 from PySide6.QtCore import QEvent, QUrl
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQml import QJSEngine, QQmlComponent, QQmlEngine
 from PySide6.QtTest import QTest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +61,50 @@ class QtRegressionTests(unittest.TestCase):
         QTest.qWait(25)
         self.assertFalse(blink.property("running"))
         self.assertTrue(blink.property("on"))
+
+    def test_system_search_commits_destination_once(self):
+        source = (ROOT / "Menu.qml").read_text()
+        functions = [
+            re.search(r"^  function " + name + r"\([^)]*\) \{.*?^  \}", source, re.M | re.S).group()
+            for name in ("rebuildForQuery", "jumpToSystemMatch")
+        ]
+        engine = QJSEngine()
+        result = engine.evaluate("\n".join(functions) + """
+            var activeRows = [];
+            var displayModel = { get count() { return activeRows.length }, get: i => activeRows[i] };
+            var entries = {
+                capture: { id: "capture", parent: "root", kind: "menu" },
+                screenshot: { id: "screenshot", parent: "capture", kind: "action" }
+            };
+            var hit = "", rebuilds = 0;
+            var root = {
+                activeMenu: "root", systemTwoPane: true,
+                updateSystemMatches() { this.systemMatches = hit ? [hit] : []; },
+                item: id => entries[id],
+                rebuildDisplay() {
+                    rebuilds++;
+                    activeRows = this.activeMenu === "capture"
+                        ? [{ itemId: "other" }, { itemId: "screenshot" }] : [];
+                },
+                syncSystemCategoryTo(id) {}, syncSystemCategory() {}, revealCursor() {},
+                jumpToSystemMatch
+            };
+            function query(id) {
+                hit = id;
+                rebuilds = 0;
+                rebuildForQuery();
+                return [rebuilds, root.activeMenu, root.systemPane, root.selectedIndex];
+            }
+            var category = query("capture");
+            var nested = query("screenshot");
+            var immediateTarget = displayModel.get(root.selectedIndex).itemId;
+            var missing = query("removed");
+            var empty = query("");
+            JSON.stringify([category, nested, immediateTarget, missing[0], empty[0]]);
+        """)
+        self.assertFalse(result.isError(), result.toString())
+        self.assertEqual(result.toString(),
+                         '[[1,"capture","left",0],[1,"capture","right",1],"screenshot",1,1]')
 
     def test_geometry_matrix(self):
         g = self.component("MenuGeometry.qml")
