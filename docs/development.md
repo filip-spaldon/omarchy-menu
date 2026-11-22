@@ -115,6 +115,19 @@ node tests/ai_unit_test.js
 ```
 
 The standard installer and updater follow the repository default branch.
+
+### Branches and releases
+
+- `dev` is where work happens: commits, merged pull requests, testing. Open
+  pull requests against `dev`.
+- `main` is the default branch and holds released versions only. Installs and
+  `omarchy plugin update` follow it, and the marketplace verifies only the
+  current HEAD of `main`.
+
+To release: bump `version` in `manifest.json` on `dev`, run the checks above,
+fast-forward `main` to `dev`, tag it (`git tag -a vX.Y.Z`), push `main` and the
+tag, then file a marketplace **Verify or update a listed plugin** request with
+"Verify and publish a newer upstream commit" and the full SHA of `main`.
 Submit [the repository](https://github.com/filip-spaldon/omarchy-menu) through
 the [marketplace form](https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=submit-plugin.yml)
 with category **Productivity** and tags **launcher**, **quickshell**, **ai**.
