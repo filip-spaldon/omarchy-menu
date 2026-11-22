@@ -92,7 +92,11 @@ this list, in review and before a release:
   HTTP(S) links go to the browser. Image actions and thumbnails use paths
   from Omarchy's image folder after one bounded stat finds a regular file
   (no symlink) of at most 16 MiB. Thumbnails decode asynchronously, uncached,
-  at most 256 px.
+  at most 256 px. The paste key depends on the window under the launcher,
+  read with a bounded `hyprctl -j activewindow`; its class and tags are only
+  compared with a fixed list, and only the token `terminal` or `app` reaches
+  the paste script as an argument. Colour swatches are `#AARRGGBB` strings
+  built from parsed numbers, never the copied text.
 - **Answers and displayed text**: capped in size, sanitized
   (`MenuModel.sanitizeText`) and shown as plain text. AI answers are Markdown: they
   go through `AiBackend.markdownSafe` (no images, every `<` escaped, also

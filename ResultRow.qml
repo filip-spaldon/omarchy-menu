@@ -27,6 +27,9 @@ BorderSurface {
   // (inside Omarchy's image folder, a regular file under the size cap); ""
   // on every other row.
   required property string imagePath
+  // A clipboard colour's swatch, Qt "#AARRGGBB" built by Clipboard.colorSwatch
+  // from parsed numbers; "" on every other row.
+  required property string swatch
   required property string action
   required property int childCount
   required property string trailText
@@ -46,6 +49,8 @@ BorderSurface {
   readonly property bool isApp: !row.tiled && (row.kind === "app" || (row.kind === "window" && row.appIcon.length > 0))
   readonly property bool hasIcon: !row.tiled && (row.icon.length > 0 || row.isApp)
   readonly property bool showsThumb: !row.tiled && row.imagePath.length > 0
+  // Checked again here: only the exact shape colorSwatch writes reaches color.
+  readonly property bool showsSwatch: !row.tiled && !row.showsThumb && Clipboard.isSwatch(row.swatch)
   // Open windows of an application row, for the running marker.
   readonly property int windowCount: row.kind === "app" && !row.tiled ? row.menu.appWindowCount(row.appId) : 0
   readonly property string trailShown: row.tiled ? "" : row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
@@ -75,6 +80,8 @@ BorderSurface {
     id: iconText
     textFormat: Text.PlainText
     visible: row.hasIcon && !row.isApp && !row.showsThumb
+    // Keeps its place (the label lines up after it) under a colour swatch.
+    opacity: row.showsSwatch ? 0 : 1
     text: row.icon
     color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
     font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
@@ -138,6 +145,20 @@ BorderSurface {
       font.pixelSize: row.menu.scaledFont(Style.font.iconLarge)
       anchors.centerIn: parent
     }
+  }
+
+  // A colour entry shows the colour itself in the icon's place, outlined so
+  // a transparent one is still visible.
+  Rectangle {
+    visible: row.showsSwatch
+    width: row.menu.scaledFont(Style.font.iconLarge)
+    height: width
+    radius: Math.min(row.menu.cornerRadius, Style.space(4))
+    color: row.showsSwatch ? row.swatch : "transparent"
+    border.width: 1
+    border.color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+    anchors.horizontalCenter: iconText.horizontalCenter
+    anchors.verticalCenter: iconText.verticalCenter
   }
 
   RunningBadge {

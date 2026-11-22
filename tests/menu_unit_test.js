@@ -999,8 +999,10 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   assert(paste.command.every(arg => !arg.includes(entries[0].text)), "text stays off the command line")
   eq(action(entries[1], "copy"),
      { command: ["timeout", "-k", "1", "10", "wl-copy"], input: entries[1].text }, "copy legacy text")
-  eq(action(entries[2], "paste").command,
-     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-file", "image/png", png], "paste checked image")
+  const imagePaste = action(entries[2], "paste").command
+  eq(imagePaste.slice(0, 6), ["timeout", "-k", "1", "10", "bash", "-c"], "bounded image paste")
+  eq(imagePaste.slice(7), ["omni-paste", "app", "image/png", png], "image paste passes mode, mime and path as arguments")
+  eq(action(entries[2], "paste").input, undefined, "image paste has no stdin")
   eq(action(entries[2], "copy").command,
      ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-file", "--copy-only", "image/png", png], "copy checked image")
   eq(action(entries[2], "open").command, ["omasnap", "--notify", png], "open checked image directly")
@@ -1019,6 +1021,35 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(action(entries[0], "other"), null, "unknown action, no command")
   eq(action({ type: "image", path: png, mime: "--help" }, "paste"), null,
      "a forged mime is refused")
+  // Paste target: only a fixed token reaches the command.
+  const modeAction = (entry, mode) => Clipboard.actionFor(entry, bin, "paste", verified, mode)
+  eq(modeAction(entries[0], "terminal").command.slice(-2), ["omni-paste", "terminal"], "terminal text paste")
+  eq(modeAction(entries[2], "terminal").command.slice(-4), ["omni-paste", "terminal", "image/png", png], "terminal image paste")
+  eq(modeAction(entries[0], "kitty; rm -rf ~").command.slice(-1), ["app"], "an unknown mode is app")
+  eq(modeAction(entries[0], undefined).command.slice(-1), ["app"], "no mode is app")
+  assert(!Clipboard.actionFor(entries[0], bin, "copy", verified, "terminal").command.includes("terminal"), "copy ignores the mode")
+  eq(Clipboard.activeWindowCommand(), ["bash", "-c", "timeout -k 1 2 hyprctl -j activewindow | head -c 65536"],
+     "active window read is bounded")
+  const win = (props) => JSON.stringify(Object.assign({ address: "0x1", class: "firefox", tags: [] }, props))
+  eq(Clipboard.pasteModeFor(win({})), "app", "a browser is an app")
+  eq(Clipboard.pasteModeFor(win({ tags: ["terminal*"] })), "terminal", "Hyprland's dynamic terminal tag")
+  eq(Clipboard.pasteModeFor(win({ class: "org.omarchy.btop", tags: ["terminal"] })), "terminal", "a static terminal tag")
+  eq(Clipboard.pasteModeFor(win({ tags: ["terminally-ill*", "xterminal"] })), "app", "only the exact tag counts")
+  for (const cls of ["Alacritty", "kitty", "foot", "footclient", "com.mitchellh.ghostty", "org.wezfurlong.wezterm",
+                     "org.kde.konsole", "org.gnome.Terminal", "org.gnome.Ptyxis", "herdr"]) {
+    eq(Clipboard.pasteModeFor(win({ class: cls })), "terminal", "terminal class " + cls)
+  }
+  eq(Clipboard.pasteModeFor(win({ class: "kitty-ish" })), "app", "a class is matched whole")
+  eq(Clipboard.pasteModeFor(win({ class: "constructor" })), "app", "prototype names are not terminals")
+  eq(Clipboard.pasteModeFor(win({ class: ["kitty"] })), "app", "a non-string class is ignored")
+  eq(Clipboard.pasteModeFor(win({ tags: "terminal" })), "app", "a non-array tags field is ignored")
+  eq(Clipboard.pasteModeFor("{}"), "app", "no active window is an app")
+  eq(Clipboard.pasteModeFor("[]"), "app", "a non-object is an app")
+  eq(Clipboard.pasteModeFor("{\"class\": \"kit"), "app", "cut-off output is an app")
+  eq(Clipboard.pasteModeFor(win({ class: "kitty", title: "x".repeat(70000) })), "app", "output at the cap is an app")
+  eq(Clipboard.pasteModeFor(null), "app", "no output is an app")
+  assert(Clipboard.TERMINAL_CLASSES.every(c => c === c.toLowerCase()), "the allow-list is lower case")
+
   eq(Clipboard.helpersCheckCommand(bin), ["timeout", "-k", "1", "2", "test",
      "-x", bin + "/omarchy-clipboard-paste-file"], "helper check")
 
@@ -1040,6 +1071,28 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
     eq(fs.readFileSync(path.join(temp, "copied"), "utf8"), paste.input, "paste copies the selected text")
     eq(fs.readFileSync(path.join(temp, "keys"), "utf8"), "-M\nshift\n-k\nInsert\n-m\nshift\n", "paste sends Shift+Insert")
     fs.unlinkSync(path.join(temp, "keys"))
+    const termPaste = Clipboard.actionFor(entry, bin, "paste", verified, "terminal")
+    eq(run(termPaste).status, 0, "terminal paste succeeds")
+    eq(fs.readFileSync(path.join(temp, "keys"), "utf8"), "-M\nctrl\n-M\nshift\n-k\nv\n-m\nshift\n-m\nctrl\n",
+       "terminal paste sends Ctrl+Shift+V")
+    fs.unlinkSync(path.join(temp, "keys"))
+    // An image goes to wl-copy straight from its file, with its mime type.
+    const picture = path.join(temp, "a b$(x).png")
+    fs.writeFileSync(picture, "\x89PNG fake")
+    fs.writeFileSync(path.join(temp, "wl-copy"), '#!/bin/sh\nprintf "%s\\n" "$@" > "$TMPDIR/args"\ncat > "$TMPDIR/copied"\n',
+                     { mode: 0o700 })
+    const imageEntry = { type: "image", path: picture, mime: "image/png" }
+    for (const [mode, keys] of [["app", "-M\nshift\n-k\nInsert\n-m\nshift\n"],
+                                ["terminal", "-M\nctrl\n-M\nshift\n-k\nv\n-m\nshift\n-m\nctrl\n"]]) {
+      eq(run(Clipboard.actionFor(imageEntry, bin, "paste", { [picture]: true }, mode)).status, 0, mode + " image paste succeeds")
+      eq(fs.readFileSync(path.join(temp, "args"), "utf8"), "--type\nimage/png\n", mode + " image paste copies with its mime")
+      eq(fs.readFileSync(path.join(temp, "copied"), "utf8"), "\x89PNG fake", mode + " image paste copies the file")
+      eq(fs.readFileSync(path.join(temp, "keys"), "utf8"), keys, mode + " image paste key")
+      fs.unlinkSync(path.join(temp, "keys"))
+    }
+    fs.unlinkSync(picture)
+    eq(run(Clipboard.actionFor(imageEntry, bin, "paste", { [picture]: true }, "app")).status, 1, "a vanished image fails")
+    assert(!fs.existsSync(path.join(temp, "keys")), "a vanished image sends no keys")
     fs.writeFileSync(path.join(temp, "wl-copy"), "#!/bin/sh\nexit 1\n")
     eq(run(paste).status, 1, "copy failure stops paste")
     assert(!fs.existsSync(path.join(temp, "keys")), "copy failure sends no keys")
@@ -1094,6 +1147,130 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
          "thumbnails decode off the UI thread, uncached, capped in size")
   assert(controller.indexOf("Clipboard.imageStatCommand(clip.entries)") >= 0
          && controller.indexOf("Clipboard.previewablePaths(") >= 0, "thumbnails wait for the stat")
+}
+
+// ---------------------------------------------------- clipboard filters --
+{
+  const fs = require("fs")
+  const dir = "/home/u/.local/state/omarchy/clipboard-images/"
+  const png = dir + "a.png"
+  const kindOf = text => Clipboard.parseHistory(JSON.stringify([text]), dir)[0].kind
+
+  eq(Clipboard.FILTERS.map(f => f.label), ["All Types", "Text", "Images", "Files", "Links", "Colors"],
+     "filters match omacast's set")
+  eq(Clipboard.filterAt(99).id, "all", "an out-of-range filter index is All")
+  eq(Clipboard.filterIndex("colors"), 5, "filter ids map to their index")
+  eq(Clipboard.filterIndex("constructor"), -1, "unknown filter ids are refused")
+
+  // Files
+  eq(kindOf("/etc/hosts"), "file", "an absolute path is a file")
+  eq(kindOf("/home/u/a b.txt\n/tmp/x\n"), "file", "several paths, one per line, with a trailing newline")
+  eq(kindOf("# comment\r\nfile:///home/u/x.png\r\nfile://localhost/tmp/y"), "file", "a text/uri-list")
+  eq(Clipboard.fileCount("/a\n\n/b\nfile:///c"), 3, "paths are counted")
+  eq(kindOf("/etc/hosts\nhello"), "text", "mixed lines are text")
+  eq(kindOf("// a comment"), "text", "a // comment is not a path")
+  eq(kindOf("/* block */"), "text", "a /* comment is not a path")
+  eq(kindOf("relative/path"), "text", "a relative path is text")
+  eq(kindOf("file://host/share"), "text", "a remote file URI is text")
+  eq(kindOf("/a\tb"), "text", "a tab in a path line is text")
+  eq(kindOf("/a\u0000b"), "text", "a NUL in a path line is text")
+  eq(kindOf("# just a comment"), "text", "comments alone are not a file list")
+  eq(Clipboard.fileCount(Array(1001).fill("/a").join("\n")), 0, "too many lines are not scanned as files")
+  eq(Clipboard.fileCount("/" + "a".repeat(70000)), 0, "a huge text is not scanned as files")
+
+  // Links
+  eq(kindOf("https://example.com/a?b=c#d"), "link", "a whole URL is a link")
+  eq(kindOf("  http://example.com  \n"), "link", "surrounding whitespace is trimmed")
+  eq(kindOf("example.com/path"), "link", "a bare domain is a link")
+  eq(kindOf("see https://example.com"), "text", "a sentence with a URL is text")
+  eq(kindOf("https://a.com https://b.com"), "text", "two URLs are text")
+  eq(kindOf("javascript:alert(1)"), "text", "other schemes are not links")
+  eq(kindOf("ftp://example.com"), "text", "ftp is not a link")
+  eq(kindOf("<a href=\"https://x.com\">x</a>"), "text", "markup is text")
+  eq(kindOf("https://" + "a".repeat(9000) + ".com"), "text", "an overlong URL is text")
+  eq(Clipboard.linkHost("https://user:pw@Example.COM:8080/x"), "example.com:8080", "the host drops credentials")
+  eq(Clipboard.linkHost("https://[::1]:80/"), "[::1]:80", "an IPv6 host")
+  eq(Clipboard.linkHost("https://exa<b>mple.com/"), "", "a host with markup is dropped")
+  eq(Clipboard.wholeLink("example.com"), "https://example.com", "a bare domain gets https")
+
+  // Colors: Qt "#AARRGGBB"
+  eq(Clipboard.colorSwatch("#fff"), "#ffffffff", "#rgb")
+  eq(Clipboard.colorSwatch("#f008"), "#88ff0000", "#rgba")
+  eq(Clipboard.colorSwatch("#1E90FF"), "#ff1e90ff", "#rrggbb")
+  eq(Clipboard.colorSwatch("#ff000080"), "#80ff0000", "#rrggbbaa puts alpha first for Qt")
+  eq(Clipboard.colorSwatch("rgb(255, 0, 0)"), "#ffff0000", "rgb() with commas")
+  eq(Clipboard.colorSwatch("rgba(0, 0, 255, 0.5)"), "#800000ff", "rgba() with alpha")
+  eq(Clipboard.colorSwatch("rgb(0 128 255 / 50%)"), "#800080ff", "rgb() space syntax")
+  eq(Clipboard.colorSwatch("rgb(100%, 0%, 0%)"), "#ffff0000", "rgb() percentages")
+  eq(Clipboard.colorSwatch("rgb(300, -5, 0)"), "#ffff0000", "channels are clamped")
+  eq(Clipboard.colorSwatch("hsl(120, 100%, 50%)"), "#ff00ff00", "hsl()")
+  eq(Clipboard.colorSwatch("hsla(240deg 100% 50% / 0.25)"), "#400000ff", "hsla() space syntax with deg")
+  eq(Clipboard.colorSwatch("hsl(0, 0%, 50%)"), "#ff808080", "grey hsl()")
+  for (const bad of ["#ggg", "#12345", "fff", "rgb(1,2)", "rgb(1,2,3,4,5)", "rgb(a,b,c)", "rgb(1,2,3", "red",
+                     "rgb(1%,2,3) x", "url(#fff)", "rgb(1 2 3 / 4 / 5)", "hsl(10%, 20%, 30%)", "rgb(,,)",
+                     "#fff\n#000", "rgb(" + "1,".repeat(40) + "1)", "rgb(1e3, 0, 0)"]) {
+    eq(Clipboard.colorSwatch(bad), "", "not a colour: " + JSON.stringify(bad))
+  }
+  eq(kindOf(" #ABCDEF "), "color", "a hex colour entry")
+  eq(kindOf("color: #fff;"), "text", "CSS around a colour is text")
+  assert(Clipboard.isSwatch("#ff00ff00") && !Clipboard.isSwatch("#fff") && !Clipboard.isSwatch("red")
+         && !Clipboard.isSwatch("#ff00ff00; x") && !Clipboard.isSwatch(null), "only the swatch shape passes")
+
+  // Text and hostile inputs
+  eq(kindOf("hello world"), "text", "plain text")
+  eq(kindOf("<b>#fff</b>"), "text", "markup around a colour is text")
+  eq(kindOf("x".repeat(200000)), "text", "huge text is text")
+  eq(kindOf("‮/etc/passwd"), "text", "a bidi override before a path is text")
+
+  const history = ["hello", "/etc/hosts\n/tmp/x", "https://example.com/a", "#336699",
+                   { type: "image", path: png, mime: "image/png", capturedAt: "now" }, "rgb(1,2,3)", "example.com"]
+  const entries = Clipboard.parseHistory(JSON.stringify(history), dir)
+  const ids = filter => Clipboard.clipboardRows(entries, "", {}, filter).map(r => r.target)
+  eq(ids("all"), ["0", "1", "2", "3", "4", "5", "6"], "All Types shows everything")
+  eq(ids(undefined), ids("all"), "no filter is All Types")
+  eq(ids("bogus"), ids("all"), "an unknown filter is All Types")
+  eq(ids("text"), ["0"], "Text leaves out files, links and colours")
+  eq(ids("images"), ["4"], "Images")
+  eq(ids("files"), ["1"], "Files")
+  eq(ids("links"), ["2", "6"], "Links")
+  eq(ids("colors"), ["3", "5"], "Colors")
+  eq(Clipboard.clipboardRows(entries, "example", {}, "links").map(r => r.target), ["2", "6"], "the query and filter combine")
+  eq(Clipboard.clipboardRows(entries, "hosts", {}, "links"), [], "a filtered-out match is hidden")
+
+  const rows = Clipboard.clipboardRows(entries, "", {}, "all")
+  eq(rows.map(r => r.detail.split(" · ")[0]), ["1 line", "2 files", "Link", "Color", "Image", "Color", "Link"], "details per kind")
+  eq(rows[2].detail, "Link · example.com", "link rows show the host")
+  eq(rows.map(r => r.swatch), ["", "", "", "#ff336699", "", "#ff010203", ""], "only colour rows carry a swatch")
+  eq(new Set(rows.map(r => r.icon)).size, 5, "each kind has its own icon")
+  const roleSet = JSON.stringify(Object.keys(rows[0]).sort())
+  assert(rows.every(r => JSON.stringify(Object.keys(r).sort()) === roleSet), "filtered rows keep the same roles")
+  eq(Clipboard.emptyFilterText(entries, "all"), "", "All has no filter empty state")
+  eq(Clipboard.emptyFilterText(entries, "images"), "", "no empty state when the type is present")
+  eq(Clipboard.emptyFilterText(entries.filter(e => e.type !== "image"), "images"), "No images in clipboard history",
+     "empty state names the type")
+  eq(Clipboard.emptyFilterText([], "text"), "No text in clipboard history", "empty text state")
+
+  // The swatch role reaches every row builder, and the delegate checks it again.
+  eq(MenuModel.displayRow({}, [], {}, { id: "x", kind: "action", label: "X" }, "", 0, "").swatch, "",
+     "menu rows declare the swatch role")
+  assert("swatch" in Windows.windowRows([{ address: "0x1", windowClass: "a", title: "t", workspaceId: 1,
+    workspaceName: "1", isSpecialWorkspace: false, isFloating: false, focusRecency: 0 }], "", () => null)[0],
+    "window rows declare the swatch role")
+  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  const resultRow = fs.readFileSync(path.join(root, "ResultRow.qml"), "utf8")
+  const controller = fs.readFileSync(path.join(root, "ClipboardController.qml"), "utf8")
+  eq((menuSource.match(/swatch: ""/g) || []).length, 3, "query and dmenu rows declare the swatch role")
+  assert(/showsSwatch: .*Clipboard\.isSwatch\(row\.swatch\)/.test(resultRow), "the delegate validates the swatch")
+  assert(!/Qt\.color\(/.test(resultRow), "no Qt.color on clipboard text")
+  assert(/activeTab === "clipboard" && root\.tabsActive && event\.modifiers === Qt\.ControlModifier\s*&& event\.key === Qt\.Key_F/
+         .test(menuSource), "Ctrl+F cycles the clipboard filter")
+  assert(/clipboardCtl\.filterIndex = 0/.test(menuSource), "the filter resets on open")
+  assert(/clipboardCtl\.setFilter\(id\)/.test(menuSource), "a chip picks the filter")
+  assert(/Ctrl\+F type/.test(menuSource.match(/activeTab === "clipboard"\)\s*return "[^"]*"/)[0]), "footer mentions Ctrl+F")
+  assert(/clipboardRows\(clip\.entries, query, clip\.previewable, clip\.filter\.id\)/.test(controller), "rows use the filter")
+  assert(controller.indexOf("Clipboard.activeWindowCommand()") >= 0
+         && /clip\.previewable, clip\.pasteMode\)/.test(controller)
+         && /Clipboard\.pasteModeFor\(activeWindowOut\.text/.test(controller), "paste follows the window under the launcher")
 }
 
 // ------------------------------------------------------- System shortcuts --

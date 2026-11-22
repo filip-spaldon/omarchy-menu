@@ -29,6 +29,14 @@ Item {
   property bool helpersChecked: false
   property bool helpersPresent: false
   property string historyStatus: ""
+  // The type filter (Clipboard.FILTERS), cycled with Ctrl+F or picked from
+  // the chips; back to All Types on every open, like the Files filter.
+  property int filterIndex: 0
+  readonly property var filter: Clipboard.filterAt(clip.filterIndex)
+  // How a paste reaches the window under the launcher: "terminal"
+  // (Ctrl+Shift+V) or "app" (Shift+Insert), from Clipboard.pasteModeFor. Read
+  // with the history; "app" until it answers.
+  property string pasteMode: "app"
 
   readonly property string binDir: clip.menu.omarchyPath ? clip.menu.omarchyPath + "/bin" : ""
   readonly property string homeDir: Quickshell.env("HOME") || ""
@@ -62,6 +70,11 @@ Item {
       return
     }
     clip.status = "loading"
+    if (!activeWindowProc.running) {
+      clip.pasteMode = "app"
+      activeWindowProc.command = Clipboard.activeWindowCommand()
+      activeWindowProc.running = true
+    }
     clip.previewable = ({})
     clip.historyRead = false
     clip.helpersChecked = false
@@ -96,7 +109,25 @@ Item {
   }
 
   function rows(query) {
-    return clip.status === "ready" ? Clipboard.clipboardRows(clip.entries, query, clip.previewable) : []
+    return clip.status === "ready" ? Clipboard.clipboardRows(clip.entries, query, clip.previewable, clip.filter.id) : []
+  }
+
+  function cycleFilter() {
+    clip.filterIndex = (clip.filterIndex + 1) % Clipboard.FILTERS.length
+    clip.applyFilter()
+  }
+
+  function setFilter(id) {
+    const i = Clipboard.filterIndex(id)
+    if (i < 0) return
+    clip.filterIndex = i
+    clip.applyFilter()
+  }
+
+  function applyFilter() {
+    if (clip.menu.activeTab !== "clipboard") return
+    clip.menu.selectedIndex = 0
+    clip.menu.rebuildDisplay()
   }
 
   // What the empty list says when there is nothing to show.
@@ -104,7 +135,8 @@ Item {
     if (clip.status === "idle" || clip.status === "loading") return "Reading clipboard history…"
     if (clip.status === "missing") return "No clipboard history: it comes from Omarchy's clipboard service (Omarchy 4.5+), which is off or has not saved anything yet"
     if (clip.status === "error") return "Could not read Omarchy's clipboard history"
-    return clip.entries.length === 0 ? "Clipboard history is empty" : ""
+    if (clip.entries.length === 0) return "Clipboard history is empty"
+    return Clipboard.emptyFilterText(clip.entries, clip.filter.id)
   }
 
   // Closes the menu first, so the paste lands in the window that had focus.
@@ -118,7 +150,8 @@ Item {
 
   function runAction(index, operation) {
     if (actionProc.running) return
-    const action = Clipboard.actionFor(Clipboard.entryAt(clip.entries, index), clip.binDir, operation, clip.previewable)
+    const action = Clipboard.actionFor(Clipboard.entryAt(clip.entries, index), clip.binDir, operation,
+                                          clip.previewable, clip.pasteMode)
     if (!action) return
     clip.menu.closeLauncher()
     if (action.input === undefined) {
@@ -161,6 +194,19 @@ Item {
       clip.entries = []
       clip.previewable = ({})
       clip.status = "idle"
+      clip.pasteMode = "app"
+    }
+  }
+
+  Process {
+    id: activeWindowProc
+    stdout: StdioCollector {
+      id: activeWindowOut
+      waitForEnd: true
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (!clip.menu.opened) return
+      clip.pasteMode = exitCode === 0 && !exitStatus ? Clipboard.pasteModeFor(activeWindowOut.text || "") : "app"
     }
   }
 

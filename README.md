@@ -44,7 +44,7 @@ saved to `style.json` when the menu closes. dmenu pickers stay centred. The slid
 | **Files** | File name search under your home directory, with type, sort and result-limit controls |
 | **Folders** | Folder search, including a separate System folders filter for configuration directories |
 | **Windows** | Every open window across workspaces; Enter focuses it, switching workspace or raising the scratchpad as needed |
-| **Clipboard** | Omarchy's clipboard history, newest first; Enter pastes, Ctrl+C copies, Ctrl+O opens |
+| **Clipboard** | Omarchy's clipboard history, newest first; Ctrl+F filters by type; Enter pastes, Ctrl+C copies, Ctrl+O opens |
 
 The System tab keeps the category list visible while you browse its items.
 Use Up/Down to select, Right or Enter to open, and Left to go back. Typing
@@ -64,9 +64,17 @@ directly.
 Clipboard lists the clipboard history kept by Omarchy's own clipboard service
 (Omarchy 4.5 and later), newest first: text by its first line with its line
 and character count, images by when they were copied. Typing filters by the
-full text, ignoring case and accents. Images show inline thumbnails; missing,
+full text, ignoring case and accents. Ctrl+F (or a click on the chips above
+the list) narrows the list to one type: All Types, Text, Images, Files (lines
+of absolute paths or `file://` URIs), Links (a whole http(s) URL or bare
+domain, shown with its host), or Colors (a whole hex, `rgb()` or `hsl()`
+value, shown with a swatch); Text is whatever is none of the others. The
+filter starts at All Types on every open. Images show inline thumbnails; missing,
 unsafe or larger-than-16-MiB files stay listed with an icon and no actions.
-Enter pastes the selected item into the window that had focus, Ctrl+C only
+Enter pastes the selected item into the window that had focus, with
+Ctrl+Shift+V in a terminal (a window Hyprland tags `terminal`, or a known
+terminal class such as kitty, Alacritty, foot or Ghostty) and Shift+Insert
+everywhere else, as Omarchy's universal paste does. Ctrl+C only
 copies it, and Ctrl+O opens it (a link in the browser, text in the editor as a
 private temporary file, an image in the viewer). Actions use the entry shown
 in the menu, even if a new item arrives after opening. The tab reads

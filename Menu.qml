@@ -11,6 +11,7 @@ import "MenuModel.js" as MenuModel
 import "Tabs.js" as Tabs
 import "AllTiles.js" as AllTiles
 import "FileSearch.js" as FileSearch
+import "Clipboard.js" as Clipboard
 import "SystemShortcuts.js" as SystemShortcuts
 import "ai/AiBackend.js" as AiBackend
 
@@ -431,7 +432,7 @@ Item {
     if (root.activeTab === "windows")
       return "Enter go to window · type to filter by title, app or workspace · Tab next tab · Esc close"
     if (root.activeTab === "clipboard")
-      return "Enter paste · Ctrl+C copy · Ctrl+O open · Tab next tab · Esc close"
+      return "Enter paste · Ctrl+C copy · Ctrl+O open · Ctrl+F type · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
       return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · "
         + (fileCtl.hasRoots ? "Ctrl+R where · " : "") + "Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
@@ -453,7 +454,8 @@ Item {
     }
     if (root.activeTab === "apps") return "Search applications…"
     if (root.activeTab === "windows") return "Search open windows…"
-    if (root.activeTab === "clipboard") return "Search clipboard…"
+    if (root.activeTab === "clipboard")
+      return clipboardCtl.filter.noun ? "Search clipboard " + clipboardCtl.filter.noun + "…" : "Search clipboard…"
     if (root.activeTab === "files") return "Search files…"
     if (root.activeTab === "folders") return "Search folders…"
     return "Search everything…"
@@ -496,6 +498,7 @@ Item {
   readonly property int launcherChromeHeight: Math.ceil(cardInsets) + headerHeight
     + (tabBar.visible ? contentSpacing + tabBar.height : 0)
     + (fileBar.visible ? contentSpacing + fileBar.height : 0)
+    + (clipboardBar.visible ? contentSpacing + clipboardBar.height : 0)
     + (desiredRowsHeight > 0 ? contentSpacing : 0)
     + (footer.visible ? contentSpacing + Math.ceil(footer.implicitHeight) : 0)
   MenuGeometry {
@@ -1622,6 +1625,7 @@ Item {
       detail: spec.detail || "",
       path: "",
       imagePath: "",
+      swatch: "",
       childCount: 0,
       action: "",
       provider: "",
@@ -1671,7 +1675,7 @@ Item {
       rows.push(MenuModel.sanitizeRow({
         itemId: "dmenu.apply", disabled: false, kind: "dmenu", icon: "", iconFont: "",
         appIcon: "", appId: "", label: Commons.I18n.t("common.apply"), target: "",
-        detail: Commons.I18n.tn("menu.selectedCount", root.dmenuSelected.length).arg(Commons.I18n.formatNumber(root.dmenuSelected.length)), path: "", imagePath: "", childCount: 0,
+        detail: Commons.I18n.tn("menu.selectedCount", root.dmenuSelected.length).arg(Commons.I18n.formatNumber(root.dmenuSelected.length)), path: "", imagePath: "", swatch: "", childCount: 0,
         action: "", provider: "", score: -1, section: "", trailText: ""
       }))
     }
@@ -1700,6 +1704,7 @@ Item {
         detail: detail,
         path: "",
         imagePath: "",
+        swatch: "",
         childCount: 0,
         action: "",
         provider: "",
@@ -2610,6 +2615,7 @@ Item {
     fileCtl.fileFilterIndex = 0
     fileCtl.folderFilterIndex = 0
     fileCtl.rootScope = "all"
+    clipboardCtl.filterIndex = 0
     fileCtl.prepare()
     root.pendingInitialMenu = place.menu
     root.openExistingMenu(place.menu)
@@ -3148,6 +3154,10 @@ Item {
           } else if (event.key === Qt.Key_O && event.modifiers === Qt.ControlModifier && root.selectedClipboardRow()) {
             clipboardCtl.open(root.selectedClipboardRow().target)
             event.accepted = true
+          } else if (root.activeTab === "clipboard" && root.tabsActive && event.modifiers === Qt.ControlModifier
+                     && event.key === Qt.Key_F) {
+            clipboardCtl.cycleFilter()
+            event.accepted = true
           } else if (event.key === Qt.Key_C && event.modifiers === Qt.ControlModifier && root.selectedFileRow()) {
             root.copyPath(root.selectedFileRow())
             event.accepted = true
@@ -3468,6 +3478,25 @@ Item {
               opacity: 0.5
               font.family: root.fontFamily
               font.pixelSize: root.scaledFont(Style.font.caption)
+            }
+          }
+
+          // The Clipboard type filter (Ctrl+F), chips like the Files filter.
+          TabBar {
+            id: clipboardBar
+            visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && root.activeTab === "clipboard"
+            width: parent.width
+            height: visible ? implicitHeight : 0
+            tabs: Clipboard.FILTERS.map(function(f) { return { id: f.id, label: f.label, icon: "" } })
+            activeTab: clipboardCtl.filter.id
+            fontFamily: root.fontFamily
+            foreground: root.foreground
+            accent: Color.accent
+            fontSize: root.scaledFont(Style.font.caption)
+            anim: root.tabAnim
+            onTabClicked: function(id) {
+              clipboardCtl.setFilter(id)
+              Qt.callLater(function() { keyCatcher.forceActiveFocus() })
             }
           }
 

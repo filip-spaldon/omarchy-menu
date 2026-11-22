@@ -196,6 +196,7 @@ function toWindowRow(match) {
     detail: windowDetail(openWindow, match.appName),
     path: "",
     imagePath: "",
+    swatch: "",
     childCount: 0,
     action: "",
     provider: "",
