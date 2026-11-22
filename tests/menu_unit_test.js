@@ -1543,6 +1543,17 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   const q = "100 eur - 10%"
   eq(M.answerFormFields(q).fields.map(f => f.kind + ":" + q.slice(f.start, f.end)),
      ["number:100", "currency:eur", "number:10"], "the code is a currency field of the form")
+  const to = M.evaluatePercent("100 eur - 10% to usd")
+  eq([to.value, to.from, to.to], [90, "EUR", "USD"], "a percentage sum with a target currency")
+  eq(M.evaluatePercent("€100 - 10% in usd").from, "EUR", "a symbol is a source currency")
+  eq(M.evaluatePercent("100 - 10% to usd"), null, "a target needs a source currency")
+  eq(M.evaluatePercent("100 eur - 10% to xyz"), null, "an unknown target is refused")
+  eq(M.evaluatePercent("100 eur - 10%").to, "", "no target, nothing to convert")
+  const tq = "20% off 100 eur to usd"
+  eq(M.answerFormFields(tq).fields.map(f => f.kind + ":" + tq.slice(f.start, f.end)),
+     ["number:20", "number:100", "currency:eur", "currency:usd"], "both currencies are form fields")
+  const engine = require("fs").readFileSync(path.join(root, "AnswerEngine.qml"), "utf8")
+  assert(/if \(result\.to\) return answers\.percentCurrencyRow\(result\)/.test(engine), "a target converts through the rates")
   const src = require("fs").readFileSync(path.join(root, "Menu.qml"), "utf8")
   assert(/if \(!root\.commandMode \|\| \(event\.modifiers & Qt\.ControlModifier\)\)\s*root\.setTab/.test(src),
          "plain Tab does not switch tabs under a / command")

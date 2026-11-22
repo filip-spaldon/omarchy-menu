@@ -155,6 +155,7 @@ Item {
   function percentRow(query) {
     var result = MenuModel.evaluatePercent(query)
     if (!result) return null
+    if (result.to) return answers.percentCurrencyRow(result)
 
     return answers.menu.queryRow({
       kind: "calc",
@@ -162,6 +163,35 @@ Item {
       label: result.label,
       detail: result.detail,
       payload: result.copy
+    })
+  }
+
+  // "100 eur - 10% to usd": the sum in the source currency, then the same
+  // conversion and rates as the currency answer.
+  function percentCurrencyRow(result) {
+    answers.ensureCurrencyRates()
+    var snapshot = answers.currencyRates
+    var converted = snapshot
+      ? MenuModel.convertCurrency({ amount: result.value, from: result.from, to: result.to }, snapshot.rates) : null
+    var label = ""
+    var detail = result.label
+    if (converted) {
+      label = MenuModel.formatCurrencyValue(converted.value) + " " + result.to
+      detail += " at " + MenuModel.formatCurrencyRate(converted.rate)
+      var asOf = answers.currencyRatesDate()
+      if (asOf) detail += " · " + asOf
+    } else {
+      label = result.label + " → " + result.to
+      detail = !snapshot ? (answers.currencyFetchFailed ? "Exchange rates unavailable" : "Fetching exchange rates…")
+        : "No rate for " + (snapshot.rates[result.from] ? result.to : result.from)
+    }
+    return answers.menu.queryRow({
+      kind: "currency",
+      icon: "󰏰",
+      label: label,
+      detail: detail,
+      payload: converted ? MenuModel.formatCurrencyValue(converted.value) : "",
+      ready: !!converted
     })
   }
 

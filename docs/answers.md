@@ -113,6 +113,7 @@ code. A bare number stays a search term.
 | `50 - 10%` | `45` |
 | `100 eur - 10%` | `90 EUR` · `10% of 100 EUR is 10 EUR` |
 | `20% off 100 eur` | `80 EUR` · `Saves 20 EUR` |
+| `100 eur - 10% to usd` | the 90 EUR converted to USD, with the rate |
 | `20% off 50` | `40` · `Saves 10` |
 | `15% on 80` | `92` · `Adds 12` |
 | `20% of 50` | `10` |
@@ -120,7 +121,8 @@ code. A bare number stays a search term.
 | `50 is what % of 200` | `25%` |
 
 A leading `$ € £ ¥ ₹` or a currency code after the amount (`100 eur`)
-stays on the answer, and the code is a field of the answer form; Enter copies the
+stays on the answer, and the code is a field of the answer form. Add
+`to <currency>` to convert the result with the currency answer's rates; Enter copies the
 number alone (`36`, or `25%` for a share). Decimals take either mark (`2.5` or
 `2,5`); `1,000` is refused for the same reason as below. `%` on its own between
 two numbers is still the calculator's remainder: `50 % 3` is `2`.

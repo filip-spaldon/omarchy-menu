@@ -319,7 +319,7 @@ answer.
 | `100 km to miles` | Unit conversion |
 | `20 c to f` | Temperature conversion |
 | `123 eur to usd` | Currency conversion with rate date |
-| `$30 + 20%`, `100 eur - 10%`, `20% off 50`, `50 as a % of 200` | Percentages |
+| `$30 + 20%`, `100 eur - 10% to usd`, `20% off 50`, `50 as a % of 200` | Percentages |
 | `40 hours in work days` | Work time (8 h/day, 5 days/week) |
 | `time in tokyo` | Local time and offset |
 | `uuid`, `password 24`, `epoch` | Generated values; Ctrl+R refreshes them |

@@ -1589,13 +1589,15 @@ function formGroupSpans(match, offset) {
 // `a` and `b` are the groups holding the two numbers, `money` the one holding
 // a currency symbol to carry over onto the answer, `code` an optional
 // currency code after the amount ("100 eur - 10%"), checked against the
-// currency table before the form counts.
+// currency table before the form counts. `to` is an optional target
+// currency ("100 eur - 10% to usd"): the sum is worked out in the source
+// currency and converted by the caller, which holds the rates.
 var PERCENT_FORMS = [
-  { op: "add", re: compileForm("^({M})({N})(\\s*{C})?(\\s*\\+\\s*)({N})(\\s*%)$"), money: 1, a: 2, code: 3, b: 5 },
-  { op: "sub", re: compileForm("^({M})({N})(\\s*{C})?(\\s*[-−]\\s*)({N})(\\s*%)$"), money: 1, a: 2, code: 3, b: 5 },
-  { op: "off", re: compileForm("^({N})(\\s*%\\s*off\\s+)({M})({N})(\\s*{C})?$"), money: 3, a: 1, b: 4, code: 5 },
-  { op: "of", re: compileForm("^({N})(\\s*%\\s*of\\s+)({M})({N})(\\s*{C})?$"), money: 3, a: 1, b: 4, code: 5 },
-  { op: "on", re: compileForm("^({N})(\\s*%\\s*on\\s+)({M})({N})(\\s*{C})?$"), money: 3, a: 1, b: 4, code: 5 },
+  { op: "add", re: compileForm("^({M})({N})(\\s*{C})?(\\s*\\+\\s*)({N})(\\s*%)(?:({TO})({C}))?$"), money: 1, a: 2, code: 3, b: 5, to: 8 },
+  { op: "sub", re: compileForm("^({M})({N})(\\s*{C})?(\\s*[-−]\\s*)({N})(\\s*%)(?:({TO})({C}))?$"), money: 1, a: 2, code: 3, b: 5, to: 8 },
+  { op: "off", re: compileForm("^({N})(\\s*%\\s*off\\s+)({M})({N})(\\s*{C})?(?:({TO})({C}))?$"), money: 3, a: 1, b: 4, code: 5, to: 7 },
+  { op: "of", re: compileForm("^({N})(\\s*%\\s*of\\s+)({M})({N})(\\s*{C})?(?:({TO})({C}))?$"), money: 3, a: 1, b: 4, code: 5, to: 7 },
+  { op: "on", re: compileForm("^({N})(\\s*%\\s*on\\s+)({M})({N})(\\s*{C})?(?:({TO})({C}))?$"), money: 3, a: 1, b: 4, code: 5, to: 7 },
   { op: "ratio", re: compileForm("^({M})({N})(\\s+(?:as\\s+(?:an?\\s+)?|is\\s+what\\s+)(?:%|percent(?:age)?)\\s+of\\s+)({M})({N})$"),
     money: 0, a: 2, b: 5 }
 ]
@@ -1612,7 +1614,12 @@ function percentForm(text) {
     if (codeText && !code) return null
     // "€100 eur" says the currency twice.
     if (code && PERCENT_FORMS[i].money && match[PERCENT_FORMS[i].money]) return null
-    return { form: PERCENT_FORMS[i], match: match, start: body.start, code: code }
+    var toText = PERCENT_FORMS[i].to ? (match[PERCENT_FORMS[i].to] || "") : ""
+    var to = toText ? currencyCodeFor(toText) : ""
+    // A target needs a known currency on both sides; a symbol counts as one.
+    var from = code || (PERCENT_FORMS[i].money ? currencyCodeFor(match[PERCENT_FORMS[i].money] || "") : "")
+    if (toText && (!to || !from)) return null
+    return { form: PERCENT_FORMS[i], match: match, start: body.start, code: code, from: from, to: to }
   }
   return null
 }
@@ -1656,6 +1663,9 @@ function evaluatePercent(query) {
   return {
     value: value,
     label: ratio ? number + "%" : money + number + unit,
+    // Set when the sum is to be converted: "100 eur - 10% to usd".
+    from: found.to ? found.from : "",
+    to: found.to || "",
     detail: detail,
     copy: ratio ? number + "%" : number
   }
@@ -1753,6 +1763,7 @@ function answerFormFields(text) {
     if (!spans) return null
     var list = [[percent.form.a, "number"], [percent.form.b, "number"]]
     if (percent.code) list.push([percent.form.code, "currency"])
+    if (percent.to) list.push([percent.form.to, "currency"])
     list.sort(function(x, y) { return x[0] - y[0] })
     var fields = formFields(spans, list)
     // The code's group carries the space before it; the field is the code.
