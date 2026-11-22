@@ -114,7 +114,9 @@ Item {
       answers.killRows
     ]
 
+    var measured = menu.perfEnabled
     for (var i = 0; i < builders.length; i++) {
+      var start = measured ? Date.now() : 0
       var produced = null
       // These parse whatever was typed, and a throw in one of them would
       // otherwise take the whole result list down with it -- the search would
@@ -122,8 +124,10 @@ Item {
       try {
         produced = builders[i](query)
       } catch (e) {
-        console.warn("omarchy.menu: query row builder failed:", e)
+        console.warn("omarchy.menu: query row builder failed:", i)
         continue
+      } finally {
+        if (measured) console.info("omni-perf generation/builder_index/ms", menu.perfGeneration, i, Date.now() - start)
       }
 
       if (!produced) continue

@@ -19,6 +19,22 @@ import "ai/AiBackend.js" as AiBackend
 Item {
   id: root
 
+  readonly property bool perfEnabled: Quickshell.env("OMNI_MENU_PERF") === "1"
+  property int perfGeneration: 0
+  property int perfRebuilds: 0
+  property real perfRebuildMs: 0
+  property real perfRouteStart: 0
+
+  // One animation tick once the panel is visible; no swap/presentation feedback.
+  FrameAnimation {
+    running: root.perfRouteStart !== 0 && panel.visible
+    onTriggered: {
+      var elapsed = Date.now() - root.perfRouteStart
+      root.perfRouteStart = 0
+      console.info("omni-perf openRoute_to_visible_animation_tick_ms", elapsed)
+    }
+  }
+
   // Injected by omarchy-shell when this plugin is summoned.
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
   property var shell: null
@@ -358,6 +374,11 @@ Item {
   // the user switches tab or types.
   property bool openTabPending: false
   onFilterTextChanged: {
+    if (root.perfEnabled) {
+      root.perfGeneration++
+      root.perfRebuilds = 0
+      root.perfRebuildMs = 0
+    }
     if (root.filterText) root.openTabPending = false
     if (!root.formWriting && root.formField >= 0) {
       root.formField = -1
@@ -395,6 +416,7 @@ Item {
   property var deleteTarget: null
   onOpenedChanged: {
     if (opened) return
+    root.perfRouteStart = 0
     root.rootShortcutReturnTab = ""
     if (root.launcherPositionMoved) {
       root.launcherPositionMoved = false
@@ -2041,7 +2063,16 @@ Item {
   // keepSelection: the list is being rebuilt under an unchanged query (late
   // results, a provider refresh), so the cursor follows its item rather than
   // staying on an index that now holds something else.
+  function recordRebuild(start) {
+    var elapsed = Date.now() - start
+    root.perfRebuildMs += elapsed
+    root.perfRebuilds++
+    console.info("omni-perf generation/rebuild_count/rebuild_ms/cumulative_ms",
+                 root.perfGeneration, root.perfRebuilds, elapsed, root.perfRebuildMs)
+  }
+
   function rebuildDisplay(keepSelection) {
+    var start = root.perfEnabled ? Date.now() : 0
     // Only All's branch and Apps' pinned strip lay out tiles; every other
     // list has none.
     var tiles = []
@@ -2051,6 +2082,7 @@ Item {
       root.allTiles = tiles
       root.refreshAnswerForm([])
       root.rebuildDmenuDisplay()
+      if (start) root.recordRebuild(start)
       return
     }
 
@@ -2070,6 +2102,7 @@ Item {
       root.refreshAnswerForm([])
       root.allTiles = tiles
       displayModel.clear()
+      if (start) root.recordRebuild(start)
       return
     }
     if (root.showsSystemRows()) root.ensureGuards()
@@ -2145,6 +2178,7 @@ Item {
     Qt.callLater(function() {
       if (displayModel.count > 0) root.revealCursor()
     })
+    if (start) root.recordRebuild(start)
   }
 
   // Contain alone parks the cursor row flush with the viewport edge, hiding
@@ -2872,6 +2906,7 @@ Item {
   }
 
   function openRoute(initialMenu) {
+    var start = root.perfEnabled ? Date.now() : 0
     var id = root.resolveRoute(initialMenu)
     var entry = root.items[id]
     // Omni's own tabs win over menu entries of the same name: Omarchy 4.5 made
@@ -2883,6 +2918,7 @@ Item {
     // a leaf, e.g. `omarchy menu summon screenrecord-stop`), run it directly
     // instead of opening an action with no children.
     if (entry && entry.kind === "action" && entry.action) {
+      root.perfRouteStart = 0
       root.cancel()
       root.runAction(entry.action)
       return "ok"
@@ -2916,6 +2952,7 @@ Item {
     if (place.tab === "system") Qt.callLater(root.enterSystemPanes)
     if (place.tab === "apps") root.loadProviderForMenu("apps")
     fileCtl.requestFileSearch()
+    if (root.perfEnabled) root.perfRouteStart = start
     root.openTabPending = bareSummon
     return "ok"
   }
