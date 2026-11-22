@@ -3,6 +3,7 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 import "Windows.js" as Windows
+import "Clipboard.js" as Clipboard
 
 // One row of the result list: icon or app icon, label, detail line,
 // right-hand text (a file's mtime) and a chevron for submenus. Roles come
@@ -22,6 +23,10 @@ BorderSurface {
   required property string target
   required property string detail
   required property string path
+  // A clipboard image's file, already checked by ClipboardController
+  // (inside Omarchy's image folder, a regular file under the size cap); ""
+  // on every other row.
+  required property string imagePath
   required property string action
   required property int childCount
   required property string trailText
@@ -40,6 +45,7 @@ BorderSurface {
   // matches the window class, and fall back to a glyph when none does.
   readonly property bool isApp: !row.tiled && (row.kind === "app" || (row.kind === "window" && row.appIcon.length > 0))
   readonly property bool hasIcon: !row.tiled && (row.icon.length > 0 || row.isApp)
+  readonly property bool showsThumb: !row.tiled && row.imagePath.length > 0
   // Open windows of an application row, for the running marker.
   readonly property int windowCount: row.kind === "app" && !row.tiled ? row.menu.appWindowCount(row.appId) : 0
   readonly property string trailShown: row.tiled ? "" : row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
@@ -47,7 +53,7 @@ BorderSurface {
   // Command examples are a read-only hint.
   opacity: row.disabled ? 0.4 : (row.kind === "example" ? 0.7 : 1)
   width: ListView.view.width
-  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind)
+  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind, row.imagePath)
   radius: row.menu.cornerRadius
   color: row.hasCursor ? row.menu.selectedBackground : "transparent"
   borderSpec: row.hasCursor ? row.menu.selectedBorderSpec : Border.none()
@@ -66,7 +72,7 @@ BorderSurface {
   Text {
     id: iconText
     textFormat: Text.PlainText
-    visible: row.hasIcon && !row.isApp
+    visible: row.hasIcon && !row.isApp && !row.showsThumb
     text: row.icon
     color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
     font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
@@ -96,6 +102,42 @@ BorderSurface {
     y: contentColumn.y + labelText.y + (labelText.height - height) / 2
   }
 
+  // The picture in place of the icon, decoded small and off the UI thread.
+  // Until it is ready, or if it cannot be read, the image glyph stands in.
+  Item {
+    id: thumbBox
+    visible: row.showsThumb
+    height: row.showsThumb ? row.height - Style.space(12) : 0
+    width: row.showsThumb ? Math.round(height * 1.6) : 0
+    anchors.left: parent.left
+    anchors.leftMargin: row.menu.rowReservedBorderLeft + Style.space(8)
+    anchors.verticalCenter: parent.verticalCenter
+
+    Image {
+      id: thumb
+      anchors.fill: parent
+      source: row.showsThumb ? Clipboard.imageSource(row.imagePath) : ""
+      asynchronous: true
+      cache: false
+      autoTransform: true
+      smooth: true
+      fillMode: Image.PreserveAspectFit
+      // Physical pixels, capped: a huge picture is decoded no larger than this.
+      sourceSize.width: Math.min(256, Math.ceil(thumbBox.width * Screen.devicePixelRatio))
+      sourceSize.height: Math.min(256, Math.ceil(thumbBox.height * Screen.devicePixelRatio))
+    }
+
+    Text {
+      textFormat: Text.PlainText
+      visible: thumb.status !== Image.Ready
+      text: row.icon
+      color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+      font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
+      font.pixelSize: row.menu.scaledFont(Style.font.iconLarge)
+      anchors.centerIn: parent
+    }
+  }
+
   RunningBadge {
     count: row.windowCount
     sizeScale: row.menu.menuFontScale
@@ -107,8 +149,8 @@ BorderSurface {
   Column {
     id: contentColumn
     visible: !row.tiled
-    anchors.left: row.hasIcon ? iconText.right : parent.left
-    anchors.leftMargin: row.hasIcon ? Style.space(6) : row.menu.rowReservedBorderLeft + Style.space(18)
+    anchors.left: row.showsThumb ? thumbBox.right : row.hasIcon ? iconText.right : parent.left
+    anchors.leftMargin: row.showsThumb ? Style.space(10) : row.hasIcon ? Style.space(6) : row.menu.rowReservedBorderLeft + Style.space(18)
     anchors.right: trailLabel.visible ? trailLabel.left : trail.left
     anchors.rightMargin: Style.space(6)
     anchors.verticalCenter: parent.verticalCenter

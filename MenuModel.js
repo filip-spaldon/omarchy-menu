@@ -564,6 +564,7 @@ function displayRow(items, itemOrder, checkedResults, disabledResults, entry, de
     target: target,
     detail: detail || "",
     path: pathFor(items, entry.id),
+    imagePath: "",
     childCount: (entry.kind === "menu" || entry.kind === "link") ? childCount(items, itemOrder, target) : 0,
     action: entry.action || "",
     provider: entry.provider || "",

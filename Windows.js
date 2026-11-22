@@ -195,6 +195,7 @@ function toWindowRow(match) {
     target: openWindow.address,
     detail: windowDetail(openWindow, match.appName),
     path: "",
+    imagePath: "",
     childCount: 0,
     action: "",
     provider: "",

@@ -23,6 +23,10 @@ const LABEL_LENGTH = 200
 const LABEL_SCAN = 8192
 const MAX_CAPTURED_AT_LENGTH = 64
 const MAX_PATH_LENGTH = 4096
+// A picture file larger than this is not shown, only listed. Screenshots of
+// a 4K screen are well under it; a decoder that is handed one has to read
+// all of it, whatever size it is asked to draw.
+const MAX_IMAGE_BYTES = 16777216  // 16 MiB
 
 const TEXT_ICON = "󰅍"
 const IMAGE_ICON = "󰋩"
@@ -154,10 +158,66 @@ function imageDetail(entry) {
   return parts.join(" · ")
 }
 
+// ------------------------------------------------------------ previews ----
+
+// One bounded stat of every image entry's file, after the history is read:
+// file type (raw mode, which no locale translates), size and path, each
+// record NUL-terminated. No -L: a symlink is reported as one and refused,
+// never followed. null when there is no image to look at.
+function imageStatCommand(entries) {
+  const paths = []
+  for (const entry of entries || []) {
+    if (entry.type === "image" && typeof entry.path === "string" && entry.path.charAt(0) === "/"
+        && paths.indexOf(entry.path) < 0) paths.push(entry.path)
+  }
+  if (paths.length === 0) return null
+  return ["timeout", "-k", "1", "3", "stat", "--printf", "%f\t%s\t%n\\0", "--"].concat(paths)
+}
+
+const S_IFMT = 0xF000
+const S_IFREG = 0x8000
+const SIZE_PATTERN = /^[0-9]+$/
+const MODE_PATTERN = /^[0-9a-f]{1,8}$/
+
+// imageStatCommand's output to { path: true } for the files a thumbnail may
+// be drawn from: regular files (not a symlink, FIFO or device, which could
+// stall a decoder), not empty, at most `maxBytes`, and only paths that were
+// asked about -- a record for anything else is ignored.
+function previewablePaths(statText, entries, maxBytes) {
+  const limit = typeof maxBytes === "number" ? maxBytes : MAX_IMAGE_BYTES
+  const asked = {}
+  for (const entry of entries || []) if (entry.type === "image" && typeof entry.path === "string") asked[entry.path] = true
+  const previewable = {}
+  // The piece after the last NUL is an unfinished record (a stat cut off by
+  // its deadline), never a whole one.
+  const records = String(statText || "").split("\u0000").slice(0, -1)
+  for (const record of records) {
+    const first = record.indexOf("\t")
+    const second = first < 0 ? -1 : record.indexOf("\t", first + 1)
+    if (second < 0) continue
+    const mode = record.slice(0, first)
+    const size = record.slice(first + 1, second)
+    const path = record.slice(second + 1)
+    if (!MODE_PATTERN.test(mode) || !SIZE_PATTERN.test(size) || asked[path] !== true) continue
+    const bytes = Number(size)
+    if ((parseInt(mode, 16) & S_IFMT) === S_IFREG && bytes > 0 && bytes <= limit) previewable[path] = true
+  }
+  return previewable
+}
+
+// A file URL for an image path, every segment percent-encoded so a "#" or
+// "?" in a name cannot end the path early. "" for anything not absolute.
+function imageSource(path) {
+  if (typeof path !== "string" || path.charAt(0) !== "/" || path.indexOf("\u0000") >= 0) return ""
+  return "file://" + path.split("/").map(encodeURIComponent).join("/")
+}
+
 // The menu's row shape (queryRow in Menu.qml), every field on every row; see
 // Windows.toWindowRow. Only the history index travels in the row: the
 // controller looks the entry up again when it is acted on.
-function toClipboardRow(entry) {
+// `previewable` (previewablePaths) decides which images get a thumbnail:
+// `imagePath` is their file, "" on every other row.
+function toClipboardRow(entry, previewable) {
   const isImage = entry.type === "image"
   return {
     itemId: "clipboard:" + entry.index,
@@ -172,6 +232,7 @@ function toClipboardRow(entry) {
     target: String(entry.index),
     detail: isImage ? imageDetail(entry) : textDetail(entry),
     path: "",
+    imagePath: isImage && previewable && previewable[entry.path] === true ? entry.path : "",
     childCount: 0,
     action: "",
     provider: "",
@@ -181,8 +242,8 @@ function toClipboardRow(entry) {
   }
 }
 
-function clipboardRows(entries, query) {
-  return (entries || []).filter(entry => matches(entry, query)).map(toClipboardRow)
+function clipboardRows(entries, query, previewable) {
+  return (entries || []).filter(entry => matches(entry, query)).map(entry => toClipboardRow(entry, previewable))
 }
 
 function entryAt(entries, index) {
@@ -239,6 +300,7 @@ if (typeof module !== "undefined") {
   module.exports = {
     MAX_HISTORY_BYTES,
     MAX_ENTRIES,
+    MAX_IMAGE_BYTES,
     LABEL_LENGTH,
     HELPERS,
     isHistoryIndex,
@@ -252,6 +314,9 @@ if (typeof module !== "undefined") {
     toClipboardRow,
     clipboardRows,
     entryAt,
+    imageStatCommand,
+    previewablePaths,
+    imageSource,
     pasteCommand,
     openCommand,
     helpersCheckCommand

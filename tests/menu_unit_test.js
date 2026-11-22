@@ -996,6 +996,48 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(Clipboard.helpersCheckCommand(bin), ["timeout", "-k", "1", "2", "test",
      "-x", bin + "/omarchy-clipboard-paste-text", "-a", "-x", bin + "/omarchy-clipboard-paste-file",
      "-a", "-x", bin + "/omarchy-clipboard-open"], "helper check")
+
+  // Image previews: one stat per read decides which files may be drawn.
+  const webp = dir + "sub/c.webp"
+  eq(Clipboard.imageStatCommand(entries), ["timeout", "-k", "1", "3", "stat", "--printf", "%f\t%s\t%n\\0", "--", png, webp],
+     "one bounded stat of the image files, symlinks not followed")
+  eq(Clipboard.imageStatCommand(entries.filter(e => e.type === "text")), null, "no image, no stat")
+  eq(Clipboard.imageStatCommand([entries[2], entries[2]]).slice(-1), [png], "a file is asked about once")
+  const big = Clipboard.MAX_IMAGE_BYTES
+  const statText = ["81a4\t1234\t" + png, "a1ff\t20\t" + webp].join("\u0000") + "\u0000"
+  eq(Clipboard.previewablePaths(statText, entries), { [png]: true }, "a regular file passes, a symlink does not")
+  eq(Clipboard.previewablePaths("81a4\t" + (big + 1) + "\t" + png + "\u0000", entries), {}, "a file over the cap is not drawn")
+  eq(Clipboard.previewablePaths("81a4\t" + big + "\t" + png + "\u0000", entries), { [png]: true }, "a file at the cap is")
+  eq(Clipboard.previewablePaths("81a4\t0\t" + png + "\u0000", entries), {}, "an empty file is not drawn")
+  eq(Clipboard.previewablePaths("11a4\t10\t" + png + "\u0000" + "21a4\t10\t" + webp + "\u0000", entries), {},
+     "a FIFO or a device is never handed to the decoder")
+  eq(Clipboard.previewablePaths("81a4\t10\t/etc/passwd\u0000", entries), {}, "a path nobody asked about is ignored")
+  eq(Clipboard.previewablePaths("81a4\t10\t" + png, entries), {}, "an unfinished record is ignored")
+  eq(Clipboard.previewablePaths("zz\t10\t" + png + "\u0000" + "81a4\t-1\t" + png + "\u0000", entries), {},
+     "malformed records are ignored")
+  eq(Clipboard.previewablePaths("81a4\t10\t" + png + "\u0000", entries, 5), {}, "the cap can be given")
+  eq(Clipboard.previewablePaths(null, entries), {}, "no output, no previews")
+  eq(Clipboard.imageSource("/a b/x#1?.png"), "file:///a%20b/x%231%3F.png", "an image URL encodes every segment")
+  eq(Clipboard.imageSource("relative.png"), "", "a relative path has no URL")
+
+  eq(rows.map(r => r.imagePath), ["", "", "", "", ""], "no thumbnail before the files are checked")
+  const shown = Clipboard.clipboardRows(entries, "", { [png]: true, [dir + "x.png"]: true })
+  eq(shown.map(r => r.imagePath), ["", "", png, "", ""], "a checked image row carries its file, every other row \"\"")
+  assert(shown.every(r => JSON.stringify(Object.keys(r).sort()) === roleSet), "image rows keep the same roles")
+  eq(MenuModel.displayRow({}, [], {}, { id: "x", kind: "action", label: "X" }, "", 0, "").imagePath, "",
+     "menu rows declare the imagePath role")
+  assert("imagePath" in Windows.windowRows([{ address: "0x1", windowClass: "a", title: "t", workspaceId: 1,
+    workspaceName: "1", isSpecialWorkspace: false, isFloating: false, focusRecency: 0 }], "", () => null)[0],
+    "window rows declare the imagePath role")
+  eq((menuSource.match(/imagePath: ""/g) || []).length, 3, "query and dmenu rows declare the imagePath role")
+  assert(/rowHeightForDetail\(row\.detail, row\.kind, row\.imagePath\)/.test(menuSource),
+         "the fitted list height counts image rows as tall")
+  const resultRow = fs.readFileSync(path.join(root, "ResultRow.qml"), "utf8")
+  assert(/rowHeightForDetail\(row\.detail, row\.kind, row\.imagePath\)/.test(resultRow), "a row is as tall as the list counts it")
+  assert(/asynchronous: true/.test(resultRow) && /cache: false/.test(resultRow) && /Math\.min\(256,/.test(resultRow),
+         "thumbnails decode off the UI thread, uncached, capped in size")
+  assert(controller.indexOf("Clipboard.imageStatCommand(clip.entries)") >= 0
+         && controller.indexOf("Clipboard.previewablePaths(") >= 0, "thumbnails wait for the stat")
 }
 
 console.log("")

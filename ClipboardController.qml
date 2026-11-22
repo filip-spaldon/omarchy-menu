@@ -18,6 +18,10 @@ Item {
 
   // Parsed by Clipboard.parseHistory; emptied when the menu closes.
   property var entries: []
+  // Image files a thumbnail may be drawn from, { path: true }
+  // (Clipboard.previewablePaths): filled by one stat after the history is
+  // read, so a row shows its picture only once its file has passed.
+  property var previewable: ({})
   // "idle" until read this open, then "loading", "ready", "missing" (no
   // history file, or Omarchy's helpers are not installed) or "error".
   property string status: "idle"
@@ -58,6 +62,7 @@ Item {
       return
     }
     clip.status = "loading"
+    clip.previewable = ({})
     clip.historyRead = false
     clip.helpersChecked = false
     helperProc.command = Clipboard.helpersCheckCommand(clip.binDir)
@@ -76,10 +81,22 @@ Item {
     if (!clip.menu.opened) return
     clip.status = !clip.helpersPresent ? "missing" : clip.historyStatus
     if (clip.menu.activeTab === "clipboard") clip.menu.rebuildDisplay(true)
+    if (clip.status === "ready") clip.checkImages()
+  }
+
+  // The image files are looked at once per read, after the list is on
+  // screen: one stat, bounded in time, NUL-separated. Until it answers (or
+  // if it fails) image rows keep their icon.
+  function checkImages() {
+    const command = Clipboard.imageStatCommand(clip.entries)
+    if (!command || imageStatProc.running) return
+    imageStatProc.entries = clip.entries
+    imageStatProc.command = command
+    imageStatProc.running = true
   }
 
   function rows(query) {
-    return clip.status === "ready" ? Clipboard.clipboardRows(clip.entries, query) : []
+    return clip.status === "ready" ? Clipboard.clipboardRows(clip.entries, query, clip.previewable) : []
   }
 
   // What the empty list says when there is nothing to show.
@@ -113,6 +130,7 @@ Item {
       if (clip.menu.opened) return
       clip.readThisOpen = false
       clip.entries = []
+      clip.previewable = ({})
       clip.status = "idle"
     }
   }
@@ -123,6 +141,29 @@ Item {
       clip.helpersPresent = exitCode === 0 && !exitStatus
       clip.helpersChecked = true
       clip.settle()
+    }
+  }
+
+  Process {
+    id: imageStatProc
+    // The entries the stat was started for: an answer for an older read is
+    // dropped rather than applied to a newer one.
+    property var entries: []
+    stdout: StdioCollector {
+      id: imageStatOut
+      waitForEnd: true
+    }
+    onExited: function(exitCode, exitStatus) {
+      // stat exits 1 when one file is gone; the records it did print stand.
+      if (!clip.menu.opened) return
+      // Started for a read that has since been replaced: look again for this one.
+      if (imageStatProc.entries !== clip.entries) {
+        if (clip.status === "ready") Qt.callLater(clip.checkImages)
+        return
+      }
+      if (exitStatus) return
+      clip.previewable = Clipboard.previewablePaths(imageStatOut.text || "", clip.entries, Clipboard.MAX_IMAGE_BYTES)
+      if (clip.menu.activeTab === "clipboard") clip.menu.rebuildDisplay(true)
     }
   }
 

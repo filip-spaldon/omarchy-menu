@@ -88,6 +88,9 @@ this list, in review and before a release:
 - **Clipboard tab**: reads only Omarchy's clipboard history file (through
   `Settings.readFileCommand`, read-only), never the clipboard itself, and acts
   on an entry only through Omarchy's helpers by a validated history index.
+  Image thumbnails are drawn only from Omarchy's image folder, after one
+  bounded stat finds a regular file (no symlink) of at most 16 MiB, and are
+  decoded asynchronously, uncached, at most 256 px.
 - **Answers and displayed text**: capped in size, sanitized
   (`MenuModel.sanitizeText`) and shown as plain text. AI answers are Markdown: they
   go through `AiBackend.markdownSafe` (no images, every `<` escaped, also
