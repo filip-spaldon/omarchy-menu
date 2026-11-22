@@ -279,10 +279,39 @@ Item {
     onTabClicked: function(id) { kon.menu.setTab(id) }
   }
 
+  // Files and Folders: the type, where to look and the sort, under the tabs.
+  FileBar {
+    id: fileBar
+    menu: kon.menu
+    x: kon.listX
+    width: kon.listW
+    y: tabs.y + tabs.height + Style.space(12)
+    ink: kon.ink
+    chipStyle: "word"
+    chipCase: "title"
+    scopeStyle: "word"
+    scopeCase: "title"
+  }
+
+  // Nothing found: said where the list would start, and the field stays bare.
+  Text {
+    visible: !kon.sys && list.count === 0 && text !== ""
+    x: kon.listX + Style.space(10)
+    width: kon.listW - Style.space(10)
+    y: list.y + Style.space(8)
+    textFormat: Text.PlainText
+    text: kon.menu.emptyText
+    wrapMode: Text.Wrap
+    color: kon.ink
+    opacity: 0.6
+    font.family: kon.menu.fontFamily
+    font.pixelSize: kon.menu.scaledFont(Style.font.title)
+  }
+
   ListView {
     id: list
     x: kon.listX
-    y: tabs.y + tabs.height + Style.space(16)
+    y: tabs.y + tabs.height + Style.space(16) + (fileBar.visible ? fileBar.height + Style.space(12) : 0)
     width: kon.listW
     height: kon.height * 0.88 - y
     model: kon.model
@@ -306,6 +335,21 @@ Item {
         anchors.bottomMargin: Style.space(4)
         textFormat: Text.PlainText
         text: Tabs.headerTitle(parent.section).toLowerCase()
+        color: kon.ink
+        opacity: 0.45
+        font.family: kon.menu.fontFamily
+        font.pixelSize: kon.menu.scaledFont(Style.font.caption)
+        font.letterSpacing: 2
+      }
+      // "+4 in files ⇥": what All's cap left out.
+      Text {
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(8)
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Style.space(4)
+        visible: parent.visible && text !== ""
+        textFormat: Text.PlainText
+        text: kon.menu.sectionMore(parent.section).toLowerCase()
         color: kon.ink
         opacity: 0.45
         font.family: kon.menu.fontFamily
@@ -600,7 +644,9 @@ Item {
     x: kon.listX
     y: kon.height - Style.space(48)
     textFormat: Text.PlainText
-    text: "↑↓ move   ↵ open   ⇥ tab   ai ask   esc close"
+    // The tab's own keys where it has some (Files, Folders, Apps).
+    readonly property bool tabKeys: ["files", "folders", "apps"].indexOf(kon.menu.activeTab) >= 0
+    text: tabKeys ? kon.menu.shortFooterHints() : "↑↓ move   ↵ open   ⇥ tab   ai ask   esc close"
     color: kon.ink
     opacity: 0.45
     font.family: kon.menu.fontFamily

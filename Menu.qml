@@ -569,9 +569,37 @@ Item {
     if (root.altHeld) return [["alt 1–9", "open that row"], ["alt ←→↑↓", "move the card"], ["alt 0", "reset"]]
     if (root.activeTab === "apps") return [["↵", "open"], ["shift ↵", "new window"], ["^G", root.appsView === "grid" ? "list" : "grid"], ["?", "all keys"]]
     if (root.activeTab === "windows") return [["↵", "go to"], ["⇥", "next tab"], ["?", "all keys"]]
-    if (root.activeTab === "files" || root.activeTab === "folders") return [["↵", "open"], ["^F", "type"], ["^S", "sort"], ["^L", "limit"], ["?", "all keys"]]
+    if (root.activeTab === "files" || root.activeTab === "folders") return [["↵", "open"]].concat(root.fileKeys(), [["?", "all keys"]])
     if (root.activeTab === "system" && root.systemTwoPane) return [["↑↓", "browse"], ["→", "open"], ["←", "back"], ["?", "all keys"]]
     return [["↑↓", "move"], ["↵", "open"], ["⇥", "next tab"], ["ai", "ask"], ["?", "all keys"]]
+  }
+
+  // What Files and Folders add to the footer, in every look: the type,
+  // where to look (only with search roots), the sort and the limit.
+  function fileKeys() {
+    return [["^F", "type"]].concat(fileCtl.hasRoots ? [["^R", "where"]] : [], [["^S", "sort"], ["^L", "limit"]])
+  }
+
+  // For the full-screen views, which draw the same controls in their own
+  // style: the file search, the result count, and whether the Files bar shows.
+  readonly property var fileSearch: fileCtl
+  readonly property int resultCount: displayModel.count
+  readonly property bool fileBarShown: root.tabsActive && !aiCtl.isAiMode && !root.commandMode
+    && (root.activeTab === "files" || root.activeTab === "folders")
+  // What an empty result list says instead ("No matches for …"), or "" while
+  // there are rows. The card and the full-screen views draw the same words.
+  readonly property string emptyText: displayModel.count > 0 || root.mode === "input" || aiCtl.isAiMode || root.systemTwoPane ? ""
+    : root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
+    : fileCtl.fileSearching ? "Searching…"
+    : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
+  function refocus() { Qt.callLater(function() { keyCatcher.forceActiveFocus() }) }
+
+  // "+4 in Files ⇥": what All's five-row cap left out of a section, and the
+  // way there. Empty when nothing was left out. Every look draws it.
+  function sectionMore(section) {
+    var total = Tabs.headerTotal(section)
+    var hidden = total - Math.min(total, root.allSectionLimit)
+    return hidden > 0 && root.activeTab === "all" ? "+" + hidden + " in " + Tabs.headerTitle(section) + "  ⇥" : ""
   }
 
   // Tab chip counts: what All's sections found, shown while All searches.
@@ -600,7 +628,11 @@ Item {
   function shortFooterHints() {
     if (answerEngine.killActive || root.commandMode) return root.fullFooterHints()
     if (root.activeTab === "system" && root.systemTwoPane) return "↑↓ browse   → open   ← back   esc close"
-    return "↵ open" + (root.alwaysNumbered ? "   alt 1–9 jump" : "") + "   ⇥ next tab   esc close"
+    var open = "↵ open" + (root.alwaysNumbered ? "   alt 1–9 jump" : "")
+    if (root.activeTab === "files" || root.activeTab === "folders")
+      return open + root.fileKeys().map(function(k) { return "   " + k[0] + " " + k[1] }).join("") + "   esc close"
+    if (root.activeTab === "apps") return open + "   ^G " + (root.appsView === "grid" ? "list" : "grid") + "   ⇥ next tab   esc close"
+    return open + "   ⇥ next tab   esc close"
   }
 
   function fullFooterHints() {
@@ -3343,70 +3375,10 @@ Item {
             }
           }
 
-          Item {
+          FileBar {
             id: fileBar
-            visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && (root.activeTab === "files" || root.activeTab === "folders")
+            menu: root
             width: parent.width
-            height: visible ? fileFilterChips.implicitHeight
-              + (scopeChips.visible ? Style.space(6) + scopeChips.implicitHeight : 0) : 0
-
-            TabBar {
-              id: fileFilterChips
-              anchors.left: parent.left
-              width: parent.width - fileSortLabel.implicitWidth - Style.space(12)
-              tabs: FileSearch.filtersFor(root.activeTab).map(function(f) { return { id: f.id, label: f.label, icon: "" } })
-              activeTab: fileCtl.fileFilterFor(root.activeTab).id
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              accent: Color.accent
-              fontSize: root.scaledFont(Style.font.caption)
-              anim: root.tabAnim
-              tabStyle: root.filterTabStyle
-              tabCase: root.tabCase
-              background: root.background
-              onTabClicked: function(id) {
-                fileCtl.setFileFilter(id)
-                Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-              }
-            }
-
-            // Where to look: everywhere, $HOME only, or one search root
-            // (Ctrl+R). Only there when a root is.
-            TabBar {
-              id: scopeChips
-              visible: fileCtl.hasRoots
-              anchors.left: parent.left
-              anchors.top: fileFilterChips.bottom
-              anchors.topMargin: Style.space(6)
-              width: parent.width
-              tabs: fileCtl.scopeChoices
-              activeTab: fileCtl.currentScope()
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              accent: Color.accent
-              fontSize: root.scaledFont(Style.font.caption)
-              onTabClicked: function(id) {
-                fileCtl.setRootScope(id)
-                Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-              }
-            }
-
-            Text {
-              id: fileSortLabel
-              textFormat: Text.PlainText
-              anchors.right: parent.right
-              anchors.top: parent.top
-              // A quiet look keeps only the sort, without icon or counter.
-              text: root.quietMeta
-                ? (fileCtl.fileSearching ? "searching…" : FileSearch.sortMode(fileCtl.fileSortMode).label.toLowerCase())
-                : (fileCtl.fileSearching ? "searching… · " : "")
-                  + FileSearch.sortMode(fileCtl.fileSortMode).icon + " " + FileSearch.sortMode(fileCtl.fileSortMode).label
-                  + " · " + displayModel.count + "/" + fileCtl.fileDisplayLimit
-              color: root.foreground
-              opacity: 0.5
-              font.family: root.fontFamily
-              font.pixelSize: root.scaledFont(Style.font.caption)
-            }
           }
 
           Item {
@@ -3811,10 +3783,10 @@ Item {
                 // "+4 in Files ⇥": what the five-row cap left out, and the way there.
                 Text {
                   id: headerMore
-                  readonly property int hidden: headerTitle.total - Math.min(headerTitle.total, root.allSectionLimit)
-                  visible: parent.isHeader && hidden > 0 && root.activeTab === "all"
+                  visible: parent.isHeader && text !== ""
                   textFormat: Text.PlainText
-                  text: "+" + hidden + " in " + headerTitle.title + "  ⇥"
+                  readonly property string more: parent.isHeader ? root.sectionMore(parent.section) : ""
+                  text: root.headerLower ? more.toLowerCase() : more
                   color: root.foreground
                   opacity: 0.45
                   font.family: root.fontFamily
@@ -3897,7 +3869,7 @@ Item {
               anchors.centerIn: parent
               width: Math.min(Style.space(320), parent.width - Style.space(16))
               spacing: Style.space(8)
-              visible: displayModel.count === 0 && root.mode !== "input" && !aiCtl.isAiMode && !root.systemTwoPane
+              visible: root.emptyText !== ""
 
               Text {
                 textFormat: Text.PlainText
@@ -3912,9 +3884,7 @@ Item {
 
               Text {
                 textFormat: Text.PlainText
-                text: root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
-                  : fileCtl.fileSearching ? "Searching…"
-                  : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
+                text: root.emptyText
                 color: root.foreground
                 opacity: 0.7
                 font.family: root.fontFamily

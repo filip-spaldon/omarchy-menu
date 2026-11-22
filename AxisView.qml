@@ -141,6 +141,7 @@ Item {
   }
 
   TabBar {
+    id: tabs
     x: queryText.x
     // In System, short of the category labels right-aligned below the line.
     width: axis.sys ? Math.max(0, axis.crossX - x - Style.space(150)) : queryText.width
@@ -158,6 +159,35 @@ Item {
     tabCase: "upper"
     background: axis.menu.background
     onTabClicked: function(id) { axis.menu.setTab(id) }
+  }
+
+  // Files and Folders: the type, where to look and the sort, in the tabs' type.
+  FileBar {
+    menu: axis.menu
+    x: queryText.x
+    width: queryText.width
+    y: tabs.y + tabs.height + Style.space(14)
+    ink: axis.ink
+    chipStyle: "word"
+    chipCase: "upper"
+    scopeStyle: "word"
+    scopeCase: "upper"
+  }
+
+  // Nothing found: said on the line, where the first result would cross.
+  Text {
+    visible: !axis.sys && list.count === 0 && text !== ""
+    x: list.x + Style.space(12)
+    width: list.width - Style.space(12)
+    y: axis.crossY - height - Style.space(6)
+    textFormat: Text.PlainText
+    text: axis.menu.emptyText
+    elide: Text.ElideRight
+    color: axis.ink
+    opacity: 0.6
+    font.family: "Noto Serif"
+    font.weight: Font.Light
+    font.pixelSize: axis.menu.scaledFont(Style.font.heading)
   }
 
   // What exists: the results hanging off the vertical line. The selected row
@@ -223,6 +253,21 @@ Item {
         anchors.bottomMargin: Style.space(4)
         textFormat: Text.PlainText
         text: Tabs.headerTitle(parent.section).toUpperCase()
+        color: axis.ink
+        opacity: 0.42
+        font.family: axis.menu.fontFamily
+        font.pixelSize: axis.menu.scaledFont(Style.font.caption)
+        font.letterSpacing: 2
+      }
+      // "+4 IN FILES ⇥": what All's cap left out.
+      Text {
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(8)
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Style.space(4)
+        visible: parent.visible && text !== ""
+        textFormat: Text.PlainText
+        text: axis.menu.sectionMore(parent.section).toUpperCase()
         color: axis.ink
         opacity: 0.42
         font.family: axis.menu.fontFamily
@@ -342,7 +387,9 @@ Item {
     x: queryText.x
     y: axis.height - Style.space(48)
     textFormat: Text.PlainText
-    text: "↑↓ the list moves, the cross stays   ⇥ scope   ↵ open   esc let go"
+    // The tab's own keys where it has some (Files, Folders, Apps).
+    readonly property bool tabKeys: ["files", "folders", "apps"].indexOf(axis.menu.activeTab) >= 0
+    text: tabKeys ? axis.menu.shortFooterHints() : "↑↓ the list moves, the cross stays   ⇥ scope   ↵ open   esc let go"
     color: axis.ink
     opacity: 0.45
     font.family: axis.menu.fontFamily
