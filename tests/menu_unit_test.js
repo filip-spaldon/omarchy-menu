@@ -16,6 +16,7 @@ const Settings = require(path.join(root, "Settings.js"))
 const Roots = require(path.join(root, "Roots.js"))
 const Windows = require(path.join(root, "Windows.js"))
 const Clipboard = require(path.join(root, "Clipboard.js"))
+const SystemShortcuts = require(path.join(root, "SystemShortcuts.js"))
 
 let pass = 0
 let fail = 0
@@ -48,6 +49,13 @@ eq(Tabs.tabForRoute("root"), { tab: "all", menu: "root" }, "SUPER+SPACE opens Al
 eq(Tabs.tabForRoute(""), { tab: "all", menu: "root" }, "an empty route opens All")
 eq(Tabs.tabForRoute("apps"), { tab: "apps", menu: "root" }, "SUPER+ALT+SPACE opens Apps")
 eq(Tabs.tabForRoute("windows"), { tab: "windows", menu: "root" }, "the windows route opens Windows")
+eq(Tabs.tabForRoute("system"), { tab: "system", menu: "system" }, "the system route opens System power actions")
+assert(!Tabs.shortcutSwitchesDestination("root", "apps", "root"), "root shortcut always toggles the whole panel")
+assert(Tabs.shortcutSwitchesDestination("clipboard", "apps", "root"), "shortcut switches tabs")
+assert(!Tabs.shortcutSwitchesDestination("clipboard", "clipboard", "root"), "same tab shortcut toggles")
+assert(Tabs.shortcutSwitchesDestination("trigger.capture", "system", "trigger.share"), "shortcut switches System submenus")
+assert(!Tabs.shortcutSwitchesDestination("trigger.capture", "system", "trigger.capture"), "same submenu shortcut toggles")
+assert(Tabs.shortcutSwitchesDestination("system", "system", "trigger.capture"), "power shortcut switches from another submenu")
 eq(Tabs.tabForRoute("capture"), { tab: "system", menu: "capture" }, "other routes open System, drilled in")
 eq(Tabs.tabForRoute("style.theme"), { tab: "system", menu: "style.theme" }, "dotted routes open System, drilled in")
 eq(Tabs.cycleTab("all", 1), "apps", "Tab moves forward")
@@ -618,7 +626,8 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   const fs = require("fs")
   const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
   const names = Array.from(menuSource.matchAll(/GlobalShortcut \{\s*appid: "omarchy-menu-omni"\s*name: "([\w-]+)"/g), m => m[1])
-  eq(names, ["toggle", "toggle-apps", "toggle-windows", "toggle-clipboard"], "the menu's global shortcut names")
+  eq(names, ["toggle", "toggle-apps", "toggle-windows", "toggle-clipboard", "toggle-system", "toggle-capture",
+    "toggle-toggles", "toggle-hardware", "toggle-share"], "the menu's global shortcut names")
   eq(/if \(root\.shell\) \{[\s\S]*?root\.shell\.toggle\("omarchy\.menu"[\s\S]*?Quickshell\.execDetached\(\["omarchy-menu", "toggle", route\]\)/.test(menuSource), true,
      "a shortcut falls back to omarchy-menu until the shell API is there")
 }
@@ -1078,6 +1087,35 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
          "thumbnails decode off the UI thread, uncached, capped in size")
   assert(controller.indexOf("Clipboard.imageStatCommand(clip.entries)") >= 0
          && controller.indexOf("Clipboard.previewablePaths(") >= 0, "thumbnails wait for the stat")
+}
+
+// ------------------------------------------------------- System shortcuts --
+
+{
+  const lua = (modmask, key, description) => ({ modmask, key, description, dispatcher: "__lua", submap: "" })
+  const lock = lua(68, "L", "Lock system")
+  const print = lua(0, "PRINT", "Screenshot")
+  const alternatePrint = lua(76, "SUPER + CTRL + ALT + C", "Screenshot")
+  const capture = lua(68, "C", "Capture menu")
+  const exec = { modmask: 72, key: "F8", dispatcher: "exec", arg: "omarchy-system-lock" }
+  const hints = list => SystemShortcuts.parseBindings(JSON.stringify(list))
+  const lockHint = bindings => SystemShortcuts.hintFor(bindings, "system.lock", "action", "omarchy-system-lock")
+  const screenshotHint = bindings => SystemShortcuts.hintFor(bindings, "trigger.capture.screenshot", "action", "omarchy-capture-screenshot")
+
+  eq(lockHint(hints([lock])), "Super+Ctrl+L", "known active Lua chord")
+  eq(lockHint(hints([lock, exec])), "Super+Alt+F8", "an exact exec match beats the stock inference")
+  eq(lockHint(hints([lock, { ...lock, dispatcher: "exec", arg: "other" }])), "", "conflicting global chord is not shown")
+  eq(lockHint(hints([{ ...lock, submap: "resize" }])), "", "submap-only binding is not a global hint")
+  eq(lockHint(hints([{ ...lock, description: "Different action" }])), "", "a reused stock chord needs the matching description")
+  eq(lockHint(hints([{ ...lock, key: "F7" }])), "", "an opaque Lua command on a different chord is not guessed")
+  eq(lockHint(SystemShortcuts.parseBindings("[invalid")), "", "invalid JSON silently omits hints")
+  eq(lockHint(SystemShortcuts.parseBindings(JSON.stringify(Array(2001).fill(lock)))), "", "excessive binding lists are ignored")
+  eq(screenshotHint(hints([alternatePrint, print])), "Print", "use the preferred stock chord when both are active")
+  eq(screenshotHint(hints([alternatePrint])), "Super+Ctrl+Alt+C", "fall back to the alternate active stock chord")
+  eq(SystemShortcuts.hintFor(hints([capture]), "trigger.capture", "menu", ""), "Super+Ctrl+C", "known submenu route")
+  eq(SystemShortcuts.hintFor(hints([lock]), "system.lock", "action", "custom-lock"), "", "replaced actions do not inherit hints")
+  eq(SystemShortcuts.hintFor(hints([lock]), "constructor", "action", "omarchy-system-lock"), "", "lookups use own stock entries only")
+  eq(SystemShortcuts.bindingChord({ modmask: 0, key: "<img>" }), "", "untrusted markup is not a key")
 }
 
 console.log("")

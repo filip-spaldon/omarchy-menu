@@ -49,6 +49,8 @@ BorderSurface {
   // Open windows of an application row, for the running marker.
   readonly property int windowCount: row.kind === "app" && !row.tiled ? row.menu.appWindowCount(row.appId) : 0
   readonly property string trailShown: row.tiled ? "" : row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
+  readonly property string shortcutHint: !row.tiled && !row.disabled
+    ? row.menu.systemShortcutHint(row.itemId, row.kind, row.action) : ""
 
   // Command examples are a read-only hint.
   opacity: row.disabled ? 0.4 : (row.kind === "example" ? 0.7 : 1)
@@ -82,7 +84,7 @@ BorderSurface {
     verticalAlignment: Text.AlignVCenter
     anchors.left: parent.left
     anchors.leftMargin: row.menu.rowReservedBorderLeft + Style.space(8)
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    y: contentColumn.y + labelLine.y + labelText.y + (labelText.height - height) / 2
   }
 
   Image {
@@ -99,7 +101,7 @@ BorderSurface {
     asynchronous: true
     anchors.left: parent.left
     anchors.leftMargin: row.menu.rowReservedBorderLeft + Style.space(8) + (row.menu.iconSlotWidth - width) / 2
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    y: contentColumn.y + labelLine.y + labelText.y + (labelText.height - height) / 2
   }
 
   // The picture in place of the icon, decoded small and off the UI thread.
@@ -156,16 +158,38 @@ BorderSurface {
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(3)
 
-    Text {
-      id: labelText
-      textFormat: Text.PlainText
+    Item {
+      id: labelLine
       width: parent.width
-      text: row.label
-      color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
-      font.family: row.menu.fontFamily
-      font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.body : Style.font.heading)
-      font.weight: Font.Medium
-      elide: Text.ElideRight
+      implicitHeight: Math.max(labelText.implicitHeight, hintText.visible ? hintText.implicitHeight : 0)
+      readonly property real gap: Style.space(8)
+
+      Text {
+        id: labelText
+        textFormat: Text.PlainText
+        width: hintText.visible ? Math.max(0, parent.width - hintText.width - labelLine.gap) : parent.width
+        anchors.verticalCenter: parent.verticalCenter
+        text: row.label
+        color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+        font.family: row.menu.fontFamily
+        font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.body : Style.font.heading)
+        font.weight: Font.Medium
+        elide: Text.ElideRight
+      }
+
+      Text {
+        id: hintText
+        textFormat: Text.PlainText
+        visible: text.length > 0 && implicitWidth + labelLine.gap <= parent.width * 0.45
+        width: implicitWidth
+        anchors.right: parent.right
+        anchors.baseline: labelText.baseline
+        text: row.shortcutHint
+        color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+        opacity: 0.4
+        font.family: row.menu.fontFamily
+        font.pixelSize: row.menu.scaledFont(Style.font.caption)
+      }
     }
 
     Text {
@@ -201,7 +225,7 @@ BorderSurface {
     width: Style.space(14)
     anchors.right: parent.right
     anchors.rightMargin: row.menu.rowReservedBorderRight + Style.space(8)
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    y: contentColumn.y + labelLine.y + labelText.y + (labelText.height - height) / 2
     spacing: 0
 
     Text {

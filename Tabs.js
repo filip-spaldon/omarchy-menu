@@ -155,6 +155,12 @@ function tabForRoute(id) {
   return { tab: "system", menu: route }
 }
 
+function shortcutSwitchesDestination(route, activeTab, activeMenu) {
+  if (!route || route === "root") return false
+  var destination = tabForRoute(route)
+  return destination.tab !== activeTab || (destination.tab === "system" && destination.menu !== activeMenu)
+}
+
 // Section values ride on ListView's own `section` role, so headers cost no
 // rows: the cursor, the row count and every index-based helper stay exactly
 // as they were. The prefix keeps them apart from the menu's "drilldown"
@@ -231,6 +237,7 @@ if (typeof module !== "undefined") {
     isTab: isTab,
     cycleTab: cycleTab,
     tabForRoute: tabForRoute,
+    shortcutSwitchesDestination: shortcutSwitchesDestination,
     headerSection: headerSection,
     sectionHeader: sectionHeader,
     isHeaderSection: isHeaderSection,

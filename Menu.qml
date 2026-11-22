@@ -11,6 +11,7 @@ import "MenuModel.js" as MenuModel
 import "Tabs.js" as Tabs
 import "AllTiles.js" as AllTiles
 import "FileSearch.js" as FileSearch
+import "SystemShortcuts.js" as SystemShortcuts
 import "ai/AiBackend.js" as AiBackend
 
 Item {
@@ -135,6 +136,39 @@ Item {
   property int systemMatchIndex: 0
   readonly property bool systemTwoPane: root.tabsActive && root.activeTab === "system" && !aiCtl.isAiMode && !root.commandMode
     && (!root.filterText.trim() || root.systemMatches.length > 0)
+  readonly property bool systemShortcutsNeeded: root.opened && root.tabsActive && root.activeTab === "system"
+  property var systemBindings: null
+  onSystemShortcutsNeededChanged: {
+    root.systemBindings = null
+    if (root.systemShortcutsNeeded) root.refreshSystemBindings()
+  }
+
+  function refreshSystemBindings() {
+    if (systemShortcutProc.running) {
+      systemShortcutProc.refreshPending = true
+      return
+    }
+    systemShortcutProc.command = root.boundedCommand("hyprctl -j binds 2>/dev/null", 2, 262144)
+    systemShortcutProc.running = true
+  }
+
+  function systemShortcutHint(itemId, kind, action) {
+    return root.systemTwoPane ? SystemShortcuts.hintFor(root.systemBindings, itemId, kind, action) : ""
+  }
+
+  Process {
+    id: systemShortcutProc
+    property bool refreshPending: false
+    stdout: StdioCollector { id: systemShortcutOut; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) {
+      if (systemShortcutProc.refreshPending) {
+        systemShortcutProc.refreshPending = false
+        if (root.systemShortcutsNeeded) Qt.callLater(root.refreshSystemBindings)
+      } else if (root.systemShortcutsNeeded && exitCode === 0 && !exitStatus) {
+        root.systemBindings = SystemShortcuts.parseBindings(systemShortcutOut.text)
+      }
+    }
+  }
   property string systemPane: "left"
   property int systemCategoryIndex: 0
   readonly property var systemCategories: root.systemTwoPane ? root.systemCategoryRows(root.layoutSerial) : []
@@ -2416,6 +2450,12 @@ Item {
   // on the VM before the shell hears of it). Until the host has handed this
   // plugin its shell API (on the first summon), a press takes the old way.
   function toggleFromShortcut(route) {
+    // The host's toggle closes any visible panel before looking at its
+    // route. Handle a different tab or System submenu without closing.
+    if (root.opened && !root.dmenuActive && Tabs.shortcutSwitchesDestination(route, root.activeTab, root.activeMenu)) {
+      root.openRoute(route)
+      return
+    }
     if (root.shell) {
       root.shell.toggle("omarchy.menu", JSON.stringify({ menu: route }))
       return
@@ -2433,22 +2473,57 @@ Item {
   GlobalShortcut {
     appid: "omarchy-menu-omni"
     name: "toggle-apps"
-    description: "Open or close the Omarchy menu on Apps"
+    description: "Open or switch to Apps; close if already on Apps"
     onPressed: root.toggleFromShortcut("apps")
   }
 
   GlobalShortcut {
     appid: "omarchy-menu-omni"
     name: "toggle-windows"
-    description: "Open or close the Omarchy menu on Windows"
+    description: "Open or switch to Windows; close if already on Windows"
     onPressed: root.toggleFromShortcut("windows")
   }
 
   GlobalShortcut {
     appid: "omarchy-menu-omni"
     name: "toggle-clipboard"
-    description: "Open or close the Omarchy menu on Clipboard"
+    description: "Open or switch to Clipboard; close if already on Clipboard"
     onPressed: root.toggleFromShortcut("clipboard")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-system"
+    description: "Open or switch to System power actions"
+    onPressed: root.toggleFromShortcut("system")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-capture"
+    description: "Open or switch to the Capture menu"
+    onPressed: root.toggleFromShortcut("trigger.capture")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-toggles"
+    description: "Open or switch to the Toggle menu"
+    onPressed: root.toggleFromShortcut("trigger.toggle")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-hardware"
+    description: "Open or switch to the Hardware menu"
+    onPressed: root.toggleFromShortcut("trigger.hardware")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-share"
+    description: "Open or switch to the Share menu"
+    onPressed: root.toggleFromShortcut("trigger.share")
   }
 
   // What the controllers reach for through `menu`.

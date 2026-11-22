@@ -75,12 +75,19 @@ once per open, and never reads the clipboard itself or changes the history.
 Without Omarchy's clipboard service the tab says the history is empty or
 off. Clipboard is never a section of All, so whatever you copied does not
 show up in a search of everything. `omarchy-menu toggle clipboard` opens the
-tab directly; to put it on `Super+Ctrl+V`, add this to
-`~/.config/hypr/bindings.lua` (the plugin never changes your bindings):
+tab directly.
+
+**Optional: open Omni Clipboard with `Super+Ctrl+V`.** This shortcut opens
+Omarchy's built-in clipboard manager by default. To open Omni's Clipboard
+tab instead, add this to `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.rebind("SUPER + CTRL + V", "Clipboard (Omni)", "omarchy-menu toggle clipboard")
+o.rebind("SUPER + CTRL + V", "Clipboard (Omni menu)", hl.dsp.global("omarchy-menu-omni:toggle-clipboard"))
 ```
+
+This switches straight to Clipboard if Omni is open on another tab. Press it
+while already on Clipboard to close Omni. Omni does not change your bindings
+automatically.
 
 `omarchy-menu toggle apps` opens Apps directly (see
 [Install](#install) to put it on `Super+Alt+Space`). Existing routes such as
@@ -404,15 +411,29 @@ bindings alone. To open Omni's Apps tab there instead, add this to
 `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.rebind("SUPER + ALT + SPACE", "Apps (Omni)", "omarchy-menu toggle apps")
+o.rebind("SUPER + ALT + SPACE", "Apps (Omni)", hl.dsp.global("omarchy-menu-omni:toggle-apps"))
 ```
 
-For a faster open, bind `Super+Space` and `Super+Alt+Space` to the global
-shortcuts `omarchy-menu-omni:toggle` and `omarchy-menu-omni:toggle-apps`
-(`hl.dsp.global("omarchy-menu-omni:toggle-apps")` in your Hyprland bindings)
-instead of `omarchy-menu`: the press then reaches the shell without starting
-any process. `omarchy-menu-omni:toggle-windows` opens on the Windows tab and
-`omarchy-menu-omni:toggle-clipboard` on the Clipboard tab.
+To make Omarchy's System shortcuts switch directly to their Omni submenus, use:
+
+```lua
+o.rebind("SUPER + ESCAPE", "System (Omni)", hl.dsp.global("omarchy-menu-omni:toggle-system"))
+o.rebind("SUPER + CTRL + C", "Capture menu", hl.dsp.global("omarchy-menu-omni:toggle-capture"))
+o.rebind("SUPER + CTRL + O", "Toggle menu", hl.dsp.global("omarchy-menu-omni:toggle-toggles"))
+o.rebind("SUPER + CTRL + H", "Hardware menu", hl.dsp.global("omarchy-menu-omni:toggle-hardware"))
+o.rebind("SUPER + CTRL + S", "Share", hl.dsp.global("omarchy-menu-omni:toggle-share"))
+```
+
+Place the `Super+Esc` override before any lock-screen binding for the same key
+that you want to keep.
+
+Omni's global shortcuts for Apps, Windows (`omarchy-menu-omni:toggle-windows`),
+Clipboard, and System switch straight to their tab or submenu when Omni is open.
+Press the shortcut again at the same destination to close Omni.
+`omarchy-menu-omni:toggle` opens or
+closes the whole menu. These shortcuts start no extra process. The generic
+`omarchy-menu toggle` command still toggles the whole menu; use `omarchy-menu
+summon apps` to switch from a script without closing it first.
 
 ### Update, disable and remove
 
