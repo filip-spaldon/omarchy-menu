@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/51d2cada-dd4d-4596-9a6c-2e71191caf62
 ## Open and navigate
 
 `Super+Space` opens the compact search prompt. Start typing, click a tab, use
-Tab / Shift+Tab to cycle, or Ctrl+1…6 to select a visible tab by position.
+Tab / Shift+Tab to cycle, or Ctrl+1…7 to select a visible tab by position.
 Switching tabs preserves the query. Arrow keys select a result; Enter activates
 it. Esc clears the query, then closes the menu; Left or Backspace on an empty
 query goes back a level in System.
@@ -44,6 +44,7 @@ saved to `style.json` when the menu closes. dmenu pickers stay centred. The slid
 | **Files** | File name search under your home directory, with type, sort and result-limit controls |
 | **Folders** | Folder search, including a separate System folders filter for configuration directories |
 | **Windows** | Every open window across workspaces; Enter focuses it, switching workspace or raising the scratchpad as needed |
+| **Clipboard** | Omarchy's clipboard history, newest first; Enter pastes, Ctrl+C copies, Ctrl+O opens |
 
 The System tab keeps the category list visible while you browse its items.
 Use Up/Down to select, Right or Enter to open, and Left to go back. Typing
@@ -59,6 +60,25 @@ focused first. Typing filters by title, app name, class or workspace. Apps
 marks applications that already have windows, and Enter on one switches to it
 instead of starting a second copy. `omarchy-menu toggle windows` opens the tab
 directly.
+
+Clipboard lists the clipboard history kept by Omarchy's own clipboard service
+(Omarchy 4.5 and later), newest first: text by its first line with its line
+and character count, images by when they were copied. Typing filters by the
+full text, ignoring case and accents. Enter pastes the entry into the window
+that had focus, Ctrl+C only copies it, and Ctrl+O opens it (a link in the
+browser, text in the editor, an image in the viewer), all through Omarchy's
+own clipboard helpers. The tab reads
+`~/.local/state/omarchy/clipboard-history.json` read-only when it is shown,
+once per open, and never reads the clipboard itself or changes the history.
+Without Omarchy's clipboard service the tab says the history is empty or
+off. Clipboard is never a section of All, so whatever you copied does not
+show up in a search of everything. `omarchy-menu toggle clipboard` opens the
+tab directly; to put it on `Super+Ctrl+V`, add this to
+`~/.config/hypr/bindings.lua` (the plugin never changes your bindings):
+
+```lua
+o.rebind("SUPER + CTRL + V", "Clipboard (Omni)", "omarchy-menu toggle clipboard")
+```
 
 `omarchy-menu toggle apps` opens Apps directly (see
 [Install](#install) to put it on `Super+Alt+Space`). Existing routes such as
@@ -185,8 +205,8 @@ selected app. Other sections stay rows, and All with nothing typed is unchanged.
 `allSections` independently controls the order of result sections in All.
 Unknown or duplicate IDs are ignored; omitted IDs are appended in default order.
 `openTab` picks the tab `Super+Space` opens on: `first` (default) is the first
-tab of `tabOrder` that is on, or name one: `all`, `apps`, `windows`, `system`,
-`files` or `folders`. A named tab that is disabled falls back to the first one
+tab of `tabOrder` that is on, or name one: `all`, `apps`, `windows`,
+`clipboard`, `system`, `files` or `folders`. A named tab that is disabled falls back to the first one
 on. Only `Super+Space` follows it; the Apps route (`omarchy-menu toggle apps`)
 still opens Apps and System routes such as `capture` still open System.
 
@@ -389,7 +409,8 @@ For a faster open, bind `Super+Space` and `Super+Alt+Space` to the global
 shortcuts `omarchy-menu-omni:toggle` and `omarchy-menu-omni:toggle-apps`
 (`hl.dsp.global("omarchy-menu-omni:toggle-apps")` in your Hyprland bindings)
 instead of `omarchy-menu`: the press then reaches the shell without starting
-any process. `omarchy-menu-omni:toggle-windows` opens on the Windows tab.
+any process. `omarchy-menu-omni:toggle-windows` opens on the Windows tab and
+`omarchy-menu-omni:toggle-clipboard` on the Clipboard tab.
 
 ### Update, disable and remove
 
@@ -421,8 +442,9 @@ its authentication; see [AI answers](#ai-answers).
 
 There is no custom installer, remote build or additional service. The plugin
 runs inside the existing shell with your user permissions. It reads menu
-configuration, installed applications and file names beneath your home directory
-and the search roots you added; preferences, cached exchange rates and root
+configuration, installed applications, file names beneath your home directory
+and the search roots you added, and Omarchy's clipboard history while the
+Clipboard tab is shown; preferences, cached exchange rates and root
 indexes are written to the paths documented above. It never mounts or logs in
 to anything.
 Currency queries access the rate service, AI submission starts the chosen agent,
@@ -501,10 +523,11 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes over $HOME and the search roots, root status and background indexing, zoxide scores, results and ranking into rows |
 | `AiController.qml` | AI mode: config, agent discovery and switching, generation processes, terminal handoff |
 | `WindowsController.qml` | Windows tab: the Hyprland window list, refreshed while shown, and focusing a window |
+| `ClipboardController.qml` | Clipboard tab: reads Omarchy's clipboard history once per open, and pastes, copies or opens an entry through Omarchy's helpers |
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `ai/*.js` | Pure logic, tested with Node |
+| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `Clipboard.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.

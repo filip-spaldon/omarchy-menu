@@ -82,7 +82,7 @@ var BAR_CLICKS = ["settings", "menu"]
 var CURSOR_STYLES = ["block", "beam", "underline", "outline", "none"]
 // state.json "openTab": the tab SUPER + SPACE opens on; "first" is the first
 // tab of tabOrder that is on (Tabs.openTabFor).
-var OPEN_TABS = ["first", "all", "apps", "windows", "system", "files", "folders"]
+var OPEN_TABS = ["first", "all", "apps", "windows", "clipboard", "system", "files", "folders"]
 // state.json "zoxide": how zoxide's folder scores enter the file search.
 var ZOXIDE_MODES = ["off", "rank", "results"]
 // state.json's read ceiling: the search roots make it more than a few keys.

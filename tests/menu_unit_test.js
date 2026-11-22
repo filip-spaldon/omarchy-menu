@@ -15,6 +15,7 @@ const MenuModel = require(path.join(root, "MenuModel.js"))
 const Settings = require(path.join(root, "Settings.js"))
 const Roots = require(path.join(root, "Roots.js"))
 const Windows = require(path.join(root, "Windows.js"))
+const Clipboard = require(path.join(root, "Clipboard.js"))
 
 let pass = 0
 let fail = 0
@@ -34,11 +35,11 @@ function assert(cond, msg) {
 
 // ------------------------------------------------------------------- tabs --
 
-eq(Tabs.TABS.map(t => t.id), ["all", "apps", "windows", "system", "files", "folders"], "default tab order")
+eq(Tabs.TABS.map(t => t.id), ["all", "apps", "windows", "clipboard", "system", "files", "folders"], "default tab order")
 eq(Tabs.DEFAULT_ALL_SECTIONS, ["apps", "windows", "system", "files", "folders"], "default All section order matches the tabs")
-eq(Tabs.orderTabs(["files", "all"]).map(t => t.id), ["files", "all", "apps", "windows", "system", "folders"],
+eq(Tabs.orderTabs(["files", "all"]).map(t => t.id), ["files", "all", "apps", "windows", "clipboard", "system", "folders"],
    "a partial tab order reorders and appends the rest")
-eq(Tabs.orderTabs(["bogus", "apps", "apps", 7]).map(t => t.id), ["apps", "all", "windows", "system", "files", "folders"],
+eq(Tabs.orderTabs(["bogus", "apps", "apps", 7]).map(t => t.id), ["apps", "all", "windows", "clipboard", "system", "files", "folders"],
    "unknown and repeated ids are dropped")
 eq(Tabs.orderTabs("not an array").map(t => t.id), Tabs.DEFAULT_TAB_ORDER, "a malformed order falls back to the default")
 eq(Tabs.orderSections(["folders", "apps"]).map(s => s.id), ["folders", "apps", "windows", "system", "files"], "All sections reorder")
@@ -57,7 +58,7 @@ assert(Tabs.isTab("files") && !Tabs.isTab("root"), "isTab")
 eq(Tabs.normalizeDisabled(["files", "bogus", "files", "folders"]), ["files", "folders"], "disabledTabs keeps valid ids once")
 eq(Tabs.normalizeDisabled(Tabs.DEFAULT_TAB_ORDER), [], "disabling every tab is ignored")
 eq(Tabs.normalizeDisabled("files"), [], "a malformed disabledTabs is ignored")
-eq(Tabs.visibleTabs(null, ["windows", "files", "folders"], "all").map(t => t.id), ["all", "apps", "system"], "disabled tabs leave the bar")
+eq(Tabs.visibleTabs(null, ["windows", "clipboard", "files", "folders"], "all").map(t => t.id), ["all", "apps", "system"], "disabled tabs leave the bar")
 eq(Tabs.visibleTabs(null, ["system"], "system").map(t => t.id), Tabs.DEFAULT_TAB_ORDER,
    "a disabled tab opened by route stays visible while active")
 eq(Tabs.firstEnabledTab(null, ["all"]), "apps", "with All off, the first tab that is on opens")
@@ -617,7 +618,7 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   const fs = require("fs")
   const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
   const names = Array.from(menuSource.matchAll(/GlobalShortcut \{\s*appid: "omarchy-menu-omni"\s*name: "([\w-]+)"/g), m => m[1])
-  eq(names, ["toggle", "toggle-apps", "toggle-windows"], "the menu's global shortcut names")
+  eq(names, ["toggle", "toggle-apps", "toggle-windows", "toggle-clipboard"], "the menu's global shortcut names")
   eq(/if \(root\.shell\) \{[\s\S]*?root\.shell\.toggle\("omarchy\.menu"[\s\S]*?Quickshell\.execDetached\(\["omarchy-menu", "toggle", route\]\)/.test(menuSource), true,
      "a shortcut falls back to omarchy-menu until the shell API is there")
 }
@@ -871,6 +872,130 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(ed("haiku", "", "v", true), "haiku", "a Ctrl chord (Ctrl+V) types nothing and pastes nothing")
   eq(ed("a".repeat(127), "", "bcd", false).length, Settings.MODEL_MAX, "the draft stops at the model name limit")
   assert(Settings.MODEL_PATTERN.test(ed("", "", "openai-codex/gpt-6-luna", false)), "a typed model name passes the save check")
+}
+
+// --------------------------------------------------------- clipboard tab --
+{
+  // Plumbing: a tab with its own route, never a section of All.
+  assert(Tabs.isTab("clipboard"), "clipboard is a tab")
+  eq(Tabs.tabForRoute("clipboard"), { tab: "clipboard", menu: "root" }, "the clipboard route opens Clipboard")
+  assert(Tabs.DEFAULT_ALL_SECTIONS.indexOf("clipboard") < 0, "All has no Clipboard section")
+  eq(Tabs.orderSections(["clipboard", "apps"]).map(s => s.id), Tabs.DEFAULT_ALL_SECTIONS,
+     "allSections cannot bring Clipboard into All")
+  eq(Tabs.normalizeSectionsOff(["clipboard"]), [], "allSectionsOff ignores clipboard")
+  eq(Tabs.sectionHeader("clipboard"), "", "clipboard rows get no All header")
+  assert(Settings.OPEN_TABS.indexOf("clipboard") >= 0, "openTab may name clipboard")
+  const fs = require("fs")
+  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  assert(/function inAll\(id\) \{\s*return Tabs\.DEFAULT_ALL_SECTIONS\.indexOf\(id\) >= 0 &&/.test(menuSource),
+         "inAll only answers for All's own sections")
+  assert(/tabRoute\.tab === "clipboard"\) entry = null/.test(menuSource),
+         "the clipboard route wins over a menu entry of that name")
+  const controller = fs.readFileSync(path.join(root, "ClipboardController.qml"), "utf8")
+  assert(controller.indexOf("Settings.readFileCommand(clip.historyPath, Clipboard.MAX_HISTORY_BYTES, 5)") >= 0,
+         "the history is read through the guarded reader")
+  assert(!/wl-paste|Quickshell\.clipboard|setText|FileView/.test(controller), "the controller never reads the clipboard nor writes")
+
+  const dir = "/home/u/.local/state/omarchy/clipboard-images/"
+  const png = dir + "a.png"
+  const history = JSON.stringify([
+    { type: "text", text: "  \n\n  hello   world \t again\nsecond line" },
+    "bare string",
+    { type: "image", path: png, mime: "image/png", capturedAt: "Monday 10:00" },
+    { type: "text", text: "   " },
+    { type: "image", path: dir + "../../../.ssh/id_ed25519", mime: "image/png" },
+    { type: "image", path: dir + "x/./y.png", mime: "image/png" },
+    { type: "image", path: "relative.png", mime: "image/png" },
+    { type: "image", path: "/tmp/clipboard-images/a.png", mime: "image/png" },
+    { type: "image", path: dir, mime: "image/png" },
+    { type: "image", path: dir + "b.png", mime: "text/html" },
+    { type: "image", path: dir + "b.png", mime: "image/png; rm -rf" },
+    { type: "image", path: dir + "b.png", mime: "IMAGE/PNG" },
+    { type: "image", path: dir + "b.png" },
+    { type: "text", text: 42 },
+    { type: "file", text: "x" },
+    null, 7, ["nested"],
+    { type: "text", text: "Café crème\nline" },
+    { type: "image", path: dir + "sub/c.webp", mime: "image/svg+xml", capturedAt: 5 }
+  ])
+  const entries = Clipboard.parseHistory(history, dir)
+  eq(entries.map(e => e.index), [0, 1, 2, 18, 19], "valid entries keep their history index, the rest are dropped")
+  eq(entries.map(e => e.type), ["text", "text", "image", "text", "image"], "entry types")
+  eq(entries.map(e => e.actionable), [true, false, true, true, true], "a bare string cannot be acted on by index")
+  eq(Clipboard.parseHistory("not json", dir), [], "malformed history is empty")
+  eq(Clipboard.parseHistory('{"type":"text"}', dir), [], "a non-array history is empty")
+  eq(Clipboard.parseHistory("", dir), [], "an empty history file is empty")
+  eq(Clipboard.parseHistory(JSON.stringify([{ type: "image", path: png, mime: "image/png" }]), ""), [],
+     "no image is trusted without the image folder")
+  eq(Clipboard.parseHistory(JSON.stringify(Array(2000).fill("x")), dir).length, Clipboard.MAX_ENTRIES, "entries are capped")
+  assert(!Clipboard.isSafeImagePath(dir + "a\u0000.png", dir), "a NUL in an image path is refused")
+  assert(!Clipboard.isSafeImagePath(dir + "a//b.png", dir), "an empty path segment is refused")
+  assert(Clipboard.isImageMime("image/vnd.microsoft.icon") && !Clipboard.isImageMime("image/"), "image mime shape")
+
+  const rows = Clipboard.clipboardRows(entries, "")
+  eq(rows[0].label, "hello world again", "label is the first non-empty line, whitespace collapsed")
+  eq(rows[0].detail, "4 lines · 39 chars", "text detail counts lines and characters")
+  eq(rows[0].target, "0", "the row carries only the history index")
+  eq(rows[0].kind, "clipboard", "clipboard row kind")
+  eq(rows[1].disabled, true, "a bare string's row is disabled")
+  eq(rows[2].label, "Image from Monday 10:00", "image label")
+  eq(rows[2].detail, "Image · image/png · Monday 10:00", "image detail")
+  eq(rows[4].detail, "Image · image/svg+xml", "a non-string capture time is dropped")
+  assert(rows.every(r => r.path === ""), "no row shows an image path")
+  const roleSet = JSON.stringify(Object.keys(rows[0]).sort())
+  assert(rows.every(r => JSON.stringify(Object.keys(r).sort()) === roleSet), "every row has the same roles")
+  assert(Object.keys(Windows.windowRows([{ address: "0x1", windowClass: "a", title: "t", workspaceId: 1,
+    workspaceName: "1", isSpecialWorkspace: false, isFloating: false, focusRecency: 0 }], "", () => null)[0]).sort()
+    .every(role => role in rows[0]), "clipboard rows carry every role a window row does")
+
+  const hostile = Clipboard.parseHistory(JSON.stringify([
+    { type: "text", text: "\u202eevil\u0007\u0000 <img src=http://x>" },
+    { type: "text", text: "x".repeat(100000) },
+    { type: "text", text: "a\u2028b" }
+  ]), dir)
+  const hostileRows = Clipboard.clipboardRows(hostile, "").map(r => MenuModel.sanitizeRow(r))
+  assert(!/[\u0000-\u001f\u202e]/.test(hostileRows[0].label), "control and bidi characters never reach a label")
+  eq(hostileRows[1].label.length, Clipboard.LABEL_LENGTH, "a huge entry's label is cut")
+  assert(hostileRows[1].label.endsWith("…"), "a cut label says so")
+  eq(hostileRows[1].detail, "1 line · 100000 chars", "a huge entry's detail")
+  eq(hostileRows[2].label, "a", "a Unicode line separator ends the first line")
+  eq(Clipboard.textLabel("\n\n\t\n"), "", "a label of only whitespace is empty")
+
+  eq(Clipboard.clipboardRows(entries, "CAFE").map(r => r.target), ["18"], "search ignores case and accents")
+  eq(Clipboard.clipboardRows(entries, "second hello").map(r => r.target), ["0"], "every word, anywhere in the full text")
+  eq(Clipboard.clipboardRows(entries, "png").map(r => r.target), ["2"], "images match on their mime")
+  eq(Clipboard.clipboardRows(entries, "nothing like it"), [], "no match")
+  const long = Clipboard.parseHistory(JSON.stringify([{ type: "text", text: "a".repeat(20000) + " needle" }]), dir)
+  eq(Clipboard.clipboardRows(long, "needle").length, 1, "search reaches past the label")
+
+  assert(Clipboard.isHistoryIndex(0) && Clipboard.isHistoryIndex("12"), "history index")
+  for (const bad of [-1, 1.5, "1.5", "-1", "--copy-only", "", " 1", "1e3", NaN, Infinity, null, undefined, {}, [], "99999999999999999999"])
+    assert(!Clipboard.isHistoryIndex(bad), "not a history index: " + JSON.stringify(bad))
+  eq(Clipboard.entryAt(entries, "2").path, png, "entryAt finds by history index")
+  eq(Clipboard.entryAt(entries, "3"), null, "entryAt misses a dropped index")
+  eq(Clipboard.entryAt(entries, "--help"), null, "entryAt refuses a non-index")
+
+  const bin = "/usr/share/omarchy/bin"
+  eq(Clipboard.pasteCommand(entries[0], bin, false),
+     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-text", "--shift-insert", "--history-index", "0"], "paste text")
+  eq(Clipboard.pasteCommand(entries[0], bin, true),
+     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-text", "--copy-only", "--history-index", "0"], "copy text")
+  eq(Clipboard.pasteCommand(entries[2], bin, false),
+     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-file", "image/png", png], "paste image")
+  eq(Clipboard.pasteCommand(entries[2], bin, true),
+     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-file", "--copy-only", "image/png", png], "copy image")
+  eq(Clipboard.openCommand(entries[3], bin), [bin + "/omarchy-clipboard-open", "--history-index", "18"], "open")
+  eq(Clipboard.pasteCommand(entries[1], bin, false), null, "a bare string is not pasted")
+  eq(Clipboard.openCommand(entries[1], bin), null, "a bare string is not opened")
+  eq(Clipboard.pasteCommand(null, bin, false), null, "no entry, no command")
+  eq(Clipboard.pasteCommand(entries[0], "", false), null, "no Omarchy path, no command")
+  eq(Clipboard.pasteCommand({ index: -1, type: "text", text: "x", actionable: true }, bin, false), null,
+     "a forged negative index is refused")
+  eq(Clipboard.pasteCommand({ index: 0, type: "image", path: png, mime: "--help", actionable: true }, bin, false), null,
+     "a forged mime is refused")
+  eq(Clipboard.helpersCheckCommand(bin), ["timeout", "-k", "1", "2", "test",
+     "-x", bin + "/omarchy-clipboard-paste-text", "-a", "-x", bin + "/omarchy-clipboard-paste-file",
+     "-a", "-x", bin + "/omarchy-clipboard-open"], "helper check")
 }
 
 console.log("")

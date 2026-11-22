@@ -201,9 +201,10 @@ Item {
     return root.disabledTabs.indexOf(id) < 0
   }
 
-  // Whether All searches a section: its tab is on and it is not left out.
+  // Whether All searches a section: it is one of All's sections (never
+  // Clipboard), its tab is on and it is not left out.
   function inAll(id) {
-    return root.tabEnabled(id) && root.allSectionsOff.indexOf(id) < 0
+    return Tabs.DEFAULT_ALL_SECTIONS.indexOf(id) >= 0 && root.tabEnabled(id) && root.allSectionsOff.indexOf(id) < 0
   }
 
   property string filterText: ""
@@ -392,6 +393,8 @@ Item {
       return "Enter open/switch · Shift+Enter new · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
     if (root.activeTab === "windows")
       return "Enter go to window · type to filter by title, app or workspace · Tab next tab · Esc close"
+    if (root.activeTab === "clipboard")
+      return "Enter paste · Ctrl+C copy · Ctrl+O open · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
       return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · "
         + (fileCtl.hasRoots ? "Ctrl+R where · " : "") + "Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
@@ -413,6 +416,7 @@ Item {
     }
     if (root.activeTab === "apps") return "Search applications…"
     if (root.activeTab === "windows") return "Search open windows…"
+    if (root.activeTab === "clipboard") return "Search clipboard…"
     if (root.activeTab === "files") return "Search files…"
     if (root.activeTab === "folders") return "Search folders…"
     return "Search everything…"
@@ -529,7 +533,7 @@ Item {
     if (!detail) return false
     if (root.filterText || root.dmenuActive) return true
     return kind === "file" || kind === "folder" || root.activeTab === "files" || root.activeTab === "folders"
-      || root.activeTab === "windows"
+      || root.activeTab === "windows" || root.activeTab === "clipboard"
   }
 
   // Height the card can devote to rows before running off the screen — or
@@ -1129,6 +1133,12 @@ Item {
 
 
 
+
+  function selectedClipboardRow() {
+    if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
+    var row = displayModel.get(root.selectedIndex)
+    return row && row.kind === "clipboard" ? row : null
+  }
 
   function selectedFileRow() {
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
@@ -1887,6 +1897,7 @@ Item {
     else if (root.activeTab === "system") rows = root.systemTabRows(query, active)
     else if (root.activeTab === "apps") rows = root.appTabRows(query)
     else if (root.activeTab === "windows") rows = windowCtl.windowRows(query)
+    else if (root.activeTab === "clipboard") rows = clipboardCtl.rows(query)
     else if (root.activeTab === "all") {
       rows = root.allTabRows(query)
       if (root.allAppsView === "grid")
@@ -2137,6 +2148,8 @@ Item {
       root.launchApp(appId, label)
     } else if (row.kind === "window") {
       root.focusWindow(row.target)
+    } else if (row.kind === "clipboard") {
+      clipboardCtl.paste(row.target, false)
     } else if (row.kind === "example") {
       return // read-only hint
     } else if (row.kind === "shell") {
@@ -2375,6 +2388,11 @@ Item {
     menu: root
   }
 
+  ClipboardController {
+    id: clipboardCtl
+    menu: root
+  }
+
   SettingsStore {
     id: settingsStore
     menu: root
@@ -2419,6 +2437,13 @@ Item {
     onPressed: root.toggleFromShortcut("windows")
   }
 
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-clipboard"
+    description: "Open or close the Omarchy menu on Clipboard"
+    onPressed: root.toggleFromShortcut("clipboard")
+  }
+
   // What the controllers reach for through `menu`.
   readonly property var stateData: settingsStore.stateData
   readonly property string aiAgent: aiCtl.aiAgent
@@ -2453,7 +2478,7 @@ Item {
     // `apps` an action that opens the dock's launcher, which would otherwise
     // run instead of opening the Apps tab.
     var tabRoute = Tabs.tabForRoute(String(initialMenu || ""))
-    if (tabRoute.tab === "apps" || tabRoute.tab === "windows") entry = null
+    if (tabRoute.tab === "apps" || tabRoute.tab === "windows" || tabRoute.tab === "clipboard") entry = null
     // If the resolved id is an action (i.e. the user invoked an alias for
     // a leaf, e.g. `omarchy menu summon screenrecord-stop`), run it directly
     // instead of opening an action with no children.
@@ -3012,6 +3037,12 @@ Item {
                      && (event.modifiers & Qt.AltModifier) && root.selectedFileRow()) {
             root.openEnclosingFolder(root.selectedFileRow())
             event.accepted = true
+          } else if (event.key === Qt.Key_C && event.modifiers === Qt.ControlModifier && root.selectedClipboardRow()) {
+            clipboardCtl.paste(root.selectedClipboardRow().target, true)
+            event.accepted = true
+          } else if (event.key === Qt.Key_O && event.modifiers === Qt.ControlModifier && root.selectedClipboardRow()) {
+            clipboardCtl.open(root.selectedClipboardRow().target)
+            event.accepted = true
           } else if (event.key === Qt.Key_C && event.modifiers === Qt.ControlModifier && root.selectedFileRow()) {
             root.copyPath(root.selectedFileRow())
             event.accepted = true
@@ -3541,6 +3572,7 @@ Item {
                 textFormat: Text.PlainText
                 text: root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
                   : fileCtl.fileSearching ? "Searching…"
+                  : root.activeTab === "clipboard" && root.tabsActive && clipboardCtl.emptyText() ? clipboardCtl.emptyText()
                   : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
                 color: root.foreground
                 opacity: 0.7
