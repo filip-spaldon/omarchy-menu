@@ -18,13 +18,20 @@ var ROWS = 2
 // of the whole tile block. A lead also carries `tiles`, [{ index, col, row }],
 // what its delegate draws. Only the first run of app rows under the header
 // becomes tiles; the section is contiguous anyway.
+// The section key without its result count ("hdr:Apps|8" -> "hdr:Apps"):
+// headers carry the total for the counters, the tiles go by the section.
+function bareSection(section) {
+  return String(section || "").replace(/\|\d+$/, "")
+}
+
 function layout(rows, section, columns) {
   var list = rows || []
+  var bare = bareSection(section)
   var cols = Math.max(1, Math.floor(Number(columns)) || 1)
   var first = -1
   var last = -1
   for (var i = 0; i < list.length; i++) {
-    var tile = !!list[i] && list[i].kind === "app" && list[i].section === section
+    var tile = !!list[i] && list[i].kind === "app" && bareSection(list[i].section) === bare
     if (tile && first < 0) first = i
     if (first >= 0) {
       if (!tile) break

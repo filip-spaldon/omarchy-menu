@@ -134,6 +134,12 @@ eq(Tabs.sectionHeader("bogus"), "", "sectionHeader of an unknown id is empty")
   eq(AllTiles.layout([{ kind: "app", section: "" }, { kind: "file", section: H }], H, 3), [],
      "no app under the Apps header: no tiles")
   eq(AllTiles.layout(null, H, 3), [], "no rows: no tiles")
+  {
+    // What All composes: the header carries the section's total ("Apps|5").
+    const composed = Tabs.composeSections([{ title: "Apps", rows: [app("a"), app("b"), app("c")] }], 5)
+    eq(AllTiles.layout(composed, H, 2).map(x => x && x.col), [0, 1, 0],
+       "apps under a counted Apps header are tiles too")
+  }
 
   eq(AllTiles.stripHeight(t[1], 1, 100, 4), 92, "a lead gives back the spacing after its empty rows")
   eq(AllTiles.stripHeight(t[4], 4, 100, 4), 96, "a shorter strip gives back less")
