@@ -39,7 +39,7 @@ saved to `style.json` when the menu closes. dmenu pickers stay centred. The slid
 | Tab | Contents |
 | --- | --- |
 | **All** | Answers followed by Apps, System, Files and Folders sections, up to five results per section |
-| **Apps** | Installed applications; Ctrl+G switches between list and grid and saves the choice |
+| **Apps** | Installed applications, pinned ones in a strip on top; Ctrl+G switches between list and grid and saves the choice |
 | **System** | Omarchy actions in two panes: categories on the left, their items on the right |
 | **Files** | File name search under your home directory, with type, sort and result-limit controls |
 | **Folders** | Folder search, including a separate System folders filter for configuration directories |
@@ -60,6 +60,15 @@ focused first. Typing filters by title, app name, class or workspace. Apps
 marks applications that already have windows, and Enter on one switches to it
 instead of starting a second copy. `omarchy-menu toggle windows` opens the tab
 directly.
+
+Ctrl+P pins the selected app in Apps, or unpins it. Pinned apps sit in a strip
+above the full list, tinted and outlined in the theme accent, in the order they
+were pinned; Ctrl+Shift+arrows move the selected one earlier or later. The
+strip shows only when at least one pinned app is installed, in the list (as a
+block of tiles) and in the grid (as its first rows) alike, and the arrows,
+Enter and Shift+Enter work on it as anywhere else. A pinned app also stays in
+the list under it. While searching the strip is hidden, so the best match is
+still first. Pins are saved as `pinnedApps` in `state.json`.
 
 Clipboard lists the clipboard history kept by Omarchy's own clipboard service
 (Omarchy 4.5 and later), newest first: text by its first line with its line
@@ -191,6 +200,7 @@ Settings are read on every open from
 {
   "appsView": "grid",
   "allAppsView": "list",
+  "pinnedApps": ["firefox", "org.gnome.Nautilus"],
   "tabOrder": ["all", "apps", "system", "files", "folders"],
   "allSections": ["apps", "system", "files", "folders"],
   "disabledTabs": [],
@@ -213,6 +223,9 @@ The initial application view is `list`; the example selects `grid`.
 up to two rows of them as wide as the card fits. `↑` `↓` move between the tile
 rows and the other sections, `←` `→` between the tiles, Enter opens the
 selected app. Other sections stay rows, and All with nothing typed is unchanged.
+`pinnedApps` lists the desktop ids pinned in Apps (Ctrl+P), in strip order
+(default `[]`). Ids of apps that are not installed are kept but not shown;
+duplicates, anything that is not a desktop id and pins past 50 are dropped.
 `cursorStyle` sets the search cursor: `block` (default), `beam`, `underline`,
 `outline` or `none`; `cursorBlink: false` keeps it solid, and
 `cursorWhenEmpty: false` hides it until something is typed.
@@ -570,7 +583,7 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `Clipboard.js`, `ai/*.js` | Pure logic, tested with Node |
+| `MenuModel.js`, `Tabs.js`, `AllTiles.js`, `Pinned.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `Clipboard.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.

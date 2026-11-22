@@ -10,6 +10,7 @@ import "Settings.js" as Settings
 import "MenuModel.js" as MenuModel
 import "Tabs.js" as Tabs
 import "AllTiles.js" as AllTiles
+import "Pinned.js" as Pinned
 import "FileSearch.js" as FileSearch
 import "Clipboard.js" as Clipboard
 import "SystemShortcuts.js" as SystemShortcuts
@@ -203,7 +204,91 @@ Item {
   }
 
   function allTileRowHeight(index) {
-    return AllTiles.stripHeight(root.allTiles[index], index, root.allTileHeight, root.rowSpacing)
+    var info = root.allTiles[index]
+    return AllTiles.stripHeight(info, index, root.allTileHeight, root.rowSpacing, root.stripPad(info))
+  }
+
+  // state.json "pinnedApps": desktop ids in pin order (Pinned.js). The Apps
+  // tab shows the installed ones as a highlighted strip above every app while
+  // nothing is typed: in the list as one block of tiles (AllTiles.layout's
+  // block), in the grid as its first rows, padded out to whole rows by empty
+  // cells the cursor steps over. pinnedCount is how many are on show (set by
+  // rebuildDisplay), 0 when the strip is not.
+  property var pinnedApps: []
+  property int pinnedCount: 0
+  readonly property string pinnedSection: "pinned"
+  readonly property int pinnedStripPad: Style.space(6)
+  // The strip's tint and outline: the theme accent, faint enough under the
+  // cursor's own highlight to read in light and dark themes alike.
+  readonly property color pinnedBackground: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10)
+  readonly property color pinnedBorder: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.55)
+
+  function stripPad(info) {
+    return info && info.lines ? root.pinnedStripPad : 0
+  }
+
+  function pinnedEntry(id) {
+    var entry = root.item("apps." + id)
+    return entry && entry.kind === "app" ? entry : null
+  }
+
+  function pinnedRows() {
+    var ids = Pinned.shown(root.pinnedApps, function(id) { return root.pinnedEntry(id) !== null })
+    var rows = []
+    for (var i = 0; i < ids.length; i++) {
+      var entry = root.pinnedEntry(ids[i])
+      rows.push(root.displayRow(entry, entry.description, 0, root.pinnedSection))
+    }
+    return rows
+  }
+
+  // The selected row when it is an application of the Apps tab, else null.
+  function selectedAppRow() {
+    if (!root.tabsActive || root.commandMode || root.activeTab !== "apps" || !root.cursorActive) return null
+    if (root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
+    var row = displayModel.get(root.selectedIndex)
+    return row && row.kind === "app" ? row : null
+  }
+
+  // The row of `itemId` in the strip (inStrip) or in the list under it, -1
+  // when there is none.
+  function indexOfAppRow(itemId, inStrip) {
+    for (var i = 0; i < displayModel.count; i++) {
+      var row = displayModel.get(i)
+      if (row.itemId === itemId && (row.section === root.pinnedSection) === inStrip) return i
+    }
+    return -1
+  }
+
+  // Ctrl+P: pin the selected app or unpin it. The cursor stays on the app
+  // where it was picked, or on its list row once it leaves the strip.
+  function togglePinSelected() {
+    var row = root.selectedAppRow()
+    if (!row) return
+    var next = Pinned.toggle(root.pinnedApps, row.appId)
+    if (JSON.stringify(next) === JSON.stringify(root.pinnedApps)) return
+    if (!settingsStore.saveState("pinnedApps", next)) return
+    var itemId = row.itemId
+    var inStrip = row.section === root.pinnedSection && Pinned.isPinned(next, row.appId)
+    root.pinnedApps = next
+    root.rebuildDisplay()
+    var at = root.indexOfAppRow(itemId, inStrip)
+    if (at >= 0) root.selectedIndex = at
+  }
+
+  // Ctrl+Shift+arrows on a pinned app: one place earlier or later.
+  function movePinnedSelected(delta) {
+    var row = root.selectedAppRow()
+    if (!row || row.section !== root.pinnedSection) return
+    var shown = Pinned.shown(root.pinnedApps, function(id) { return root.pinnedEntry(id) !== null })
+    var next = Pinned.move(root.pinnedApps, row.appId, delta, shown)
+    if (JSON.stringify(next) === JSON.stringify(root.pinnedApps)) return
+    if (!settingsStore.saveState("pinnedApps", next)) return
+    var itemId = row.itemId
+    root.pinnedApps = next
+    root.rebuildDisplay()
+    var at = root.indexOfAppRow(itemId, true)
+    if (at >= 0) root.selectedIndex = at
   }
   readonly property string cacheHome: Quickshell.env("XDG_CACHE_HOME") || (root.homeDir + "/.cache")
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (root.homeDir + "/.local/state")) + "/omarchy-menu-omni"
@@ -427,8 +512,13 @@ Item {
       return "Enter end process · Ctrl+E " + (answerEngine.killExpanded ? "one row per app" : "every process") + " · Esc clear"
     if (root.commandMode) return root.answerQuery ? "Answers only · Enter use · Ctrl+R new value · Esc clear"
                                                   : "Type a command after / · Esc clear"
-    if (root.activeTab === "apps")
-      return "Enter open/switch · Shift+Enter new · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
+    if (root.activeTab === "apps") {
+      var app = root.selectedAppRow()
+      var pinned = !!app && Pinned.isPinned(root.pinnedApps, app.appId)
+      return "Enter open/switch · Shift+Enter new · Ctrl+P " + (pinned ? "unpin" : "pin")
+        + (app && app.section === root.pinnedSection && root.pinnedCount > 1 ? " · Ctrl+Shift+←→ reorder" : "")
+        + " · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
+    }
     if (root.activeTab === "windows")
       return "Enter go to window · type to filter by title, app or workspace · Tab next tab · Esc close"
     if (root.activeTab === "clipboard")
@@ -1258,6 +1348,8 @@ Item {
     var next = root.appsView === "grid" ? "list" : "grid"
     if (!settingsStore.saveState("appsView", next)) return
     root.appsView = next
+    // The pinned strip is laid out differently in each.
+    if (root.pinnedCount > 0) root.rebuildDisplay(true)
     Qt.callLater(function() { if (displayModel.count > 0) root.revealCursor() })
   }
 
@@ -1280,6 +1372,7 @@ Item {
 
   // Arrow keys in the grid: sideways by one tile, up and down by a row.
   // Unlike the list it does not wrap -- off the edge of a grid is nowhere.
+  // The pinned strip's empty cells are stepped over.
   function gridMove(delta) {
     if (displayModel.count === 0) return
     root.disarmPointer()
@@ -1287,7 +1380,7 @@ Item {
       root.cursorActive = true
       root.selectedIndex = 0
     } else {
-      root.selectedIndex = Math.max(0, Math.min(displayModel.count - 1, root.selectedIndex + delta))
+      root.selectedIndex = Pinned.gridStep(root.selectedIndex, delta, displayModel.count, root.rowSelectable)
     }
     root.revealCursor()
   }
@@ -1898,8 +1991,11 @@ Item {
   // results, a provider refresh), so the cursor follows its item rather than
   // staying on an index that now holds something else.
   function rebuildDisplay(keepSelection) {
-    // Only All's branch below lays out tiles; every other list has none.
+    // Only All's branch and Apps' pinned strip lay out tiles; every other
+    // list has none.
     var tiles = []
+    var pinnedCount = 0
+    root.pinnedCount = 0
     if (root.dmenuActive) {
       root.allTiles = tiles
       root.rebuildDmenuDisplay()
@@ -1912,8 +2008,11 @@ Item {
     // in the model when they arrive and would otherwise drag the cursor down
     // to wherever it ranks.)
     var previousId = ""
-    if (keepSelection && root.selectedIndex > 0 && root.selectedIndex < displayModel.count)
+    var previousSection = ""
+    if (keepSelection && root.selectedIndex > 0 && root.selectedIndex < displayModel.count) {
       previousId = displayModel.get(root.selectedIndex).itemId
+      previousSection = displayModel.get(root.selectedIndex).section
+    }
 
     if (!root.rowsLoaded) {
       root.allTiles = tiles
@@ -1944,7 +2043,21 @@ Item {
     else if (root.activeTab === "system" && root.systemTwoPane)
       rows = active === "root" ? [] : root.systemTabRows("", active)
     else if (root.activeTab === "system") rows = root.systemTabRows(query, active)
-    else if (root.activeTab === "apps") rows = root.appTabRows(query)
+    else if (root.activeTab === "apps") {
+      rows = root.appTabRows(query)
+      // The pinned strip: only before anything is typed, where a search
+      // ranks the best match first and Enter takes it. A pinned app is also
+      // in the list under it, where alphabetical order expects it.
+      var pinned = query ? [] : root.pinnedRows()
+      pinnedCount = pinned.length
+      if (pinnedCount > 0 && root.appsView === "grid") {
+        var pad = Pinned.gridPadding(pinnedCount, appGrid.columns)
+        for (var p = 0; p < pad; p++) pinned.push(Pinned.padRow(p, root.pinnedSection))
+      }
+      rows = pinned.concat(rows)
+      if (pinnedCount > 0 && root.appsView !== "grid")
+        tiles = AllTiles.layout(rows, root.pinnedSection, root.allTileColumns, true)
+    }
     else if (root.activeTab === "windows") rows = windowCtl.windowRows(query)
     else if (root.activeTab === "clipboard") rows = clipboardCtl.rows(query)
     else if (root.activeTab === "all") {
@@ -1962,10 +2075,15 @@ Item {
     for (var k = 0; k < rows.length; k++) MenuModel.sanitizeRow(rows[k])
     // Before the sync, so a delegate made for a tile row already sees it.
     root.allTiles = tiles
+    root.pinnedCount = pinnedCount
     root.syncDisplayModel(rows)
     layoutSerial += 1
 
-    var kept = Tabs.indexOfItem(rows, previousId)
+    // A pinned app is listed twice: follow the copy that was selected.
+    var kept = -1
+    for (var r = 0; r < rows.length && kept < 0 && previousId; r++)
+      if (rows[r].itemId === previousId && rows[r].section === previousSection) kept = r
+    if (kept < 0) kept = Tabs.indexOfItem(rows, previousId)
     if (kept >= 0) selectedIndex = kept
 
     root.settleCursor()
@@ -1985,7 +2103,8 @@ Item {
       return
     }
     // A tile is revealed as its whole strip: the strip's lead row, drawn the
-    // full tile height tall.
+    // full tile height tall. In the pinned block, the tile's line of it (and
+    // the block's padding at either end).
     var tile = root.allTiles[root.selectedIndex]
     var index = tile ? tile.lead : root.selectedIndex
     var last = tile ? tile.lead + tile.count - 1 : index
@@ -1993,16 +2112,22 @@ Item {
 
     var item = resultList.itemAtIndex(index)
     if (!item) return
+    var top = item.y
     var itemHeight = tile ? root.allTileHeight : item.height
+    if (tile && tile.lines) {
+      var pad = root.stripPad(tile)
+      top += tile.line > 0 ? pad + tile.line * root.allTileHeight : 0
+      itemHeight = root.allTileHeight + (tile.line > 0 ? 0 : pad) + (tile.line === tile.lines - 1 ? pad : 0)
+    }
 
     var reach = root.rowPeek + root.rowSpacing
     if (last < displayModel.count - 1) {
       var maxY = Math.max(resultList.originY, resultList.originY + resultList.contentHeight - resultList.height)
-      var overhang = item.y + itemHeight + reach - (resultList.contentY + resultList.height)
+      var overhang = top + itemHeight + reach - (resultList.contentY + resultList.height)
       if (overhang > 0) resultList.contentY = Math.min(resultList.contentY + overhang, maxY)
     }
-    if (index > 0) {
-      var underhang = resultList.contentY - (item.y - reach)
+    if (index > 0 || top > item.y) {
+      var underhang = resultList.contentY - (top - reach)
       if (underhang > 0) resultList.contentY = Math.max(resultList.contentY - underhang, resultList.originY)
     }
   }
@@ -3205,6 +3330,15 @@ Item {
                      && answerEngine.regenerateUtility()) {
             // Only claimed when there was something to reroll, so Ctrl+R stays
             // free everywhere else in the menu.
+            event.accepted = true
+          } else if (event.key === Qt.Key_P && event.modifiers === Qt.ControlModifier && root.selectedAppRow()) {
+            root.togglePinSelected()
+            event.accepted = true
+          } else if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)
+                     && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
+                         || event.key === Qt.Key_Up || event.key === Qt.Key_Down)
+                     && root.selectedAppRow() && root.selectedAppRow().section === root.pinnedSection) {
+            root.movePinnedSelected(event.key === Qt.Key_Left || event.key === Qt.Key_Up ? -1 : 1)
             event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))

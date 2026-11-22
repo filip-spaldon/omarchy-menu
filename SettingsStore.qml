@@ -4,6 +4,7 @@ import Quickshell.Io
 import "Tabs.js" as Tabs
 import "Settings.js" as Settings
 import "Roots.js" as Roots
+import "Pinned.js" as Pinned
 
 // Per-user files under the state directory: style.json (the card's
 // geometry) and state.json (apps view, tab and section order, disabled
@@ -109,6 +110,8 @@ Item {
     if (state.appsView === "grid" || state.appsView === "list") store.menu.appsView = state.appsView
     // All's Apps section while searching: "list" (default) or "grid" tiles.
     store.menu.allAppsView = Settings.ALL_APPS_VIEWS.indexOf(state.allAppsView) >= 0 ? state.allAppsView : "list"
+    // Desktop ids in pin order; ids of apps not installed now are kept.
+    store.menu.pinnedApps = Pinned.normalize(state.pinnedApps)
     store.menu.tabOrder = Tabs.normalizeOrder(state.tabOrder, Tabs.DEFAULT_TAB_ORDER)
     store.menu.allSectionOrder = Tabs.normalizeOrder(state.allSections, Tabs.DEFAULT_ALL_SECTIONS)
     store.menu.disabledTabs = Tabs.normalizeDisabled(state.disabledTabs)
@@ -145,7 +148,8 @@ Item {
 
     // Missing keys are filled under the writer's lock.
     var defaults = {
-      appsView: store.menu.appsView, allAppsView: store.menu.allAppsView, tabOrder: store.menu.tabOrder,
+      appsView: store.menu.appsView, allAppsView: store.menu.allAppsView, pinnedApps: store.menu.pinnedApps,
+      tabOrder: store.menu.tabOrder,
       allSections: store.menu.allSectionOrder, disabledTabs: store.menu.disabledTabs,
       allSectionsOff: store.menu.allSectionsOff, openTab: store.menu.openTab,
       cursorStyle: store.menu.cursorStyle,
@@ -158,6 +162,7 @@ Item {
     var valid = {
       appsView: state.appsView === "grid" || state.appsView === "list",
       allAppsView: Settings.ALL_APPS_VIEWS.indexOf(state.allAppsView) >= 0,
+      pinnedApps: Pinned.isNormal(state.pinnedApps),
       tabOrder: Array.isArray(state.tabOrder), allSections: Array.isArray(state.allSections),
       disabledTabs: Array.isArray(state.disabledTabs), allSectionsOff: Array.isArray(state.allSectionsOff),
       openTab: Settings.OPEN_TABS.indexOf(state.openTab) >= 0,
