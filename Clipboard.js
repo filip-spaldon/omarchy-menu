@@ -1,5 +1,5 @@
 // The Clipboard tab: Omarchy's clipboard history made safe to show, filtered
-// by the query, and the argv of Omarchy's helpers that paste, copy or open an
+// by the query, and the commands that paste, copy or open an
 // entry. Pure data in, data out -- nothing here touches QML -- so it runs
 // under node. Reading the history file lives in ClipboardController.qml.
 //
@@ -7,7 +7,7 @@
 // shell/plugins/clipboard): a JSON array, newest first, whose entries are a
 // string, { type: "text", text } or { type: "image", path, mime, capturedAt }.
 // This module never reads the clipboard and never writes the history; an
-// entry is acted on by its index, which Omarchy's helpers look up themselves.
+// actions use the snapshot shown in the menu, not a fresh lookup by index.
 //
 // Written in ES2015 (const/let, arrows); object rest/spread does not parse
 // in Quickshell's engine (see Windows.js).
@@ -37,8 +37,7 @@ const MAX_SAFE_INDEX = 9007199254740991
 
 // ------------------------------------------------------------ parsing ----
 
-// A history index Omarchy's helpers accept: a non-negative integer, as a
-// number or a string of digits. Anything else could pass as an option.
+// A snapshot index: a non-negative integer, as a number or a string of digits.
 function isHistoryIndex(value) {
   const number = typeof value === "number" ? value
     : typeof value === "string" && INDEX_PATTERN.test(value) ? Number(value) : -1
@@ -62,27 +61,26 @@ function isSafeImagePath(path, imageDir) {
 }
 
 // Counted once here rather than on every keystroke's rebuild.
-function textEntry(index, text, actionable) {
-  return { index: index, type: "text", text: text, lineCount: text.split("\n").length, actionable: actionable }
+function textEntry(index, text) {
+  return { index: index, type: "text", text: text, lineCount: text.split("\n").length }
 }
 
 // One raw history value to { index, type, ... }, or null for anything not a
-// usable entry. `index` is the value's position in the file, which is what
-// the helpers look up. A bare string is shown, but cannot be acted on: the
-// helpers only accept { type: "text" } objects, as Omarchy writes them.
+// usable entry. `index` is the value's position in the snapshot, including
+// any entries that were dropped.
 function normalizeEntry(value, index, imageDir) {
   if (typeof value === "string") {
-    return value.trim() ? textEntry(index, value, false) : null
+    return value.trim() ? textEntry(index, value) : null
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   if (value.type === "text") {
     if (typeof value.text !== "string" || !value.text.trim()) return null
-    return textEntry(index, value.text, true)
+    return textEntry(index, value.text)
   }
   if (value.type === "image") {
     if (!isSafeImagePath(value.path, imageDir) || !isImageMime(value.mime)) return null
     const capturedAt = typeof value.capturedAt === "string" ? value.capturedAt.slice(0, MAX_CAPTURED_AT_LENGTH) : ""
-    return { index: index, type: "image", path: value.path, mime: value.mime, capturedAt: capturedAt, actionable: true }
+    return { index: index, type: "image", path: value.path, mime: value.mime, capturedAt: capturedAt }
   }
   return null
 }
@@ -219,10 +217,10 @@ function imageSource(path) {
 // `imagePath` is their file, "" on every other row.
 function toClipboardRow(entry, previewable) {
   const isImage = entry.type === "image"
+  const imageReady = isImage && previewable && previewable[entry.path] === true
   return {
     itemId: "clipboard:" + entry.index,
-    // A bare string has no history index the helpers accept.
-    disabled: !entry.actionable,
+    disabled: isImage && !imageReady,
     kind: "clipboard",
     icon: isImage ? IMAGE_ICON : TEXT_ICON,
     iconFont: "",
@@ -232,7 +230,7 @@ function toClipboardRow(entry, previewable) {
     target: String(entry.index),
     detail: isImage ? imageDetail(entry) : textDetail(entry),
     path: "",
-    imagePath: isImage && previewable && previewable[entry.path] === true ? entry.path : "",
+    imagePath: imageReady ? entry.path : "",
     childCount: 0,
     action: "",
     provider: "",
@@ -263,37 +261,46 @@ function bounded(argv) {
   return ["timeout", "-k", "1", String(HELPER_DEADLINE)].concat(argv)
 }
 
-// The argv that pastes an entry into the focused window (Shift+Insert, as
-// Omarchy's own picker does) or, with copyOnly, puts it on the clipboard.
-// null for anything that cannot be acted on.
-function pasteCommand(entry, binDir, copyOnly) {
-  if (!entry || !entry.actionable || !binDir || !isHistoryIndex(entry.index)) return null
+// An HTTP(S) link in the selected text, or the whole text if it is a bare
+// domain. Never treat other schemes or leading options as launch targets.
+function textLink(text) {
+  const url = text.match(/https?:\/\/[^\s"'<>\\\x00-\x1f\x7f]+/i)
+  if (url) return url[0]
+  const domain = text.trim().match(/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:\/[^\s"'<>\\\x00-\x1f\x7f]*)?$/i)
+  return domain ? "https://" + domain[0] : ""
+}
+
+// Fixed scripts; clipboard text is private and can exceed the argument
+// size limit, so send it verbatim on stdin. Delay the paste as Omarchy does,
+// and never send a paste key if the copy failed.
+const PASTE_SCRIPT = "wl-copy && sleep 0.15 && wtype -M shift -k Insert -m shift"
+const OPEN_TEXT_SCRIPT = [
+  "file=$(mktemp -t omni-clipboard.XXXXXXXXXX.txt) || exit 1",
+  'if cat >"$file"; then printf "%s" "$file"; else rm -f -- "$file"; exit 1; fi'
+].join("\n")
+
+function actionFor(entry, binDir, operation, verifiedImages) {
+  if (!entry || !binDir) return null
+  if (operation !== "paste" && operation !== "copy" && operation !== "open") return null
   if (entry.type === "image") {
-    if (!isImageMime(entry.mime) || typeof entry.path !== "string" || entry.path.charAt(0) !== "/") return null
-    const fileArgs = copyOnly ? ["--copy-only", entry.mime, entry.path] : [entry.mime, entry.path]
-    return bounded([binDir + "/omarchy-clipboard-paste-file"].concat(fileArgs))
+    if (!isImageMime(entry.mime) || typeof entry.path !== "string" || entry.path.charAt(0) !== "/"
+        || !verifiedImages || verifiedImages[entry.path] !== true) return null
+    if (operation === "open") return { command: ["omasnap", "--notify", entry.path] }
+    const args = operation === "copy" ? ["--copy-only", entry.mime, entry.path] : [entry.mime, entry.path]
+    return { command: bounded([binDir + "/omarchy-clipboard-paste-file"].concat(args)) }
   }
-  const mode = copyOnly ? "--copy-only" : "--shift-insert"
-  return bounded([binDir + "/omarchy-clipboard-paste-text", mode, "--history-index", String(entry.index)])
+  if (entry.type !== "text" || typeof entry.text !== "string" || !entry.text) return null
+  if (operation === "open") {
+    const link = textLink(entry.text)
+    if (link && link.length <= 8192) return { command: [binDir + "/omarchy-launch-browser", link] }
+    return { command: bounded(["bash", "-c", OPEN_TEXT_SCRIPT]), input: entry.text, edit: true }
+  }
+  const argv = operation === "copy" ? ["wl-copy"] : ["bash", "-c", PASTE_SCRIPT]
+  return { command: bounded(argv), input: entry.text }
 }
 
-// Opens a link in the browser, text in the editor, an image in the viewer.
-// Not under a deadline: the helper execs into the application it opens.
-function openCommand(entry, binDir) {
-  if (!entry || !entry.actionable || !binDir || !isHistoryIndex(entry.index)) return null
-  return [binDir + "/omarchy-clipboard-open", "--history-index", String(entry.index)]
-}
-
-const HELPERS = ["omarchy-clipboard-paste-text", "omarchy-clipboard-paste-file", "omarchy-clipboard-open"]
-
-// Exits 0 only when every helper is there to run.
 function helpersCheckCommand(binDir) {
-  const argv = ["timeout", "-k", "1", "2", "test"]
-  HELPERS.forEach((name, i) => {
-    if (i > 0) argv.push("-a")
-    argv.push("-x", binDir + "/" + name)
-  })
-  return argv
+  return ["timeout", "-k", "1", "2", "test", "-x", binDir + "/omarchy-clipboard-paste-file"]
 }
 
 if (typeof module !== "undefined") {
@@ -302,7 +309,6 @@ if (typeof module !== "undefined") {
     MAX_ENTRIES,
     MAX_IMAGE_BYTES,
     LABEL_LENGTH,
-    HELPERS,
     isHistoryIndex,
     isImageMime,
     isSafeImagePath,
@@ -317,8 +323,7 @@ if (typeof module !== "undefined") {
     imageStatCommand,
     previewablePaths,
     imageSource,
-    pasteCommand,
-    openCommand,
+    actionFor,
     helpersCheckCommand
   }
 }

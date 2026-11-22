@@ -7,8 +7,8 @@ import "Settings.js" as Settings
 // Clipboard history for the Clipboard tab. The launcher never reads the
 // clipboard: it reads the history Omarchy's own clipboard service keeps
 // (Omarchy 4.5+), read-only through the guarded file reader, once per open
-// and only when the tab is shown. Pasting, copying and opening go through
-// Omarchy's helpers by history index. Parsing, rows and argv are
+// and only when the tab is shown. Actions use the selected snapshot entry
+// so another copy cannot change what they act on. Parsing, rows and argv are
 // Clipboard.js; this file does the I/O. Never part of All: whatever was
 // copied stays out of a search that was not asked of the clipboard.
 Item {
@@ -109,17 +109,46 @@ Item {
 
   // Closes the menu first, so the paste lands in the window that had focus.
   function paste(index, copyOnly) {
-    const command = Clipboard.pasteCommand(Clipboard.entryAt(clip.entries, index), clip.binDir, copyOnly)
-    if (!command) return
-    clip.menu.closeLauncher()
-    Quickshell.execDetached(command)
+    clip.runAction(index, copyOnly ? "copy" : "paste")
   }
 
   function open(index) {
-    const command = Clipboard.openCommand(Clipboard.entryAt(clip.entries, index), clip.binDir)
-    if (!command) return
+    clip.runAction(index, "open")
+  }
+
+  function runAction(index, operation) {
+    if (actionProc.running) return
+    const action = Clipboard.actionFor(Clipboard.entryAt(clip.entries, index), clip.binDir, operation, clip.previewable)
+    if (!action) return
     clip.menu.closeLauncher()
-    Quickshell.execDetached(command)
+    if (action.input === undefined) {
+      Quickshell.execDetached(action.command)
+      return
+    }
+    actionProc.command = action.command
+    actionProc.input = action.input
+    actionProc.edit = action.edit === true
+    actionProc.stdinEnabled = true
+    actionProc.running = true
+  }
+
+  Process {
+    id: actionProc
+    property string input: ""
+    property bool edit: false
+    stdout: StdioCollector { id: actionOut; waitForEnd: true }
+    onStarted: {
+      actionProc.write(actionProc.input)
+      actionProc.input = ""
+      actionProc.stdinEnabled = false
+    }
+    onExited: function(exitCode, exitStatus) {
+      actionProc.input = ""
+      if (!actionProc.edit || exitCode !== 0 || exitStatus) return
+      const path = actionOut.text
+      if (path && path.charAt(0) === "/" && path.length <= 4096)
+        Quickshell.execDetached([clip.binDir + "/omarchy-launch-editor", path])
+    }
   }
 
   // Closed, the history is dropped rather than kept in memory: the next

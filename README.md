@@ -64,10 +64,12 @@ directly.
 Clipboard lists the clipboard history kept by Omarchy's own clipboard service
 (Omarchy 4.5 and later), newest first: text by its first line with its line
 and character count, images by when they were copied. Typing filters by the
-full text, ignoring case and accents. Enter pastes the entry into the window
-that had focus, Ctrl+C only copies it, and Ctrl+O opens it (a link in the
-browser, text in the editor, an image in the viewer), all through Omarchy's
-own clipboard helpers. The tab reads
+full text, ignoring case and accents. Images show inline thumbnails; missing,
+unsafe or larger-than-16-MiB files stay listed with an icon and no actions.
+Enter pastes the selected item into the window that had focus, Ctrl+C only
+copies it, and Ctrl+O opens it (a link in the browser, text in the editor as a
+private temporary file, an image in the viewer). Actions use the entry shown
+in the menu, even if a new item arrives after opening. The tab reads
 `~/.local/state/omarchy/clipboard-history.json` read-only when it is shown,
 once per open, and never reads the clipboard itself or changes the history.
 Without Omarchy's clipboard service the tab says the history is empty or
@@ -523,7 +525,7 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes over $HOME and the search roots, root status and background indexing, zoxide scores, results and ranking into rows |
 | `AiController.qml` | AI mode: config, agent discovery and switching, generation processes, terminal handoff |
 | `WindowsController.qml` | Windows tab: the Hyprland window list, refreshed while shown, and focusing a window |
-| `ClipboardController.qml` | Clipboard tab: reads Omarchy's clipboard history once per open, and pastes, copies or opens an entry through Omarchy's helpers |
+| `ClipboardController.qml` | Clipboard tab: reads Omarchy's clipboard history once per open and pastes, copies or opens the selected snapshot entry |
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |

@@ -921,7 +921,6 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   const entries = Clipboard.parseHistory(history, dir)
   eq(entries.map(e => e.index), [0, 1, 2, 18, 19], "valid entries keep their history index, the rest are dropped")
   eq(entries.map(e => e.type), ["text", "text", "image", "text", "image"], "entry types")
-  eq(entries.map(e => e.actionable), [true, false, true, true, true], "a bare string cannot be acted on by index")
   eq(Clipboard.parseHistory("not json", dir), [], "malformed history is empty")
   eq(Clipboard.parseHistory('{"type":"text"}', dir), [], "a non-array history is empty")
   eq(Clipboard.parseHistory("", dir), [], "an empty history file is empty")
@@ -937,7 +936,7 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(rows[0].detail, "4 lines · 39 chars", "text detail counts lines and characters")
   eq(rows[0].target, "0", "the row carries only the history index")
   eq(rows[0].kind, "clipboard", "clipboard row kind")
-  eq(rows[1].disabled, true, "a bare string's row is disabled")
+  eq(rows[1].disabled, false, "a bare string can be acted on")
   eq(rows[2].label, "Image from Monday 10:00", "image label")
   eq(rows[2].detail, "Image · image/png · Monday 10:00", "image detail")
   eq(rows[4].detail, "Image · image/svg+xml", "a non-string capture time is dropped")
@@ -976,26 +975,66 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(Clipboard.entryAt(entries, "--help"), null, "entryAt refuses a non-index")
 
   const bin = "/usr/share/omarchy/bin"
-  eq(Clipboard.pasteCommand(entries[0], bin, false),
-     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-text", "--shift-insert", "--history-index", "0"], "paste text")
-  eq(Clipboard.pasteCommand(entries[0], bin, true),
-     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-text", "--copy-only", "--history-index", "0"], "copy text")
-  eq(Clipboard.pasteCommand(entries[2], bin, false),
-     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-file", "image/png", png], "paste image")
-  eq(Clipboard.pasteCommand(entries[2], bin, true),
-     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-file", "--copy-only", "image/png", png], "copy image")
-  eq(Clipboard.openCommand(entries[3], bin), [bin + "/omarchy-clipboard-open", "--history-index", "18"], "open")
-  eq(Clipboard.pasteCommand(entries[1], bin, false), null, "a bare string is not pasted")
-  eq(Clipboard.openCommand(entries[1], bin), null, "a bare string is not opened")
-  eq(Clipboard.pasteCommand(null, bin, false), null, "no entry, no command")
-  eq(Clipboard.pasteCommand(entries[0], "", false), null, "no Omarchy path, no command")
-  eq(Clipboard.pasteCommand({ index: -1, type: "text", text: "x", actionable: true }, bin, false), null,
-     "a forged negative index is refused")
-  eq(Clipboard.pasteCommand({ index: 0, type: "image", path: png, mime: "--help", actionable: true }, bin, false), null,
+  const verified = { [png]: true }
+  const action = (entry, operation) => Clipboard.actionFor(entry, bin, operation, verified)
+  const paste = action(entries[0], "paste")
+  eq(paste.command.slice(0, 6), ["timeout", "-k", "1", "10", "bash", "-c"], "bounded text paste")
+  eq(paste.input, entries[0].text, "paste sends the original whitespace and text on stdin")
+  assert(paste.command.every(arg => !arg.includes(entries[0].text)), "text stays off the command line")
+  eq(action(entries[1], "copy"),
+     { command: ["timeout", "-k", "1", "10", "wl-copy"], input: entries[1].text }, "copy legacy text")
+  eq(action(entries[2], "paste").command,
+     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-file", "image/png", png], "paste checked image")
+  eq(action(entries[2], "copy").command,
+     ["timeout", "-k", "1", "10", bin + "/omarchy-clipboard-paste-file", "--copy-only", "image/png", png], "copy checked image")
+  eq(action(entries[2], "open").command, ["omasnap", "--notify", png], "open checked image directly")
+  eq(Clipboard.actionFor(entries[2], bin, "open", {}), null, "unverified images cannot be opened")
+  eq(action(entries[1], "open").input, entries[1].text, "open legacy text from the snapshot")
+  eq(action({ type: "text", text: "Link: https://example.com/a" }, "open"),
+     { command: [bin + "/omarchy-launch-browser", "https://example.com/a"] }, "open an HTTP(S) link")
+  eq(action({ type: "text", text: "example.com/a" }, "open").command[1],
+     "https://example.com/a", "open bare domain with HTTPS")
+  assert(action({ type: "text", text: "file:///tmp/example" }, "open").edit, "other schemes open as plain text")
+  const updated = Clipboard.parseHistory(JSON.stringify(["newer entry", entries[0].text]), dir)
+  assert(updated[0].text !== paste.input, "new clipboard history can reuse the visible entry's index")
+  eq(action(Clipboard.entryAt(entries, rows[0].target), "copy").input,
+     entries[0].text, "a reused disk index cannot replace the visible snapshot entry")
+  eq(action(null, "paste"), null, "no entry, no command")
+  eq(action(entries[0], "other"), null, "unknown action, no command")
+  eq(action({ type: "image", path: png, mime: "--help" }, "paste"), null,
      "a forged mime is refused")
   eq(Clipboard.helpersCheckCommand(bin), ["timeout", "-k", "1", "2", "test",
-     "-x", bin + "/omarchy-clipboard-paste-text", "-a", "-x", bin + "/omarchy-clipboard-paste-file",
-     "-a", "-x", bin + "/omarchy-clipboard-open"], "helper check")
+     "-x", bin + "/omarchy-clipboard-paste-file"], "helper check")
+
+  // Run the real action commands without touching the desktop or clipboard.
+  const { spawnSync } = require("child_process")
+  const temp = fs.mkdtempSync(path.join(require("os").tmpdir(), "omni-clipboard-test-"))
+  try {
+    fs.writeFileSync(path.join(temp, "wl-copy"), '#!/bin/sh\ncat > "$TMPDIR/copied"\n', { mode: 0o700 })
+    fs.writeFileSync(path.join(temp, "wtype"), '#!/bin/sh\nprintf "%s\\n" "$@" > "$TMPDIR/keys"\n', { mode: 0o700 })
+    const run = ({ command, input }) => spawnSync(command[0], command.slice(1), {
+      input, encoding: "utf8", env: { ...process.env, PATH: temp + ":" + process.env.PATH, TMPDIR: temp }
+    })
+    const text = "--copy-only\nCafé\n" + "x".repeat(140000) + "\n\n"
+    const entry = { type: "text", text }
+    eq(run(action(entry, "copy")).status, 0, "text copy succeeds")
+    eq(fs.readFileSync(path.join(temp, "copied"), "utf8") === text, true, "copy preserves large text verbatim")
+    assert(!fs.existsSync(path.join(temp, "keys")), "copy does not inject keys")
+    eq(run(paste).status, 0, "snapshot paste succeeds")
+    eq(fs.readFileSync(path.join(temp, "copied"), "utf8"), paste.input, "paste copies the selected text")
+    eq(fs.readFileSync(path.join(temp, "keys"), "utf8"), "-M\nshift\n-k\nInsert\n-m\nshift\n", "paste sends Shift+Insert")
+    fs.unlinkSync(path.join(temp, "keys"))
+    fs.writeFileSync(path.join(temp, "wl-copy"), "#!/bin/sh\nexit 1\n")
+    eq(run(paste).status, 1, "copy failure stops paste")
+    assert(!fs.existsSync(path.join(temp, "keys")), "copy failure sends no keys")
+    const edit = run(action(entry, "open"))
+    eq(edit.status, 0, "opening plain text prepares an editor file")
+    eq(path.dirname(edit.stdout), temp, "editor file stays in the temp directory")
+    eq(fs.statSync(edit.stdout).mode & 0o777, 0o600, "editor file is private")
+    eq(fs.readFileSync(edit.stdout, "utf8") === text, true, "editor file preserves the selected text")
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
 
   // Image previews: one stat per read decides which files may be drawn.
   const webp = dir + "sub/c.webp"
@@ -1023,6 +1062,7 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(rows.map(r => r.imagePath), ["", "", "", "", ""], "no thumbnail before the files are checked")
   const shown = Clipboard.clipboardRows(entries, "", { [png]: true, [dir + "x.png"]: true })
   eq(shown.map(r => r.imagePath), ["", "", png, "", ""], "a checked image row carries its file, every other row \"\"")
+  eq(shown.map(r => r.disabled), [false, false, false, false, true], "unverified images stay listed but cannot be acted on")
   assert(shown.every(r => JSON.stringify(Object.keys(r).sort()) === roleSet), "image rows keep the same roles")
   eq(MenuModel.displayRow({}, [], {}, { id: "x", kind: "action", label: "X" }, "", 0, "").imagePath, "",
      "menu rows declare the imagePath role")
