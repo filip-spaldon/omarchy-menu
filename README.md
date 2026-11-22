@@ -405,6 +405,18 @@ omarchy menu summon
 Custom system actions still come from
 `~/.config/omarchy/extensions/omarchy-menu.jsonc`.
 
+To make `Super+Space` switch tabs instead of closing an open Omni menu, add:
+
+```lua
+o.rebind("SUPER + SPACE", "Omarchy menu", hl.dsp.global("omarchy-menu-omni:cycle-root"))
+```
+
+The first press opens the tab set in **Open on**. Further presses switch
+between that tab and System. From another tab, the key first goes to All,
+then switches between All and System. If **Open on** is System, it also
+switches between System and All. Each shortcut switch clears the query;
+use Esc to close.
+
 `Super+Alt+Space` is not changed by the plugin. Since Omarchy 4.5 it opens
 Omarchy's own apps launcher (the dock), and the plugin leaves your Hyprland
 bindings alone. To open Omni's Apps tab there instead, add this to

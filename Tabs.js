@@ -161,6 +161,16 @@ function shortcutSwitchesDestination(route, activeTab, activeMenu) {
   return destination.tab !== activeTab || (destination.tab === "system" && destination.menu !== activeMenu)
 }
 
+// The root key normally cycles between the configured opening tab and
+// System. From an unrelated tab, enter the All/System cycle instead.
+function rootShortcutTab(activeTab, defaultTab, returnTab) {
+  if (activeTab === "system") {
+    if (returnTab === "all" || (returnTab === defaultTab && defaultTab !== "system")) return returnTab
+    return defaultTab === "system" ? "all" : defaultTab
+  }
+  return activeTab === defaultTab || activeTab === "all" ? "system" : "all"
+}
+
 // Section values ride on ListView's own `section` role, so headers cost no
 // rows: the cursor, the row count and every index-based helper stay exactly
 // as they were. The prefix keeps them apart from the menu's "drilldown"
@@ -238,6 +248,7 @@ if (typeof module !== "undefined") {
     cycleTab: cycleTab,
     tabForRoute: tabForRoute,
     shortcutSwitchesDestination: shortcutSwitchesDestination,
+    rootShortcutTab: rootShortcutTab,
     headerSection: headerSection,
     sectionHeader: sectionHeader,
     isHeaderSection: isHeaderSection,

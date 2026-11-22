@@ -56,6 +56,13 @@ assert(!Tabs.shortcutSwitchesDestination("clipboard", "clipboard", "root"), "sam
 assert(Tabs.shortcutSwitchesDestination("trigger.capture", "system", "trigger.share"), "shortcut switches System submenus")
 assert(!Tabs.shortcutSwitchesDestination("trigger.capture", "system", "trigger.capture"), "same submenu shortcut toggles")
 assert(Tabs.shortcutSwitchesDestination("system", "system", "trigger.capture"), "power shortcut switches from another submenu")
+eq(Tabs.rootShortcutTab("all", "all", ""), "system", "root cycles from All to System")
+eq(Tabs.rootShortcutTab("apps", "apps", ""), "system", "root cycles from the configured opening tab to System")
+eq(Tabs.rootShortcutTab("system", "apps", "apps"), "apps", "root returns to the configured opening tab")
+eq(Tabs.rootShortcutTab("clipboard", "apps", ""), "all", "root goes to All from another tab")
+eq(Tabs.rootShortcutTab("all", "apps", ""), "system", "root goes to System after the All fallback")
+eq(Tabs.rootShortcutTab("system", "apps", "all"), "all", "root returns to All when that was the starting tab")
+eq(Tabs.rootShortcutTab("system", "system", ""), "all", "a System default pairs with All")
 eq(Tabs.tabForRoute("capture"), { tab: "system", menu: "capture" }, "other routes open System, drilled in")
 eq(Tabs.tabForRoute("style.theme"), { tab: "system", menu: "style.theme" }, "dotted routes open System, drilled in")
 eq(Tabs.cycleTab("all", 1), "apps", "Tab moves forward")
@@ -626,7 +633,7 @@ eq(Settings.readFileCommand("/p", 10, 3).slice(-3), ["--", "/p", "10"], "read pa
   const fs = require("fs")
   const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
   const names = Array.from(menuSource.matchAll(/GlobalShortcut \{\s*appid: "omarchy-menu-omni"\s*name: "([\w-]+)"/g), m => m[1])
-  eq(names, ["toggle", "toggle-apps", "toggle-windows", "toggle-clipboard", "toggle-system", "toggle-capture",
+  eq(names, ["toggle", "cycle-root", "toggle-apps", "toggle-windows", "toggle-clipboard", "toggle-system", "toggle-capture",
     "toggle-toggles", "toggle-hardware", "toggle-share"], "the menu's global shortcut names")
   eq(/if \(root\.shell\) \{[\s\S]*?root\.shell\.toggle\("omarchy\.menu"[\s\S]*?Quickshell\.execDetached\(\["omarchy-menu", "toggle", route\]\)/.test(menuSource), true,
      "a shortcut falls back to omarchy-menu until the shell API is there")

@@ -97,6 +97,8 @@ Item {
   // keybindings, anything piping options through omarchy-menu-select) is
   // somebody else's picker and keeps its plain list.
   property string activeTab: "all"
+  property string rootShortcutReturnTab: ""
+  onActiveTabChanged: if (root.activeTab !== "system") root.rootShortcutReturnTab = ""
   readonly property bool tabsActive: !root.dmenuActive
   // Command mode: a query that starts with "/" asks for an answer only --
   // `/2+3`, `/100 km to miles`, `/password`, `/shell ls` -- and the list
@@ -260,6 +262,7 @@ Item {
   property var deleteTarget: null
   onOpenedChanged: {
     if (opened) return
+    root.rootShortcutReturnTab = ""
     if (root.launcherPositionMoved) {
       root.launcherPositionMoved = false
       settingsStore.savePosition(root.launcherPosition)
@@ -2463,11 +2466,31 @@ Item {
     Quickshell.execDetached(["omarchy-menu", "toggle", route])
   }
 
+  function cycleFromRootShortcut() {
+    if (!root.opened || root.dmenuActive) {
+      root.toggleFromShortcut("root")
+      return
+    }
+    const from = root.activeTab
+    const defaultTab = Tabs.openTabFor(root.openTab, root.tabOrder, root.disabledTabs)
+    const next = Tabs.rootShortcutTab(from, defaultTab, root.rootShortcutReturnTab)
+    root.filterText = ""
+    root.setTab(next)
+    if (next === "system") root.rootShortcutReturnTab = from
+  }
+
   GlobalShortcut {
     appid: "omarchy-menu-omni"
     name: "toggle"
     description: "Open or close the Omarchy menu"
     onPressed: root.toggleFromShortcut("root")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "cycle-root"
+    description: "Open Omni or switch between search and System"
+    onPressed: root.cycleFromRootShortcut()
   }
 
   GlobalShortcut {
