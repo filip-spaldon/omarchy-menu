@@ -18,9 +18,19 @@ function rowForNumber(firstVisible, count, n) {
   return index >= 0 && index < count ? index : -1
 }
 
+// A modifier pressed on its own (Shift, Ctrl, Alt, AltGr, Super, Meta,
+// Hyper, Caps Lock) is the start of a chord, not a key: it leaves the "?"
+// sheet open. Qt key codes, so this runs under node too.
+var MODIFIER_KEYS = [0x01000020, 0x01000021, 0x01000022, 0x01000023, 0x01000024, 0x01001103,
+                     0x01000053, 0x01000054, 0x01000056, 0x01000057]
+function closesSheet(key) {
+  return MODIFIER_KEYS.indexOf(key) < 0
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     CHEATSHEET: CHEATSHEET,
-    rowForNumber: rowForNumber
+    rowForNumber: rowForNumber,
+    closesSheet: closesSheet
   }
 }

@@ -942,6 +942,12 @@ eq(MenuModel.highlight("campfire.png", "fire", "[", "]"), "camp[fire].png", "one
 eq(KeySheet.rowForNumber(3, 20, 1), 3, "Alt+1 is the first visible row")
 eq(KeySheet.rowForNumber(0, 4, 5), -1, "a number past the list does nothing")
 eq(KeySheet.rowForNumber(0, 20, 0), -1, "Alt+0 is not a row")
+eq(KeySheet.closesSheet(0x01000020), false, "Shift alone leaves the key sheet open")
+eq(KeySheet.closesSheet(0x01000021), false, "Ctrl alone leaves the key sheet open")
+eq(KeySheet.closesSheet(0x01000023), false, "Alt alone leaves the key sheet open")
+eq(KeySheet.closesSheet(0x01000053), false, "Super alone leaves the key sheet open")
+eq(KeySheet.closesSheet(0x01000000), true, "Esc closes the key sheet")
+eq(KeySheet.closesSheet(0x41), true, "a letter closes the key sheet")
 assert(KeySheet.CHEATSHEET.every(g => g.title && g.keys.length > 0 && g.keys.every(k => k.length === 2)), "every key sheet group has keys and descriptions")
 
 // Looks: the switch

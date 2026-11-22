@@ -2983,6 +2983,7 @@ Item {
 
           // "?" on an empty query shows every key; any key closes it again.
           if (root.cheatOpen) {
+            if (!KeySheet.closesSheet(event.key)) return
             root.cheatOpen = false
             event.accepted = true
             return
@@ -3219,7 +3220,7 @@ Item {
             Text {
               id: viewToggle
               textFormat: Text.PlainText
-              visible: root.tabsActive && (root.activeTab === "apps" || (root.activeTab === "all" && !root.compact && !root.commandMode))
+              visible: root.tabsActive && !root.cheatOpen && (root.activeTab === "apps" || (root.activeTab === "all" && !root.compact && !root.commandMode))
               text: (root.activeTab === "all" ? root.allAppsView : root.appsView) === "grid" ? "󰕰" : "󰈚"
               color: root.foreground
               opacity: viewToggleMouse.containsMouse ? 0.9 : 0.5
