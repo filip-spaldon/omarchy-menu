@@ -60,7 +60,8 @@ marks applications that already have windows, and Enter on one switches to it
 instead of starting a second copy. `omarchy-menu toggle windows` opens the tab
 directly.
 
-`Super+Alt+Space` opens Apps directly. Existing routes such as
+`omarchy-menu toggle apps` opens Apps directly (see
+[Install](#install) to put it on `Super+Alt+Space`). Existing routes such as
 `omarchy menu summon style.theme` open the corresponding System submenu.
 External select/input prompts (emoji, timezone, keybindings and other dmenu
 consumers) retain their plain prompt without launcher tabs.
@@ -186,8 +187,8 @@ Unknown or duplicate IDs are ignored; omitted IDs are appended in default order.
 `openTab` picks the tab `Super+Space` opens on: `first` (default) is the first
 tab of `tabOrder` that is on, or name one: `all`, `apps`, `windows`, `system`,
 `files` or `folders`. A named tab that is disabled falls back to the first one
-on. Only `Super+Space` follows it; `Super+Alt+Space` still opens Apps and
-System routes such as `capture` still open System.
+on. Only `Super+Space` follows it; the Apps route (`omarchy-menu toggle apps`)
+still opens Apps and System routes such as `capture` still open System.
 
 To hide file and folder search, set `"disabledTabs": ["files", "folders"]`.
 Their sections also disappear from All and its file searches stop. To keep the
@@ -363,8 +364,8 @@ omarchy plugin add https://github.com/filip-spaldon/omarchy-menu.git --enable
 
 The installer validates the plugin, places it in
 `~/.config/omarchy/plugins/omarchy-menu-omni`, and enables it. Enabling Omni
-replaces the stock menu while keeping existing `Super+Space`, `Super+Alt+Space`
-and `omarchy menu` routes. It also provides an optional bar button, see
+replaces the stock menu while keeping the existing `Super+Space` and
+`omarchy menu` routes. It also provides an optional bar button, see
 [Bar button and settings](#bar-button-and-settings). Verify with:
 
 ```bash
@@ -375,9 +376,18 @@ omarchy menu summon
 Custom system actions still come from
 `~/.config/omarchy/extensions/omarchy-menu.jsonc`.
 
+`Super+Alt+Space` is not changed by the plugin. Since Omarchy 4.5 it opens
+Omarchy's own apps launcher (the dock), and the plugin leaves your Hyprland
+bindings alone. To open Omni's Apps tab there instead, add this to
+`~/.config/hypr/bindings.lua`:
+
+```lua
+o.rebind("SUPER + ALT + SPACE", "Apps (Omni)", "omarchy-menu toggle apps")
+```
+
 For a faster open, bind `Super+Space` and `Super+Alt+Space` to the global
 shortcuts `omarchy-menu-omni:toggle` and `omarchy-menu-omni:toggle-apps`
-(`hl.dsp.global("omarchy-menu-omni:toggle")` in your Hyprland bindings)
+(`hl.dsp.global("omarchy-menu-omni:toggle-apps")` in your Hyprland bindings)
 instead of `omarchy-menu`: the press then reaches the shell without starting
 any process. `omarchy-menu-omni:toggle-windows` opens on the Windows tab.
 
