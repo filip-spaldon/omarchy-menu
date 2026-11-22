@@ -18,7 +18,11 @@ var ROWS = 2
 // of the whole tile block. A lead also carries `tiles`, [{ index, col, row }],
 // what its delegate draws. Only the first run of app rows under the header
 // becomes tiles; the section is contiguous anyway.
-function layout(rows, section, columns) {
+//
+// block (the Apps tab's pinned strip): the whole run is one strip, wrapping
+// onto as many lines of tiles as it needs, all drawn by its first row. Its
+// entries also carry `line` (the tile's line), `lines` and `columns`.
+function layout(rows, section, columns, block) {
   var list = rows || []
   var cols = Math.max(1, Math.floor(Number(columns)) || 1)
   var first = -1
@@ -37,11 +41,16 @@ function layout(rows, section, columns) {
   for (var k = 0; k < list.length; k++) out.push(null)
   for (var j = first; j <= last; j++) {
     var col = (j - first) % cols
-    var lead = j - col
-    var info = { lead: lead, col: col, count: Math.min(cols, last - lead + 1), first: first, last: last }
-    if (col === 0) info.tiles = []
+    var lead = block ? first : j - col
+    var info = { lead: lead, col: col, count: block ? last - first + 1 : Math.min(cols, last - lead + 1), first: first, last: last }
+    if (block) {
+      info.line = Math.floor((j - first) / cols)
+      info.lines = Math.ceil((last - first + 1) / cols)
+      info.columns = cols
+    }
+    if (j === lead) info.tiles = []
     out[j] = info
-    out[lead].tiles.push({ index: j, col: col, row: list[j] })
+    out[lead].tiles.push({ index: j, col: col, line: info.line || 0, row: list[j] })
   }
   return out
 }
@@ -49,9 +58,16 @@ function layout(rows, section, columns) {
 // The height a tile row's delegate takes: the whole strip on its lead, none
 // on the rest. The list still puts `spacing` after each of those empty rows,
 // so the lead gives that much back and the strip ends where it should.
-function stripHeight(info, index, tileHeight, spacing) {
+// A block is `lines` tiles tall, plus `pad` above and below its tiles.
+function stripHeight(info, index, tileHeight, spacing, pad) {
   if (!info || info.lead !== index) return 0
-  return Math.max(0, tileHeight - (info.count - 1) * spacing)
+  return Math.max(0, drawnHeight(info, tileHeight, pad) - (info.count - 1) * spacing)
+}
+
+// How tall the strip a tile belongs to is drawn, from its lead's top.
+function drawnHeight(info, tileHeight, pad) {
+  if (!info) return 0
+  return (info.lines || 1) * tileHeight + 2 * (pad || 0)
 }
 
 // The row the cursor lands on when a move arrives at `index` from outside
@@ -65,9 +81,14 @@ function enter(tiles, index) {
 // Up and Down (delta -1 / 1), wrapping like the list. From a tile: the same
 // column of the next or previous strip (or its last tile, when shorter), and
 // past the block the row after or before it. Into a strip: its first tile.
+// Within a block, the same column of the next or previous line likewise.
 function step(tiles, index, delta, total) {
   if (total <= 0) return 0
   var here = tiles && tiles[index]
+  if (here && here.lines > 1) {
+    var line = here.line + delta
+    if (line >= 0 && line < here.lines) return Math.min(here.last, here.first + line * here.columns + here.col)
+  }
   if (here) {
     var near = delta > 0 ? here.lead + here.count : here.lead - 1
     if (near >= here.first && near <= here.last) {
@@ -93,6 +114,7 @@ if (typeof module !== "undefined") {
     ROWS: ROWS,
     layout: layout,
     stripHeight: stripHeight,
+    drawnHeight: drawnHeight,
     enter: enter,
     step: step,
     side: side

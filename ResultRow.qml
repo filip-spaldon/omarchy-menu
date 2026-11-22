@@ -4,6 +4,7 @@ import qs.Commons
 import qs.Ui
 import "Windows.js" as Windows
 import "Clipboard.js" as Clipboard
+import "AllTiles.js" as AllTiles
 
 // One row of the result list: icon or app icon, label, detail line,
 // right-hand text (a file's mtime) and a chevron for submenus. Roles come
@@ -38,6 +39,10 @@ BorderSurface {
   // content and highlight stay hidden; each tile has its own.
   readonly property var tileInfo: row.menu.allTileAt(row.index, row.menu.layoutSerial)
   readonly property bool tiled: row.tileInfo !== null
+  // The Apps tab's pinned strip (AllTiles.layout's block): its lead draws
+  // every line of it, inset by the padding inside its outline.
+  readonly property bool pinnedStrip: row.tiled && row.tileInfo.lines !== undefined
+  readonly property real stripPad: row.pinnedStrip ? row.menu.pinnedStripPad : 0
 
   readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex && row.kind !== "example"
     && (!row.menu.systemTwoPane || row.menu.systemPane === "right") && !row.tiled
@@ -251,6 +256,17 @@ BorderSurface {
     }
   }
 
+  // The pinned strip's tint and outline, as tall as all its lines.
+  Rectangle {
+    visible: row.pinnedStrip && !!row.tileInfo.tiles
+    width: row.width
+    height: row.pinnedStrip ? AllTiles.drawnHeight(row.tileInfo, row.menu.allTileHeight, row.stripPad) : 0
+    radius: row.menu.cornerRadius
+    color: row.menu.pinnedBackground
+    border.width: Math.max(1, Style.space(1))
+    border.color: row.menu.pinnedBorder
+  }
+
   // The strip: up to `columns` tiles across the row's width, the whole tile
   // height tall (the row itself is shorter on purpose; see
   // AllTiles.stripHeight). Only a lead carries tiles.
@@ -260,9 +276,10 @@ BorderSurface {
     delegate: Item {
       id: cell
       required property var modelData
-      readonly property real cellWidth: row.width / Math.max(1, row.menu.allTileColumns)
+      readonly property real cellWidth: (row.width - 2 * row.stripPad) / Math.max(1, row.menu.allTileColumns)
 
-      x: cell.modelData.col * cell.cellWidth
+      x: row.stripPad + cell.modelData.col * cell.cellWidth
+      y: row.stripPad + cell.modelData.line * row.menu.allTileHeight
       width: cell.cellWidth
       height: row.menu.allTileHeight
 

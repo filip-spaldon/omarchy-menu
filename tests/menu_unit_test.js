@@ -10,6 +10,7 @@ const path = require("path")
 const root = path.join(__dirname, "..")
 const Tabs = require(path.join(root, "Tabs.js"))
 const AllTiles = require(path.join(root, "AllTiles.js"))
+const Pinned = require(path.join(root, "Pinned.js"))
 const FileSearch = require(path.join(root, "FileSearch.js"))
 const MenuModel = require(path.join(root, "MenuModel.js"))
 const Settings = require(path.join(root, "Settings.js"))
@@ -161,6 +162,110 @@ eq(Tabs.sectionHeader("bogus"), "", "sectionHeader of an unknown id is empty")
   eq(AllTiles.side(t, 6, 1), -1, "Left and Right leave list rows alone")
   eq(AllTiles.ROWS * 3 >= 5, true, "the Apps section may fill more than one strip")
   eq(Settings.ALL_APPS_VIEWS, ["list", "grid"], "allAppsView is list or grid, list first (the default)")
+}
+
+// ------------------------------------------------------------ pinned apps --
+
+{
+  // state.json value: desktop ids only, deduped, capped, order kept.
+  eq(Pinned.normalize(["firefox", "org.gnome.Nautilus", "firefox", "chrome-abc-Default"]),
+     ["firefox", "org.gnome.Nautilus", "chrome-abc-Default"], "pins are deduped, first one kept, in pin order")
+  eq(Pinned.normalize(["ok", 3, null, "", "../etc", "a b", "-x", "x;rm", "<b>", "y"]), ["ok", "y"],
+     "anything but a desktop id is dropped")
+  eq(Pinned.normalize("firefox"), [], "a non-array is no pins")
+  eq(Pinned.normalize(undefined), [], "a missing key is no pins")
+  eq(Pinned.normalize(["a".repeat(256)]), [], "an overlong id is dropped")
+  const many = Array.from({ length: 80 }, (_, i) => "app" + i)
+  eq(Pinned.normalize(many).length, Pinned.MAX, "at most MAX pins are kept")
+  eq(Pinned.MAX, 50, "MAX is 50")
+  assert(Pinned.isNormal(["a", "b"]), "a clean list is normal")
+  assert(!Pinned.isNormal(["a", "a"]), "a list with duplicates is rewritten")
+  assert(!Pinned.isNormal("a"), "a non-array is rewritten")
+  assert(Pinned.isNormal([]), "no pins is normal")
+
+  // Pin and unpin.
+  eq(Pinned.toggle([], "firefox"), ["firefox"], "pinning appends")
+  eq(Pinned.toggle(["a", "b"], "c"), ["a", "b", "c"], "a new pin goes last: pin order")
+  eq(Pinned.toggle(["a", "b", "c"], "b"), ["a", "c"], "toggling a pinned id unpins it")
+  eq(Pinned.toggle(["a"], "bad id"), ["a"], "an invalid id is not pinned")
+  eq(Pinned.toggle(many.slice(0, 50), "new"), many.slice(0, 50), "a full list takes no more pins")
+  eq(Pinned.toggle(many.slice(0, 50), "app3").length, 49, "a full list still unpins")
+  const before = ["a", "b"]
+  Pinned.toggle(before, "c")
+  eq(before, ["a", "b"], "toggle does not change its input")
+  assert(Pinned.isPinned(["a", "b"], "b") && !Pinned.isPinned(["a"], "b"), "isPinned")
+
+  // Reorder among the shown pins.
+  eq(Pinned.move(["a", "b", "c"], "b", -1), ["b", "a", "c"], "earlier swaps with the one before")
+  eq(Pinned.move(["a", "b", "c"], "b", 1), ["a", "c", "b"], "later swaps with the one after")
+  eq(Pinned.move(["a", "b", "c"], "a", -1), ["a", "b", "c"], "the first stays first")
+  eq(Pinned.move(["a", "b", "c"], "c", 1), ["a", "b", "c"], "the last stays last")
+  eq(Pinned.move(["a", "gone", "c"], "c", -1, ["a", "c"]), ["c", "gone", "a"],
+     "a hidden pin between two shown ones does not swallow the move")
+  eq(Pinned.move(["a", "b"], "x", 1), ["a", "b"], "an id not pinned does not move")
+  eq(Pinned.move(["a", "gone"], "gone", -1, ["a"]), ["a", "gone"], "an id not shown does not move")
+
+  // What the strip shows.
+  const installed = id => ["a", "c", "d"].indexOf(id) >= 0
+  eq(Pinned.shown(["c", "gone", "a"], installed), ["c", "a"], "only installed pins show, in pin order")
+  eq(Pinned.shown(["gone"], installed), [], "no installed pin: no strip")
+  eq(Pinned.shown([], installed), [], "no pins: no strip")
+  eq(Pinned.normalize(["c", "gone", "a"]), ["c", "gone", "a"], "uninstalled pins stay saved")
+
+  // Grid padding and moves over it.
+  eq([Pinned.gridPadding(0, 4), Pinned.gridPadding(1, 4), Pinned.gridPadding(4, 4), Pinned.gridPadding(5, 4)],
+     [0, 3, 0, 3], "the grid's pinned rows are padded to whole rows")
+  eq(Pinned.gridPadding(3, 0), 0, "one column needs no padding")
+  // 2 pinned, 2 pads, then apps at 4.. (4 columns, 10 cells).
+  const selectable = i => i !== 2 && i !== 3
+  eq(Pinned.gridStep(1, 1, 10, selectable), 4, "Right past the last pin skips the empty cells")
+  eq(Pinned.gridStep(4, -1, 10, selectable), 1, "Left from the first app lands on the last pin")
+  eq(Pinned.gridStep(7, -4, 10, selectable), 1, "Up under an empty cell lands on the last pin")
+  eq(Pinned.gridStep(6, -4, 10, selectable), 1, "Up under the other empty cell too")
+  eq(Pinned.gridStep(0, 4, 10, selectable), 4, "Down from a pin keeps its column")
+  eq(Pinned.gridStep(9, 1, 10, selectable), 9, "the grid does not wrap at the end")
+  eq(Pinned.gridStep(0, -1, 10, selectable), 0, "nor at the start")
+  eq(Pinned.gridStep(0, 1, 0, selectable), 0, "an empty grid steps nowhere")
+  eq(Pinned.gridStep(1, 1, 4, selectable), 1, "nothing past the pads: stays put")
+  eq(Pinned.gridStep(3, 1, 8, () => true), 4, "without pads a step is the plain grid's")
+
+  // A pad row has exactly a row's roles (syncRows keeps one role set).
+  const entry = { id: "apps.firefox", kind: "app", icon: "", appId: "firefox", label: "Firefox" }
+  const appRow = MenuModel.displayRow({ "apps.firefox": entry }, ["apps.firefox"], {}, {}, entry, "", 0, "pinned")
+  eq(Object.keys(Pinned.padRow(0, "pinned")).sort(), Object.keys(appRow).sort(), "a pad row carries every row role")
+  const pad = Pinned.padRow(2, "pinned")
+  eq([pad.disabled, pad.kind, pad.section, pad.itemId], [true, "pinpad", "pinned", "pinned.pad.2"],
+     "a pad is disabled, in the pinned section, with its own id")
+
+  // The list's pinned block: one strip on several lines of tiles.
+  const app = id => ({ itemId: id, kind: "app", section: "pinned" })
+  const rest = id => ({ itemId: id, kind: "app", section: "" })
+  // 5 pins (3 columns: lines of 3 and 2), then the alphabetical list.
+  const rows = [app("p1"), app("p2"), app("p3"), app("p4"), app("p5"), rest("a"), rest("b")]
+  const t = AllTiles.layout(rows, "pinned", 3, true)
+  eq(t.slice(0, 5).map(x => [x.lead, x.col, x.line, x.count]),
+     [[0, 0, 0, 5], [0, 1, 0, 5], [0, 2, 0, 5], [0, 0, 1, 5], [0, 1, 1, 5]], "a block has one lead for all its lines")
+  eq([t[0].lines, t[0].columns], [2, 3], "a block knows its lines and columns")
+  eq(t[0].tiles.map(x => [x.index, x.col, x.line]), [[0, 0, 0], [1, 1, 0], [2, 2, 0], [3, 0, 1], [4, 1, 1]],
+     "the lead draws every tile of the block")
+  eq([t[5], t[6]], [null, null], "the list under the strip stays rows")
+  eq(AllTiles.layout([rest("a")], "pinned", 3, true), [], "no pinned rows: no strip")
+  eq(AllTiles.stripHeight(t[0], 0, 100, 4, 6), 2 * 100 + 12 - 4 * 4, "a block is its lines tall plus padding, less the spacing given back")
+  eq(AllTiles.stripHeight(t[2], 2, 100, 4, 6), 0, "the block's other rows take no room")
+  eq(AllTiles.drawnHeight(t[3], 100, 6), 212, "the block is drawn its full height")
+  eq(AllTiles.drawnHeight(AllTiles.layout(rows, "pinned", 3)[0], 100), 100, "a plain strip is drawn one tile tall")
+  const step = (i, d) => AllTiles.step(t, i, d, rows.length)
+  eq(step(1, 1), 4, "Down in a block keeps the column on the next line")
+  eq(step(2, 1), 4, "Down onto a shorter line takes its last tile")
+  eq(step(4, -1), 1, "Up in a block keeps the column on the line above")
+  eq(step(4, 1), 5, "Down from the last line leaves the block")
+  eq(step(0, -1), 6, "Up from the first line wraps like the list")
+  eq(step(5, -1), 0, "Up into the block takes its first tile")
+  eq(AllTiles.side(t, 2, 1), 3, "Right wraps onto the block's next line")
+  eq(AllTiles.side(t, 4, 1), 4, "Right stops at the last pin")
+  const one = AllTiles.layout([app("p1"), app("p2"), rest("a")], "pinned", 3, true)
+  eq([one[0].lines, AllTiles.step(one, 1, 1, 3), AllTiles.step(one, 2, -1, 3)], [1, 2, 0],
+     "a one-line block steps like a strip")
 }
 
 // ------------------------------------------------------------ file search --
