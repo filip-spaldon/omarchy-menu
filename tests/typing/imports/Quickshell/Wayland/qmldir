@@ -1,3 +1,0 @@
-module Quickshell.Wayland
-WlrLayer 1.0 WlrLayer.qml
-WlrKeyboardFocus 1.0 WlrKeyboardFocus.qml
