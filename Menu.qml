@@ -99,6 +99,24 @@ Item {
   // keybindings, anything piping options through omarchy-menu-select) is
   // somebody else's picker and keeps its plain list.
   property string activeTab: "all"
+  // The screen the menu is on: the focused monitor when it opens, or when a
+  // shortcut is pressed from another monitor while it is open.
+  property var menuScreen: null
+  readonly property bool onFocusedMonitor: !root.menuScreen || !Hyprland.focusedMonitor
+    || root.menuScreen.name === Hyprland.focusedMonitor.name
+
+  function focusedScreen() {
+    var monitor = Hyprland.focusedMonitor
+    if (!monitor) return null
+    var screens = Quickshell.screens
+    for (var i = 0; i < screens.length; i++) if (screens[i].name === monitor.name) return screens[i]
+    return null
+  }
+
+  function followFocusedMonitor() {
+    var target = root.focusedScreen()
+    if (target) root.menuScreen = target
+  }
   property string rootShortcutReturnTab: ""
   onActiveTabChanged: if (root.activeTab !== "system") root.rootShortcutReturnTab = ""
   readonly property bool tabsActive: !root.dmenuActive
@@ -2605,6 +2623,7 @@ Item {
     // Guards are evaluated when System rows are first shown in this open,
     // not here: see ensureGuards.
     root.guardsCurrent = false
+    root.followFocusedMonitor()
     opened = true
     rebuildDisplay()
     invalidateVolatileProvider(activeMenu)
@@ -2653,6 +2672,7 @@ Item {
     root.disarmPointer()
     panel.cardTop = -1
     panel.maxRowsHeight = -1
+    root.followFocusedMonitor()
     opened = true
     rebuildDisplay()
 
@@ -2711,6 +2731,17 @@ Item {
   // on the VM before the shell hears of it). Until the host has handed this
   // plugin its shell API (on the first summon), a press takes the old way.
   function toggleFromShortcut(route) {
+    // Open on another monitor: the first press brings it here (and to the
+    // shortcut's destination) rather than closing it out of sight.
+    if (root.opened && !root.onFocusedMonitor) {
+      if (route === "root" || root.dmenuActive) {
+        root.followFocusedMonitor()
+        panel.primeFocus()
+      } else {
+        root.openRoute(route)
+      }
+      return
+    }
     // The host's toggle closes any visible panel before looking at its
     // route. Handle a different tab or System submenu without closing.
     if (root.opened && !root.dmenuActive && Tabs.shortcutSwitchesDestination(route, root.activeTab, root.activeMenu)) {
@@ -2725,7 +2756,7 @@ Item {
   }
 
   function cycleFromRootShortcut() {
-    if (!root.opened || root.dmenuActive) {
+    if (!root.opened || root.dmenuActive || !root.onFocusedMonitor) {
       root.toggleFromShortcut("root")
       return
     }
@@ -3275,14 +3306,34 @@ Item {
     // monitors unclickable while the menu was up (Ui/KeyboardPanel.qml does
     // the same). On OnDemand a click elsewhere goes to that window and the
     // menu stays; a click on this screen outside the card still closes it.
+    //
+    // The keyboard follows the focused monitor (the cursor with
+    // follow_mouse, or a workspace switch): on another monitor the menu lets
+    // go of it entirely, so typing there never lands in the menu, and coming
+    // back primes it again, so typing here does without a click.
     property bool focusPrimed: false
-    WlrLayershell.keyboardFocus: !panel.visible ? WlrKeyboardFocus.None
+    screen: root.menuScreen
+    WlrLayershell.keyboardFocus: !panel.visible || !root.onFocusedMonitor ? WlrKeyboardFocus.None
       : panel.focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
 
     function primeFocus() {
       panel.focusPrimed = false
       focusPrimeTimer.restart()
+    }
+
+    Connections {
+      target: root
+      function onOnFocusedMonitorChanged() {
+        if (!panel.visible) return
+        if (root.onFocusedMonitor) {
+          panel.primeFocus()
+          Qt.callLater(function() { if (panel.visible) keyCatcher.forceActiveFocus() })
+        } else {
+          focusPrimeTimer.stop()
+          panel.focusPrimed = false
+        }
+      }
     }
 
     Timer {

@@ -1559,6 +1559,18 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
          "plain Tab does not switch tabs under a / command")
 }
 
+// ------------------------------------------------ multi-monitor focus --
+{
+  const src = require("fs").readFileSync(path.join(root, "Menu.qml"), "utf8")
+  assert(/keyboardFocus: !panel\.visible \|\| !root\.onFocusedMonitor \? WlrKeyboardFocus\.None/.test(src),
+         "the menu lets go of the keyboard while another monitor is focused")
+  assert(/panel\.focusPrimed \? WlrKeyboardFocus\.OnDemand : WlrKeyboardFocus\.Exclusive/.test(src),
+         "Exclusive only as a brief prime, then OnDemand")
+  assert(/function onOnFocusedMonitorChanged\(\)[\s\S]*?panel\.primeFocus\(\)/.test(src),
+         "returning to the menu's monitor takes the keyboard back")
+  assert(/root\.followFocusedMonitor\(\)\n    opened = true/.test(src), "the menu opens on the focused monitor")
+}
+
 console.log("")
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)
