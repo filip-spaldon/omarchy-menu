@@ -13,12 +13,12 @@ GridView {
 
   readonly property int columns: Math.max(1, Math.floor(width / cellWidth))
 
-  cellWidth: Math.max(1, Math.min(Math.round(Style.space(112) * grid.menu.menuFontScale), parent ? parent.width : 100000))
-  cellHeight: Math.round(Style.space(104) * grid.menu.menuFontScale)
+  cellWidth: Math.max(1, Math.min(grid.menu.tileWidth, parent ? parent.width : 100000))
+  cellHeight: grid.menu.tileHeight
   clip: true
   boundsBehavior: Flickable.StopAtBounds
 
-  delegate: AppTile {
+  delegate: LookTile {
     required property int index
     required property string label
     required property string appIcon
@@ -31,6 +31,8 @@ GridView {
     tileIcon: appIcon
     tileKind: kind
     tileAppId: appId
+    tileCol: index % grid.columns
+    tileRow: Math.floor(index / grid.columns)
     width: grid.cellWidth - Style.space(6)
     height: grid.cellHeight - Style.space(6)
   }

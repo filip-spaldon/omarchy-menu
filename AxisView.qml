@@ -16,6 +16,13 @@ Item {
   // A backdrop shader (none yet) would draw the ember's light; the disc
   // then steps aside.
   property bool hasBackdrop: false
+  // The app tiles: All's strips are as wide as the list, and the Apps grid
+  // has as many columns as fit there (Menu.qml reads both).
+  readonly property real tileAreaWidth: list.width
+  readonly property int gridColumns: grid.columns
+  readonly property bool gridShown: axis.menu.gridActive
+  // Where in a tile the horizontal line crosses: under the icon (AxisTile).
+  readonly property real tileLine: Style.space(12) + Math.round(Style.space(36) * axis.menu.menuFontScale) + Style.space(5)
 
   // Where the lines cross, from the card position: left/centre/right and
   // top/middle/bottom map to thirds and the middle.
@@ -197,6 +204,7 @@ Item {
   // setPreferredHighlightBegin), so the pinning is done here, only while shown.
   ListView {
     id: list
+    visible: !axis.gridShown
     opacity: axis.leftPane ? 0.55 : 1
     x: axis.crossX + Style.space(20)
     width: Math.min(Style.space(760), axis.width - x - Style.space(48))
@@ -214,8 +222,11 @@ Item {
     property bool gliding: false
 
     function pin(glide) {
-      if (!axis.visible || list.count === 0) return
+      if (!axis.visible || list.count === 0 || axis.gridShown) return
       var index = Math.max(0, Math.min(axis.menu.selectedIndex, list.count - 1))
+      // An app tile of All's strips: the strip (its first row) is what crosses.
+      var tile = axis.menu.allTileAt(index, axis.menu.layoutSerial)
+      if (tile) index = tile.lead
       var item = list.itemAtIndex(index)
       if (!item) {
         list.positionViewAtIndex(index, ListView.Center)
@@ -223,7 +234,7 @@ Item {
       }
       if (!item) return
       list.gliding = glide
-      list.contentY = item.y + item.height / 2 - axis.crossY
+      list.contentY = item.y + (tile ? axis.tileLine : item.height / 2) - axis.crossY
       list.gliding = false
     }
 
@@ -277,6 +288,66 @@ Item {
     }
 
     delegate: ResultRow { menu: axis.menu }
+  }
+
+  // The Apps grid: rows of tiles hanging off the vertical line, the selected
+  // one's row held on the horizontal line, as the list's selected row is. The
+  // grid moves, the crossing stays.
+  GridView {
+    id: grid
+    visible: axis.gridShown
+    readonly property int columns: Math.max(1, Math.floor(width / cellWidth))
+    x: list.x
+    width: Math.max(cellWidth, Math.floor(list.width / cellWidth) * cellWidth)
+    y: 0
+    height: axis.height
+    cellWidth: axis.menu.tileWidth
+    cellHeight: axis.menu.tileHeight
+    model: axis.gridShown ? axis.model : null
+    clip: true
+    interactive: false
+    topMargin: axis.crossY
+    bottomMargin: axis.height - axis.crossY
+    property bool gliding: false
+    Behavior on contentY { enabled: grid.gliding; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+    function pin(glide) {
+      if (!axis.visible || !axis.gridShown || grid.count === 0) return
+      var row = Math.floor(Math.max(0, Math.min(axis.menu.selectedIndex, grid.count - 1)) / grid.columns)
+      grid.gliding = glide
+      // The line runs just under the icons; the names hang below it.
+      grid.contentY = row * grid.cellHeight + axis.tileLine - axis.crossY
+      grid.gliding = false
+    }
+    Connections {
+      target: axis.menu
+      function onSelectedIndexChanged() { Qt.callLater(grid.pin, true) }
+    }
+    onCountChanged: Qt.callLater(grid.pin, false)
+    onColumnsChanged: Qt.callLater(grid.pin, false)
+    onVisibleChanged: if (visible) Qt.callLater(grid.pin, false)
+    Connections {
+      target: axis
+      function onCrossYChanged() { Qt.callLater(grid.pin, false) }
+    }
+
+    delegate: LookTile {
+      required property int index
+      required property string label
+      required property string appIcon
+      required property string kind
+      required property string appId
+      menu: axis.menu
+      tileIndex: index
+      tileLabel: label
+      tileIcon: appIcon
+      tileKind: kind
+      tileAppId: appId
+      tileCol: index % grid.columns
+      tileRow: Math.floor(index / grid.columns)
+      width: grid.cellWidth - Style.space(6)
+      height: grid.cellHeight - Style.space(6)
+    }
   }
 
   // System's categories, right-aligned to the vertical line, the chosen one

@@ -284,30 +284,12 @@ BorderSurface {
   // The strip: up to `columns` tiles across the row's width, the whole tile
   // height tall (the row itself is shorter on purpose; see
   // AllTiles.stripHeight). Only a lead carries tiles.
-  Repeater {
-    model: row.tiled && row.tileInfo.tiles ? row.tileInfo.tiles : []
-
-    delegate: Item {
-      id: cell
-      required property var modelData
-      readonly property real cellWidth: row.width / Math.max(1, row.menu.allTileColumns)
-
-      x: cell.modelData.col * cell.cellWidth
-      width: cell.cellWidth
-      height: row.menu.allTileHeight
-
-      AppTile {
-        menu: row.menu
-        tileIndex: cell.modelData.index
-        tileLabel: cell.modelData.row.label
-        tileIcon: cell.modelData.row.appIcon
-        tileKind: cell.modelData.row.kind
-        tileAppId: cell.modelData.row.appId
-        width: parent.width - Style.space(6)
-        height: parent.height - Style.space(6)
-        anchors.centerIn: parent
-      }
-    }
+  TileStrip {
+    visible: row.tiled
+    menu: row.menu
+    info: row.tiled ? row.tileInfo : null
+    width: row.width
+    height: row.menu.allTileHeight
   }
 
   MouseArea {

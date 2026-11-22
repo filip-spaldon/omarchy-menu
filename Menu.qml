@@ -142,9 +142,21 @@ Item {
   property string allAppsView: "list"
   property var allTiles: []
   readonly property bool allTilesShown: root.allTiles.length > 0
+  // An app tile's size, per look (lookStates): the Apps grid's cells and
+  // All's strips both use it.
+  property int tileBaseWidth: 112
+  property int tileBaseHeight: 104
+  readonly property int tileWidth: Math.round(Style.space(root.tileBaseWidth) * root.menuFontScale)
+  readonly property int tileHeight: Math.round(Style.space(root.tileBaseHeight) * root.menuFontScale)
+  // A full-screen view lays the tiles out in its own column (its
+  // tileAreaWidth) and says how many fit across its grid (gridColumns).
+  readonly property real tileAreaWidth: root.overlayActive && lookViewLoader.item && lookViewLoader.item.tileAreaWidth > 0
+    ? lookViewLoader.item.tileAreaWidth : resultList.width
+  readonly property int gridColumns: root.overlayActive && lookViewLoader.item && lookViewLoader.item.gridColumns > 0
+    ? lookViewLoader.item.gridColumns : appGrid.columns
   // Tiles as wide as the Apps grid's at least, stretched to fill the row.
-  readonly property int allTileColumns: Math.max(1, Math.floor(resultList.width / Math.max(1, Math.round(Style.space(112) * root.menuFontScale))))
-  readonly property int allTileHeight: Math.round(Style.space(104) * root.menuFontScale)
+  readonly property int allTileColumns: Math.max(1, Math.floor(root.tileAreaWidth / Math.max(1, root.tileWidth)))
+  readonly property int allTileHeight: root.tileHeight
   // The strips and the Apps section's size follow the column count. (A new
   // allAppsView arrives with a state.json read, which rebuilds anyway.)
   onAllTileColumnsChanged: if (root.allTiles.length > 0 && !root.dmenuActive) root.rebuildDisplay(true)
@@ -462,7 +474,7 @@ Item {
   // card comes back.
   property string lookView: ""
   readonly property bool overlayActive: root.lookView !== "" && root.tabsActive && !aiCtl.isAiMode
-    && !root.gridActive && !root.allTilesShown && !root.commandMode && !root.cheatOpen
+    && !root.commandMode && !root.cheatOpen
 
   // One State per look, all in this one group: switching from one look to
   // another then never leaves the first one's values behind.
@@ -492,6 +504,8 @@ Item {
           root.headerIndent: root.rowReservedBorderLeft + Style.space(30)
           root.categoryIcons: false
           root.categoryDim: 0.55
+          root.tileBaseWidth: 160         // names only, a grid of words
+          root.tileBaseHeight: 44
         }
       },
       // Wayfinder: the results as a transit map.
@@ -508,17 +522,19 @@ Item {
           root.filterTabStyle: "word"
           root.headerSpacing: 2
           root.headerIndent: Style.space(30) // after the interchange hexagon
+          root.tileBaseWidth: 124            // stops on a line
+          root.tileBaseHeight: 116
         }
       },
       // Axis: no card, two hairlines across the screen (AxisView.qml).
       State {
         when: root.drawnLook === "axis"
-        PropertyChanges { root.lookView: "AxisView.qml" }
+        PropertyChanges { root.lookView: "AxisView.qml"; root.tileBaseWidth: 132; root.tileBaseHeight: 112 }
       },
       // Konstrukt: every result also a Suprematist shape (KonstruktView.qml).
       State {
         when: root.drawnLook === "konstrukt"
-        PropertyChanges { root.lookView: "KonstruktView.qml" }
+        PropertyChanges { root.lookView: "KonstruktView.qml"; root.tileBaseWidth: 156; root.tileBaseHeight: 46 }
       },
     ]
   }
@@ -3158,7 +3174,7 @@ Item {
             event.accepted = true
           } else if (root.gridActive && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
                      || event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
-            var cols = appGrid.columns
+            var cols = root.gridColumns
             root.gridMove(event.key === Qt.Key_Left ? -1 : event.key === Qt.Key_Right ? 1
                           : event.key === Qt.Key_Up ? -cols : cols)
             event.accepted = true
@@ -3824,7 +3840,7 @@ Item {
               // reaches the menu through the list (lookMenu).
               readonly property var lookMenu: root
               readonly property Component lookRowComponent: root.lookRows ? Qt.createComponent(Qt.resolvedUrl(root.lookRows)) : null
-              delegate: !root.allTilesShown && lookRowComponent && lookRowComponent.status === Component.Ready ? lookRowComponent : resultRowDelegate
+              delegate: lookRowComponent && lookRowComponent.status === Component.Ready ? lookRowComponent : resultRowDelegate
               Component { id: resultRowDelegate; ResultRow { menu: root } }
             }
 

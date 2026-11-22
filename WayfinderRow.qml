@@ -29,8 +29,12 @@ BorderSurface {
   required property int childCount
   required property string trailText
 
+  // An app of All's Apps section shown as a tile (AllTiles.js): the strip's
+  // first row draws the whole strip, the rest take no room.
+  readonly property var tileInfo: row.menu.allTileAt(row.index, row.menu.layoutSerial)
+  readonly property bool tiled: row.tileInfo !== null
   readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex && row.kind !== "example"
-    && (!row.menu.systemTwoPane || row.menu.systemPane === "right")
+    && (!row.menu.systemTwoPane || row.menu.systemPane === "right") && !row.tiled
   // Window rows borrow their application's icon when a desktop entry
   // matches the window class, and fall back to a glyph when none does.
   readonly property bool isApp: row.kind === "app" || (row.kind === "window" && row.appIcon.length > 0)
@@ -62,7 +66,7 @@ BorderSurface {
   // Command examples are a read-only hint.
   opacity: row.kind === "example" ? 0.7 : 1
   width: ListView.view.width
-  height: row.menu.rowHeightForDetail(row.detail, row.kind)
+  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind)
   radius: row.menu.rowRadius
   // The selected row is filled with the theme's selection colours.
   color: row.hasCursor ? row.menu.selectedBackground : "transparent"
@@ -72,212 +76,230 @@ BorderSurface {
   // Menu.qml). Stops above the selection are lit, as the route has passed
   // them; the selected stop is an interchange ring that opens with a small
   // overshoot as the route pulls in.
-  Rectangle {
-    id: stopRing
-    readonly property int size: row.hasCursor ? Style.space(14) : Style.space(8)
-    width: size
-    height: size
-    radius: size / 2
-    x: Math.round((row.gutter - size) / 2)
-    y: Math.round(row.labelCenterY - size / 2)
-    color: row.menu.background
-    border.width: row.hasCursor ? Style.space(3) : Math.max(1, Style.space(2))
-    border.color: row.hasCursor || (row.menu.cursorActive && row.index < row.menu.selectedIndex)
-      ? Color.accent : Util.alpha(row.menu.foreground, 0.45)
-
-    // A little under the ring's size, up past it and settling. Never below
-    // a plain stop or the train's width (from 0.45 the new ring was a dot
-    // inside the train's end for frames). Leaving is instant.
-    NumberAnimation {
-      id: ringPop
-      target: stopRing
-      property: "scale"
-      from: 0.8
-      to: 1
-      duration: 260
-      easing.type: Easing.OutBack
-      easing.overshoot: 3
-    }
-    readonly property bool selected: row.hasCursor
-    onSelectedChanged: {
-      ringPop.stop()
-      stopRing.scale = 1
-      if (stopRing.selected) ringPop.start()
-    }
+  // A row of All's app tiles draws the strip instead (TileStrip.qml); the
+  // row's own content stays hidden.
+  Item {
+    id: body
+    anchors.fill: parent
+    visible: !row.tiled
 
     Rectangle {
-      visible: row.hasCursor
-      anchors.centerIn: parent
-      width: Style.space(4)
-      height: width
-      radius: width / 2
-      color: Color.accent
-    }
-  }
+      id: stopRing
+      readonly property int size: row.hasCursor ? Style.space(14) : Style.space(8)
+      width: size
+      height: size
+      radius: size / 2
+      x: Math.round((row.gutter - size) / 2)
+      y: Math.round(row.labelCenterY - size / 2)
+      color: row.menu.background
+      border.width: row.hasCursor ? Style.space(3) : Math.max(1, Style.space(2))
+      border.color: row.hasCursor || (row.menu.cursorActive && row.index < row.menu.selectedIndex)
+        ? Color.accent : Util.alpha(row.menu.foreground, 0.45)
 
-  Text {
-    id: iconText
-    textFormat: Text.PlainText
-    visible: row.hasIcon && !row.isApp
-    text: row.icon
-    color: row.menu.foreground
-    font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
-    font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.icon : Style.font.iconLarge)
-    width: row.menu.iconSlotWidth
-    horizontalAlignment: Text.AlignHCenter
-    verticalAlignment: Text.AlignVCenter
-    anchors.left: parent.left
-    anchors.leftMargin: row.gutter + Style.space(4)
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-  }
+      // A little under the ring's size, up past it and settling. Never below
+      // a plain stop or the train's width (from 0.45 the new ring was a dot
+      // inside the train's end for frames). Leaving is instant.
+      NumberAnimation {
+        id: ringPop
+        target: stopRing
+        property: "scale"
+        from: 0.8
+        to: 1
+        duration: 260
+        easing.type: Easing.OutBack
+        easing.overshoot: 3
+      }
+      readonly property bool selected: row.hasCursor
+      onSelectedChanged: {
+        ringPop.stop()
+        stopRing.scale = 1
+        if (stopRing.selected) ringPop.start()
+      }
 
-  Image {
-    id: appIconImage
-    visible: row.isApp
-    width: row.menu.scaledFont(Style.font.iconLarge)
-    height: row.menu.scaledFont(Style.font.iconLarge)
-    fillMode: Image.PreserveAspectFit
-    // Decode at physical pixels — a logical-size decode leaves
-    // PNG icons upscaled and blurry on HiDPI displays.
-    sourceSize.width: width * Screen.devicePixelRatio
-    sourceSize.height: height * Screen.devicePixelRatio
-    source: row.isApp ? row.menu.appIconSource(row.appIcon) : ""
-    asynchronous: true
-    anchors.left: parent.left
-    anchors.leftMargin: row.gutter + Style.space(4) + (row.menu.iconSlotWidth - width) / 2
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-  }
-
-  RunningBadge {
-    count: row.windowCount
-    sizeScale: row.menu.menuFontScale
-    ring: row.hasCursor ? row.menu.selectedBackground : row.menu.background
-    x: appIconImage.x + appIconImage.width - width * 0.6
-    y: appIconImage.y + appIconImage.height - height * 0.6
-  }
-
-  Column {
-    id: contentColumn
-    anchors.left: row.hasIcon ? iconText.right : parent.left
-    anchors.leftMargin: row.hasIcon ? Style.space(6) : row.gutter + Style.space(8)
-    anchors.right: trailLabel.visible ? trailLabel.left : refCap.left
-    anchors.rightMargin: Style.space(6)
-    anchors.verticalCenter: parent.verticalCenter
-    spacing: Style.space(3)
-
-    Text {
-      id: labelText
-      textFormat: row.marked ? Text.StyledText : Text.PlainText
-      width: parent.width
-      text: row.marked || row.label
-      color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
-      font.family: row.menu.fontFamily
-      font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.body : Style.font.heading)
-      font.weight: Font.Medium
-      elide: Text.ElideRight
+      Rectangle {
+        visible: row.hasCursor
+        anchors.centerIn: parent
+        width: Style.space(4)
+        height: width
+        radius: width / 2
+        color: Color.accent
+      }
     }
 
     Text {
+      id: iconText
       textFormat: Text.PlainText
-      width: parent.width
-      text: row.detail
-      visible: row.menu.showsDetail(row.kind, row.detail)
+      visible: row.hasIcon && !row.isApp
+      text: row.icon
       color: row.menu.foreground
-      opacity: 0.52
-      font.family: row.menu.fontFamily
-      font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.caption : Style.font.bodySmall)
-      elide: Text.ElideRight
+      font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
+      font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.icon : Style.font.iconLarge)
+      width: row.menu.iconSlotWidth
+      horizontalAlignment: Text.AlignHCenter
+      verticalAlignment: Text.AlignVCenter
+      anchors.left: parent.left
+      anchors.leftMargin: row.gutter + Style.space(4)
+      y: contentColumn.y + labelText.y + (labelText.height - height) / 2
     }
-  }
 
-  Text {
-    id: trailLabel
-    textFormat: Text.PlainText
-    visible: row.trailShown.length > 0
-    text: row.trailShown
-    color: row.menu.foreground
-    opacity: 0.45
-    font.family: row.menu.fontFamily
-    font.pixelSize: row.menu.scaledFont(Style.font.bodySmall)
-    anchors.right: refCap.left
-    anchors.rightMargin: Style.space(6)
-    anchors.verticalCenter: parent.verticalCenter
-  }
+    Image {
+      id: appIconImage
+      visible: row.isApp
+      width: row.menu.scaledFont(Style.font.iconLarge)
+      height: row.menu.scaledFont(Style.font.iconLarge)
+      fillMode: Image.PreserveAspectFit
+      // Decode at physical pixels — a logical-size decode leaves
+      // PNG icons upscaled and blurry on HiDPI displays.
+      sourceSize.width: width * Screen.devicePixelRatio
+      sourceSize.height: height * Screen.devicePixelRatio
+      source: row.isApp ? row.menu.appIconSource(row.appIcon) : ""
+      asynchronous: true
+      anchors.left: parent.left
+      anchors.leftMargin: row.gutter + Style.space(4) + (row.menu.iconSlotWidth - width) / 2
+      y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    }
 
-  // The map reference, a keycap for Alt+n; filled on the selection.
-  Rectangle {
-    id: refCap
-    visible: row.numbered
-    width: visible ? refText.implicitWidth + Style.space(10) : 0
-    height: refText.implicitHeight + Style.space(4)
-    radius: Style.space(3)
-    color: row.hasCursor ? Color.accent : "transparent"
-    border.width: row.hasCursor ? 0 : 1
-    border.color: Util.alpha(row.menu.foreground, 0.35)
-    anchors.right: trail.left
-    anchors.rightMargin: Style.space(6)
-    y: Math.round(row.labelCenterY - height / 2)
+    RunningBadge {
+      count: row.windowCount
+      sizeScale: row.menu.menuFontScale
+      ring: row.hasCursor ? row.menu.selectedBackground : row.menu.background
+      x: appIconImage.x + appIconImage.width - width * 0.6
+      y: appIconImage.y + appIconImage.height - height * 0.6
+    }
+
+    Column {
+      id: contentColumn
+      anchors.left: row.hasIcon ? iconText.right : parent.left
+      anchors.leftMargin: row.hasIcon ? Style.space(6) : row.gutter + Style.space(8)
+      anchors.right: trailLabel.visible ? trailLabel.left : refCap.left
+      anchors.rightMargin: Style.space(6)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(3)
+
+      Text {
+        id: labelText
+        textFormat: row.marked ? Text.StyledText : Text.PlainText
+        width: parent.width
+        text: row.marked || row.label
+        color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+        font.family: row.menu.fontFamily
+        font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.body : Style.font.heading)
+        font.weight: Font.Medium
+        elide: Text.ElideRight
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        width: parent.width
+        text: row.detail
+        visible: row.menu.showsDetail(row.kind, row.detail)
+        color: row.menu.foreground
+        opacity: 0.52
+        font.family: row.menu.fontFamily
+        font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.caption : Style.font.bodySmall)
+        elide: Text.ElideRight
+      }
+    }
 
     Text {
-      id: refText
-      anchors.centerIn: parent
+      id: trailLabel
       textFormat: Text.PlainText
-      text: row.mapRef
-      color: row.hasCursor ? row.menu.background : row.menu.foreground
-      opacity: row.hasCursor ? 1 : 0.7
-      font.family: row.menu.fontFamily
-      font.pixelSize: row.menu.scaledFont(Style.font.caption)
-      font.weight: Font.DemiBold
-    }
-  }
-
-  Row {
-    id: trail
-    width: Style.space(14)
-    anchors.right: parent.right
-    anchors.rightMargin: row.menu.rowReservedBorderRight + Style.space(8)
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-    spacing: 0
-
-    Text {
-      textFormat: Text.PlainText
-      visible: false
-      text: row.childCount
+      visible: row.trailShown.length > 0
+      text: row.trailShown
       color: row.menu.foreground
       opacity: 0.45
       font.family: row.menu.fontFamily
-      font.pixelSize: row.menu.scaledFont(Style.font.body)
+      font.pixelSize: row.menu.scaledFont(Style.font.bodySmall)
+      anchors.right: refCap.left
+      anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
     }
 
-    Text {
-      textFormat: Text.PlainText
-      text: row.kind === "menu" || row.kind === "link" ? "›" : ""
-      color: row.menu.foreground
-      opacity: row.kind === "menu" || row.kind === "link" ? 0.36 : 0
-      font.family: row.menu.fontFamily
-      font.pixelSize: row.menu.scaledFont(Style.font.heading)
-      font.weight: Font.Normal
-      anchors.verticalCenter: parent.verticalCenter
+    // The map reference, a keycap for Alt+n; filled on the selection.
+    Rectangle {
+      id: refCap
+      visible: row.numbered
+      width: visible ? refText.implicitWidth + Style.space(10) : 0
+      height: refText.implicitHeight + Style.space(4)
+      radius: Style.space(3)
+      color: row.hasCursor ? Color.accent : "transparent"
+      border.width: row.hasCursor ? 0 : 1
+      border.color: Util.alpha(row.menu.foreground, 0.35)
+      anchors.right: trail.left
+      anchors.rightMargin: Style.space(6)
+      y: Math.round(row.labelCenterY - height / 2)
+
+      Text {
+        id: refText
+        anchors.centerIn: parent
+        textFormat: Text.PlainText
+        text: row.mapRef
+        color: row.hasCursor ? row.menu.background : row.menu.foreground
+        opacity: row.hasCursor ? 1 : 0.7
+        font.family: row.menu.fontFamily
+        font.pixelSize: row.menu.scaledFont(Style.font.caption)
+        font.weight: Font.DemiBold
+      }
+    }
+
+    Row {
+      id: trail
+      width: Style.space(14)
+      anchors.right: parent.right
+      anchors.rightMargin: row.menu.rowReservedBorderRight + Style.space(8)
+      y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+      spacing: 0
+
+      Text {
+        textFormat: Text.PlainText
+        visible: false
+        text: row.childCount
+        color: row.menu.foreground
+        opacity: 0.45
+        font.family: row.menu.fontFamily
+        font.pixelSize: row.menu.scaledFont(Style.font.body)
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        text: row.kind === "menu" || row.kind === "link" ? "›" : ""
+        color: row.menu.foreground
+        opacity: row.kind === "menu" || row.kind === "link" ? 0.36 : 0
+        font.family: row.menu.fontFamily
+        font.pixelSize: row.menu.scaledFont(Style.font.heading)
+        font.weight: Font.Normal
+        anchors.verticalCenter: parent.verticalCenter
+      }
+    }
+
+    MouseArea {
+      id: mouseArea
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onEntered: row.menu.selectFromPointer(row.index, row, {
+        x: mouseArea.mouseX,
+        y: mouseArea.mouseY
+      })
+      onPositionChanged: function(mouse) {
+        row.menu.selectFromPointer(row.index, row, mouse)
+      }
+      onClicked: {
+        row.menu.cursorActive = true
+        row.menu.selectedIndex = row.index
+        row.menu.activateIndex(row.index, true)
+      }
     }
   }
 
-  MouseArea {
-    id: mouseArea
-    anchors.fill: parent
-    hoverEnabled: true
-    cursorShape: Qt.PointingHandCursor
-    onEntered: row.menu.selectFromPointer(row.index, row, {
-      x: mouseArea.mouseX,
-      y: mouseArea.mouseY
-    })
-    onPositionChanged: function(mouse) {
-      row.menu.selectFromPointer(row.index, row, mouse)
-    }
-    onClicked: {
-      row.menu.cursorActive = true
-      row.menu.selectedIndex = row.index
-      row.menu.activateIndex(row.index, true)
-    }
+  // After the trunk's gutter: each strip is a branch line off the trunk.
+  TileStrip {
+    visible: row.tiled
+    menu: row.menu
+    info: row.tiled ? row.tileInfo : null
+    x: row.gutter
+    width: row.width - row.gutter
+    height: row.menu.allTileHeight
   }
 }

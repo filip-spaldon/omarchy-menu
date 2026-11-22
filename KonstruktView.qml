@@ -18,6 +18,11 @@ Item {
   // Set when a backdrop shader draws the seeded ground (none yet); the
   // Canvas one then steps aside.
   property bool hasBackdrop: false
+  // The app tiles: All's strips are as wide as the list column, and the Apps
+  // grid has as many columns as fit there (Menu.qml reads both).
+  readonly property real tileAreaWidth: kon.listW
+  readonly property int gridColumns: tileGrid.columns
+  readonly property bool gridShown: kon.menu.gridActive
 
   // A colour per kind, from the theme's accent turned around the colour
   // wheel, so every theme gets its own set. Shape carries the kind too, so
@@ -41,6 +46,8 @@ Item {
   readonly property rect area: Qt.rect(width * 0.46, height * 0.08, width * 0.5, height * 0.8)
   readonly property point centre: Qt.point(area.x + area.width / 2, area.y + area.height / 2)
   readonly property real step: Math.min(area.width, area.height) / 11
+  readonly property int latticeColumns: 6
+  readonly property real latticeStep: Math.min(area.width, area.height) / 6.6
 
   // A fixed pool of shape slots that stay alive: each keeps its result while
   // that result is listed, so shapes glide to new places, grow in when a
@@ -98,7 +105,9 @@ Item {
       var row = rows[m]
       var slot = place[row.id]
       if (slot === undefined) { while (used[free]) free++; slot = free; used[slot] = true }
-      var p = Konstrukt.spiral(m, kon.step)
+      // The Apps grid is the one ordered tab: its shapes stand on a lattice,
+      // in the grid's order, rather than on the spiral.
+      var p = kon.gridShown ? Konstrukt.lattice(m, kon.latticeColumns, kon.latticeStep) : Konstrukt.spiral(m, kon.step)
       var days = row.kind === "file" || row.kind === "folder" ? Konstrukt.ageDays(row.trail, now) : 0
       next[slot] = { id: row.id, index: row.index, kind: row.kind, x: kon.centre.x + p.x, y: kon.centre.y + p.y,
                      size: kon.step * (0.45 + 1.1 * row.strength), tilt: Konstrukt.tiltFor(days),
@@ -129,10 +138,11 @@ Item {
     for (var i = 0; i < kon.slots.length; i++) {
       var s = kon.slots[i]
       if (!s || !s.alive) continue
-      var row = list.itemAtIndex(s.index)
+      var view = kon.gridShown ? tileGrid : list
+      var row = view.itemAtIndex(s.index)
       if (!row) continue
-      var y = list.y + row.y - list.contentY + (row.labelCenterY !== undefined ? row.labelCenterY : row.height / 2)
-      if (y >= list.y && y <= list.y + list.height) out[s.index] = y
+      var y = view.y + row.y - view.contentY + (row.labelCenterY !== undefined ? row.labelCenterY : row.height / 2)
+      if (y >= view.y && y <= view.y + view.height) out[s.index] = y
     }
     // Scrolling and each row the list lays out call this: when no row moved,
     // leave the connectors alone.
@@ -165,8 +175,10 @@ Item {
     target: kon.menu
     function onFilterTextChanged() { Qt.callLater(kon.rebuild) }
     function onSelectedIndexChanged() {
-      list.positionViewAtIndex(kon.menu.selectedIndex, ListView.Contain)
+      if (kon.gridShown) tileGrid.positionViewAtIndex(kon.menu.selectedIndex, GridView.Contain)
+      else list.positionViewAtIndex(kon.menu.selectedIndex, ListView.Contain)
     }
+    function onGridActiveChanged() { Qt.callLater(kon.rebuild) }
   }
   // Also when the view is made already visible (Alt+L to Konstrukt with the
   // menu open): no visibleChanged comes then.
@@ -308,8 +320,45 @@ Item {
     font.pixelSize: kon.menu.scaledFont(Style.font.title)
   }
 
+  // The Apps grid, in the list's place: every app's shape and name.
+  GridView {
+    id: tileGrid
+    visible: kon.gridShown
+    readonly property int columns: Math.max(1, Math.floor(width / cellWidth))
+    x: list.x
+    y: list.y
+    width: Math.max(cellWidth, Math.floor(kon.listW / cellWidth) * cellWidth)
+    height: list.height
+    cellWidth: kon.menu.tileWidth
+    cellHeight: kon.menu.tileHeight
+    model: kon.gridShown ? kon.model : null
+    clip: true
+    boundsBehavior: Flickable.StopAtBounds
+    onContentYChanged: Qt.callLater(kon.measureRows)
+    onContentHeightChanged: Qt.callLater(kon.measureRows)
+
+    delegate: LookTile {
+      required property int index
+      required property string label
+      required property string appIcon
+      required property string kind
+      required property string appId
+      menu: kon.menu
+      tileIndex: index
+      tileLabel: label
+      tileIcon: appIcon
+      tileKind: kind
+      tileAppId: appId
+      tileCol: index % tileGrid.columns
+      tileRow: Math.floor(index / tileGrid.columns)
+      width: tileGrid.cellWidth - Style.space(6)
+      height: tileGrid.cellHeight - Style.space(6)
+    }
+  }
+
   ListView {
     id: list
+    visible: !kon.gridShown
     x: kon.listX
     y: tabs.y + tabs.height + Style.space(16) + (fileBar.visible ? fileBar.height + Style.space(12) : 0)
     width: kon.listW
