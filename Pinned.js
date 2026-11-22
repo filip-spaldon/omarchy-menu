@@ -85,7 +85,7 @@ function gridPadding(count, columns) {
 function padRow(n, section) {
   return {
     itemId: "pinned.pad." + n, disabled: true, kind: "pinpad", icon: "", iconFont: "",
-    appIcon: "", appId: "", label: "", target: "", detail: "", path: "", imagePath: "",
+    appIcon: "", appId: "", label: "", target: "", detail: "", path: "", imagePath: "", swatch: "",
     childCount: 0, action: "", provider: "", score: 0, section: section || "", trailText: ""
   }
 }
