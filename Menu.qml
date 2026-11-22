@@ -2614,6 +2614,7 @@ Item {
     if (root.appLibrary) root.appLibrary.refreshIcons()
     else root.refreshFallbackIcons()
 
+    panel.primeFocus()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -2655,6 +2656,7 @@ Item {
     opened = true
     rebuildDisplay()
 
+    panel.primeFocus()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -2731,6 +2733,8 @@ Item {
     const defaultTab = Tabs.openTabFor(root.openTab, root.tabOrder, root.disabledTabs)
     const next = Tabs.rootShortcutTab(from, defaultTab, root.rootShortcutReturnTab)
     root.filterText = ""
+    // A key pressed from another monitor's window takes the keyboard back.
+    panel.primeFocus()
     root.setTab(next)
     if (next === "system") root.rootShortcutReturnTab = from
   }
@@ -3265,8 +3269,29 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "omarchy-menu"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    // A brief Exclusive prime takes the keyboard on every open, then
+    // OnDemand: Exclusive makes Hyprland send every pointer event to this
+    // surface whatever output the cursor is on, which left the other
+    // monitors unclickable while the menu was up (Ui/KeyboardPanel.qml does
+    // the same). On OnDemand a click elsewhere goes to that window and the
+    // menu stays; a click on this screen outside the card still closes it.
+    property bool focusPrimed: false
+    WlrLayershell.keyboardFocus: !panel.visible ? WlrKeyboardFocus.None
+      : panel.focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
+
+    function primeFocus() {
+      panel.focusPrimed = false
+      focusPrimeTimer.restart()
+    }
+
+    Timer {
+      id: focusPrimeTimer
+      // A few commit cycles: long enough for Hyprland to hand over the
+      // keyboard, short enough that the compositor-wide grab is not felt.
+      interval: 75
+      onTriggered: if (panel.visible) panel.focusPrimed = true
+    }
 
     // The card opens centered exactly as always. The first search keystroke
     // or submenu move freezes the top line where it currently sits — from
@@ -3291,7 +3316,10 @@ Item {
         maxRowsHeight = root.visibleRowsHeight
       }
     }
-    onVisibleChanged: if (!visible) { cardTop = -1; maxRowsHeight = -1 }
+    onVisibleChanged: {
+      if (!visible) { cardTop = -1; maxRowsHeight = -1; focusPrimeTimer.stop(); focusPrimed = false }
+      else primeFocus()
+    }
 
     Rectangle {
       anchors.fill: parent
