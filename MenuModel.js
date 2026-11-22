@@ -1587,13 +1587,15 @@ function formGroupSpans(match, offset) {
 }
 
 // `a` and `b` are the groups holding the two numbers, `money` the one holding
-// a currency symbol to carry over onto the answer.
+// a currency symbol to carry over onto the answer, `code` an optional
+// currency code after the amount ("100 eur - 10%"), checked against the
+// currency table before the form counts.
 var PERCENT_FORMS = [
-  { op: "add", re: compileForm("^({M})({N})(\\s*\\+\\s*)({N})(\\s*%)$"), money: 1, a: 2, b: 4 },
-  { op: "sub", re: compileForm("^({M})({N})(\\s*[-−]\\s*)({N})(\\s*%)$"), money: 1, a: 2, b: 4 },
-  { op: "off", re: compileForm("^({N})(\\s*%\\s*off\\s+)({M})({N})$"), money: 3, a: 1, b: 4 },
-  { op: "of", re: compileForm("^({N})(\\s*%\\s*of\\s+)({M})({N})$"), money: 3, a: 1, b: 4 },
-  { op: "on", re: compileForm("^({N})(\\s*%\\s*on\\s+)({M})({N})$"), money: 3, a: 1, b: 4 },
+  { op: "add", re: compileForm("^({M})({N})(\\s*{C})?(\\s*\\+\\s*)({N})(\\s*%)$"), money: 1, a: 2, code: 3, b: 5 },
+  { op: "sub", re: compileForm("^({M})({N})(\\s*{C})?(\\s*[-−]\\s*)({N})(\\s*%)$"), money: 1, a: 2, code: 3, b: 5 },
+  { op: "off", re: compileForm("^({N})(\\s*%\\s*off\\s+)({M})({N})(\\s*{C})?$"), money: 3, a: 1, b: 4, code: 5 },
+  { op: "of", re: compileForm("^({N})(\\s*%\\s*of\\s+)({M})({N})(\\s*{C})?$"), money: 3, a: 1, b: 4, code: 5 },
+  { op: "on", re: compileForm("^({N})(\\s*%\\s*on\\s+)({M})({N})(\\s*{C})?$"), money: 3, a: 1, b: 4, code: 5 },
   { op: "ratio", re: compileForm("^({M})({N})(\\s+(?:as\\s+(?:an?\\s+)?|is\\s+what\\s+)(?:%|percent(?:age)?)\\s+of\\s+)({M})({N})$"),
     money: 0, a: 2, b: 5 }
 ]
@@ -1603,7 +1605,14 @@ function percentForm(text) {
   if (!body.text) return null
   for (var i = 0; i < PERCENT_FORMS.length; i++) {
     var match = body.text.match(PERCENT_FORMS[i].re)
-    if (match) return { form: PERCENT_FORMS[i], match: match, start: body.start }
+    if (!match) continue
+    var codeText = PERCENT_FORMS[i].code ? (match[PERCENT_FORMS[i].code] || "") : ""
+    var code = codeText ? currencyCodeFor(codeText) : ""
+    // A word after the amount that is no currency: not a percentage sum.
+    if (codeText && !code) return null
+    // "€100 eur" says the currency twice.
+    if (code && PERCENT_FORMS[i].money && match[PERCENT_FORMS[i].money]) return null
+    return { form: PERCENT_FORMS[i], match: match, start: body.start, code: code }
   }
   return null
 }
@@ -1621,18 +1630,20 @@ function evaluatePercent(query) {
   if (a === null || b === null) return null
 
   var money = form.money ? found.match[form.money] : ""
+  // A code reads after the number: "90 EUR", like the currency answers.
+  var unit = found.code ? " " + found.code : ""
   var value = 0
   var detail = ""
   if (form.op === "add" || form.op === "sub") {
     var share = a * b / 100
     value = form.op === "add" ? a + share : a - share
-    detail = formatMathResult(b) + "% of " + money + formatMathResult(a) + " is " + money + formatMathResult(share)
+    detail = formatMathResult(b) + "% of " + money + formatMathResult(a) + unit + " is " + money + formatMathResult(share) + unit
   } else if (form.op === "off" || form.op === "on" || form.op === "of") {
     var part = b * a / 100
     value = form.op === "off" ? b - part : form.op === "on" ? b + part : part
     detail = form.op === "of"
-      ? formatMathResult(a) + "% of " + money + formatMathResult(b)
-      : (form.op === "off" ? "Saves " : "Adds ") + money + formatMathResult(part)
+      ? formatMathResult(a) + "% of " + money + formatMathResult(b) + unit
+      : (form.op === "off" ? "Saves " : "Adds ") + money + formatMathResult(part) + unit
   } else {
     if (b === 0) return null
     value = a / b * 100
@@ -1644,7 +1655,7 @@ function evaluatePercent(query) {
   var ratio = form.op === "ratio"
   return {
     value: value,
-    label: ratio ? number + "%" : money + number,
+    label: ratio ? number + "%" : money + number + unit,
     detail: detail,
     copy: ratio ? number + "%" : number
   }
@@ -1740,7 +1751,17 @@ function answerFormFields(text) {
   if (percent && evaluatePercent(src)) {
     spans = formGroupSpans(percent.match, percent.start)
     if (!spans) return null
-    return { kind: "percent", fields: formFields(spans, [[percent.form.a, "number"], [percent.form.b, "number"]]) }
+    var list = [[percent.form.a, "number"], [percent.form.b, "number"]]
+    if (percent.code) list.push([percent.form.code, "currency"])
+    list.sort(function(x, y) { return x[0] - y[0] })
+    var fields = formFields(spans, list)
+    // The code's group carries the space before it; the field is the code.
+    for (var f = 0; f < fields.length; f++) {
+      if (fields[f].kind !== "currency") continue
+      var lead = src.slice(fields[f].start, fields[f].end).match(/^\s*/)[0].length
+      fields[f].start += lead
+    }
+    return { kind: "percent", fields: fields }
   }
 
   var work = workTimeForm(src)

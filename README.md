@@ -70,7 +70,9 @@ strip shows only when at least one pinned app is installed, in the list (as a
 block of tiles) and in the grid (as its first rows) alike, and the arrows,
 Enter and Shift+Enter work on it as anywhere else. A pinned app also stays in
 the list under it. While searching the strip is hidden, so the best match is
-still first. Pins are saved as `pinnedApps` in `state.json`.
+still first. The strip carries a pin
+marker in its corner, and a pinned app shows a small pin on its icon wherever
+it appears outside the strip. Pins are saved as `pinnedApps` in `state.json`.
 
 Clipboard lists the clipboard history kept by Omarchy's own clipboard service
 (Omarchy 4.5 and later), newest first: text by its first line with its line
@@ -317,7 +319,7 @@ answer.
 | `100 km to miles` | Unit conversion |
 | `20 c to f` | Temperature conversion |
 | `123 eur to usd` | Currency conversion with rate date |
-| `$30 + 20%`, `20% off 50`, `50 as a % of 200` | Percentages |
+| `$30 + 20%`, `100 eur - 10%`, `20% off 50`, `50 as a % of 200` | Percentages |
 | `40 hours in work days` | Work time (8 h/day, 5 days/week) |
 | `time in tokyo` | Local time and offset |
 | `uuid`, `password 24`, `epoch` | Generated values; Ctrl+R refreshes them |

@@ -34,6 +34,15 @@ GridView {
     color: grid.menu.pinnedBackground
     border.width: Math.max(1, Style.space(1))
     border.color: grid.menu.pinnedBorder
+
+    PinBadge {
+      sizeScale: grid.menu.menuFontScale
+      fontFamily: grid.menu.fontFamily
+      ring: grid.menu.background
+      anchors.top: parent.top
+      anchors.right: parent.right
+      anchors.margins: Style.space(6)
+    }
   }
 
   delegate: Item {
@@ -43,6 +52,7 @@ GridView {
     required property string appIcon
     required property string kind
     required property string appId
+    required property string section
 
     width: grid.cellWidth
     height: grid.cellHeight
@@ -57,6 +67,7 @@ GridView {
       tileIcon: cell.appIcon
       tileKind: cell.kind
       tileAppId: cell.appId
+      inPinnedStrip: cell.section === grid.menu.pinnedSection
       width: grid.cellWidth - Style.space(6)
       height: grid.cellHeight - Style.space(6)
       anchors.centerIn: parent

@@ -245,6 +245,11 @@ Item {
     return info && info.lines ? root.pinnedStripPad : 0
   }
 
+  // Pinned or not, whatever copy of the app is asked about.
+  function isAppPinned(appId) {
+    return !!appId && Pinned.isPinned(root.pinnedApps, appId)
+  }
+
   function pinnedEntry(id) {
     var entry = root.item("apps." + id)
     return entry && entry.kind === "app" ? entry : null
@@ -3353,8 +3358,11 @@ Item {
           } else if (root.tabsActive && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
             // Claimed before anything else: left alone, Tab moves QML focus
             // off the key catcher and the menu stops hearing the keyboard.
+            // A "/" command answers the same on every tab, so plain Tab
+            // would only switch the tab out of sight; it does nothing there.
             var back = event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier)
-            root.setTab(Tabs.cycleTab(root.activeTab, back ? -1 : 1, root.orderedTabs))
+            if (!root.commandMode || (event.modifiers & Qt.ControlModifier))
+              root.setTab(Tabs.cycleTab(root.activeTab, back ? -1 : 1, root.orderedTabs))
             event.accepted = true
           } else if (root.tabsActive && (event.modifiers & Qt.ControlModifier)
                      && event.key >= Qt.Key_1 && event.key < Qt.Key_1 + root.orderedTabs.length) {

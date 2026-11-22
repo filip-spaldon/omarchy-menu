@@ -34,6 +34,7 @@ BorderSurface {
   required property string action
   required property int childCount
   required property string trailText
+  required property string section
   // Installed software and `disabled:` guards: listed, dimmed, never picked.
   required property bool disabled
 
@@ -166,6 +167,15 @@ BorderSurface {
     anchors.verticalCenter: iconText.verticalCenter
   }
 
+  PinBadge {
+    visible: row.isApp && row.kind === "app" && row.section !== row.menu.pinnedSection && row.menu.isAppPinned(row.appId)
+    sizeScale: row.menu.menuFontScale
+    fontFamily: row.menu.fontFamily
+    ring: row.hasCursor ? row.menu.selectedBackground : row.menu.background
+    x: appIconImage.x - width * 0.4
+    y: appIconImage.y - height * 0.4
+  }
+
   RunningBadge {
     count: row.windowCount
     sizeScale: row.menu.menuFontScale
@@ -286,6 +296,16 @@ BorderSurface {
     color: row.menu.pinnedBackground
     border.width: Math.max(1, Style.space(1))
     border.color: row.menu.pinnedBorder
+
+    PinBadge {
+      z: 1
+      sizeScale: row.menu.menuFontScale
+      fontFamily: row.menu.fontFamily
+      ring: row.menu.background
+      anchors.top: parent.top
+      anchors.right: parent.right
+      anchors.margins: Style.space(6)
+    }
   }
 
   // The strip: up to `columns` tiles across the row's width, the whole tile
@@ -311,6 +331,7 @@ BorderSurface {
         tileIcon: cell.modelData.row.appIcon
         tileKind: cell.modelData.row.kind
         tileAppId: cell.modelData.row.appId
+        inPinnedStrip: row.pinnedStrip
         width: parent.width - Style.space(6)
         height: parent.height - Style.space(6)
         anchors.centerIn: parent

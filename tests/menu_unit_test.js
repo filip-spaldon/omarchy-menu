@@ -1531,6 +1531,23 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(C("other", "x", 1), "", "unknown kind")
 }
 
+// ------------------------------------------------ percent with a code --
+{
+  const M = MenuModel
+  eq(M.evaluatePercent("100 eur - 10%").label, "90 EUR", "a currency code after the amount")
+  eq(M.evaluatePercent("100eur+5%").copy, "105", "a code with no spaces; copy is the number")
+  eq(M.evaluatePercent("20% off 100 eur").label, "80 EUR", "off with a code")
+  eq(M.evaluatePercent("15% on 80 czk").detail, "Adds 12 CZK", "on with a code")
+  eq(M.evaluatePercent("100 apples - 10%"), null, "a word that is no currency is not a percentage")
+  eq(M.evaluatePercent("€100 eur - 10%"), null, "a symbol and a code together are refused")
+  const q = "100 eur - 10%"
+  eq(M.answerFormFields(q).fields.map(f => f.kind + ":" + q.slice(f.start, f.end)),
+     ["number:100", "currency:eur", "number:10"], "the code is a currency field of the form")
+  const src = require("fs").readFileSync(path.join(root, "Menu.qml"), "utf8")
+  assert(/if \(!root\.commandMode \|\| \(event\.modifiers & Qt\.ControlModifier\)\)\s*root\.setTab/.test(src),
+         "plain Tab does not switch tabs under a / command")
+}
+
 console.log("")
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

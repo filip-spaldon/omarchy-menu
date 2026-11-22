@@ -16,6 +16,9 @@ BorderSurface {
   property string tileIcon: ""
   property string tileKind: ""
   property string tileAppId: ""
+  // A tile inside the pinned strip is pinned by where it is; only copies
+  // elsewhere carry the pin marker.
+  property bool inPinnedStrip: false
 
   readonly property bool hasCursor: tile.menu.cursorActive && tile.tileIndex === tile.menu.selectedIndex
 
@@ -44,6 +47,15 @@ BorderSurface {
     ring: tile.hasCursor ? tile.menu.selectedBackground : tile.menu.background
     x: iconImage.x + iconImage.width - width * 0.6
     y: iconImage.y + iconImage.height - height * 0.6
+  }
+
+  PinBadge {
+    visible: tile.tileKind === "app" && !tile.inPinnedStrip && tile.menu.isAppPinned(tile.tileAppId)
+    sizeScale: tile.menu.menuFontScale
+    fontFamily: tile.menu.fontFamily
+    ring: tile.hasCursor ? tile.menu.selectedBackground : tile.menu.background
+    x: iconImage.x - width * 0.4
+    y: iconImage.y - height * 0.4
   }
 
   Text {
