@@ -37,16 +37,26 @@ QtObject {
     return Math.min(viewportHeight - gap,
       Math.max(requestedBottom, gap + Math.min(maximumHeight, chrome + minimumBodyHeight)))
   }
+  // The rows of a card pinned to the bottom: as tall as they want, down to
+  // minimumBodyHeight, within the room above the edge. Kept apart from
+  // bodyHeight so cardTop never reads a value that reads cardTop: bodyHeight
+  // reads it while the card is placed from the top, and on the switch to the
+  // bottom (Alt+Down) that read is still on record when cardTop changes, a
+  // binding loop.
+  readonly property real bottomBodyHeight: desiredBodyHeight <= 0 ? 0
+    : Math.max(Math.min(desiredBodyHeight, minimumBodyHeight),
+        Math.min(desiredBodyHeight, bottomEdge - gap - chromeHeight))
   readonly property real cardTop: bottomAnchored
-    ? Math.max(gap, bottomEdge - contentHeight)
+    ? Math.max(gap, bottomEdge - chromeHeight - bottomBodyHeight)
     : requestedTop < 0
       ? Math.max(gap, Math.min((viewportHeight - centeredHeight) / 2 + centerShift, viewportHeight - gap - centeredHeight))
       : Math.max(gap, Math.min(requestedTop, viewportHeight - gap - minimumHeight))
   // If even the controls and a row cannot fit, the outer Flickable scrolls
   // the whole content. Results remain reachable rather than disappearing.
-  readonly property real bodyHeight: desiredBodyHeight <= 0 ? 0
+  readonly property real bodyHeight: bottomAnchored ? bottomBodyHeight
+    : desiredBodyHeight <= 0 ? 0
     : Math.max(Math.min(desiredBodyHeight, minimumBodyHeight),
-        Math.min(desiredBodyHeight, (bottomAnchored ? bottomEdge - gap : viewportHeight - gap - cardTop) - chromeHeight))
+        Math.min(desiredBodyHeight, viewportHeight - gap - cardTop - chromeHeight))
   readonly property real contentHeight: chromeHeight + bodyHeight
   readonly property real cardHeight: Math.max(0, Math.min(contentHeight, viewportHeight - gap - cardTop))
 }

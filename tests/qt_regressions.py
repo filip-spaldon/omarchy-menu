@@ -147,6 +147,25 @@ class QtRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(g.property("cardTop") + g.property("cardHeight"), edge)
         self.assertAlmostEqual(g.property("bodyHeight"), 400)
 
+    def test_pinning_to_the_bottom_is_no_binding_loop(self):
+        # Alt+Down from a centred or top card pins it to the bottom: cardTop
+        # then follows the content height, which must not still follow cardTop
+        # from the card's last placement (the shell logged a binding loop).
+        from PySide6.QtCore import qInstallMessageHandler
+        warnings = []
+        previous = qInstallMessageHandler(lambda kind, ctx, msg: warnings.append(msg))
+        try:
+            for top in [-1, 200]:
+                with self.subTest(top=top):
+                    g = self.geometry(viewportHeight=900, gap=5, requestedTop=top, chromeHeight=170,
+                                      desiredBodyHeight=540, minimumBodyHeight=240, reserveHeight=30)
+                    g.property("bodyHeight")
+                    g.setProperty("requestedBottom", 787)
+                    self.assertAlmostEqual(g.property("cardTop") + g.property("cardHeight"), 787)
+        finally:
+            qInstallMessageHandler(previous)
+        self.assertEqual([w for w in warnings if "Binding loop" in w], [])
+
     def test_bottom_edge_too_high_is_lowered_to_fit(self):
         g = self.geometry(viewportHeight=1080, gap=10, requestedBottom=100, chromeHeight=180,
                           desiredBodyHeight=600, minimumBodyHeight=240, reserveHeight=30)
