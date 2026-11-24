@@ -46,8 +46,9 @@ Item {
   readonly property rect area: Qt.rect(width * 0.46, height * 0.08, width * 0.5, height * 0.8)
   readonly property point centre: Qt.point(area.x + area.width / 2, area.y + area.height / 2)
   readonly property real step: Math.min(area.width, area.height) / 11
-  readonly property int latticeColumns: 6
-  readonly property real latticeStep: Math.min(area.width, area.height) / 6.6
+  // The Apps grid's selected row: its shapes are lit and connected, the rest
+  // of the field recedes (36 lines from a grid would only tangle).
+  readonly property int selectedRow: kon.gridShown ? Math.floor(kon.menu.selectedIndex / Math.max(1, tileGrid.columns)) : -1
 
   // A fixed pool of shape slots that stay alive: each keeps its result while
   // that result is listed, so shapes glide to new places, grow in when a
@@ -105,9 +106,7 @@ Item {
       var row = rows[m]
       var slot = place[row.id]
       if (slot === undefined) { while (used[free]) free++; slot = free; used[slot] = true }
-      // The Apps grid is the one ordered tab: its shapes stand on a lattice,
-      // in the grid's order, rather than on the spiral.
-      var p = kon.gridShown ? Konstrukt.lattice(m, kon.latticeColumns, kon.latticeStep) : Konstrukt.spiral(m, kon.step)
+      var p = Konstrukt.spiral(m, kon.step)
       var days = row.kind === "file" || row.kind === "folder" ? Konstrukt.ageDays(row.trail, now) : 0
       next[slot] = { id: row.id, index: row.index, kind: row.kind, x: kon.centre.x + p.x, y: kon.centre.y + p.y,
                      size: kon.step * (0.45 + 1.1 * row.strength), tilt: Konstrukt.tiltFor(days),
@@ -178,7 +177,7 @@ Item {
       if (kon.gridShown) tileGrid.positionViewAtIndex(kon.menu.selectedIndex, GridView.Contain)
       else list.positionViewAtIndex(kon.menu.selectedIndex, ListView.Contain)
     }
-    function onGridActiveChanged() { Qt.callLater(kon.rebuild) }
+    function onGridActiveChanged() { Qt.callLater(kon.measureRows) }
   }
   // Also when the view is made already visible (Alt+L to Konstrukt with the
   // menu open): no visibleChanged comes then.
@@ -494,6 +493,9 @@ Item {
         slot.rowY = slot.alive && kon.rowY[slot.row] !== undefined ? kon.rowY[slot.row] : -1
       }
       readonly property bool selected: slot.alive && slot.row === kon.menu.selectedIndex
+      // In the Apps grid: whether this app is on the selected row. Only those
+      // keep their connector and full colour.
+      readonly property bool lit: !kon.gridShown || (slot.alive && Math.floor(slot.row / Math.max(1, tileGrid.columns)) === kon.selectedRow)
       readonly property string form: slot.used ? Konstrukt.shapeFor(slot.kind) : "square"
       readonly property color fill: slot.selected ? kon.ink : kon.kindColor(slot.used ? slot.kind : "")
       // A slot that takes a new result jumps to its place instead of flying
@@ -505,13 +507,15 @@ Item {
 
       anchors.fill: parent
       visible: slot.used && !kon.sys
+      // The selected shape and its label stay above the others.
+      z: slot.selected ? 2 : (slot.lit ? 1 : 0)
 
       // The connector.
       Rectangle {
         readonly property real x2: piece.x + piece.width / 2
         readonly property real y2: piece.y + piece.height / 2
         readonly property real x1: list.x + list.width + Style.space(6)
-        visible: slot.rowY >= 0 && piece.scale > 0.05
+        visible: slot.rowY >= 0 && slot.lit && piece.scale > 0.05
         x: x1
         y: slot.rowY
         width: Math.hypot(x2 - x1, y2 - slot.rowY)
@@ -524,7 +528,7 @@ Item {
       }
 
       Rectangle {
-        visible: slot.rowY >= 0
+        visible: slot.rowY >= 0 && slot.lit
         x: list.x + list.width + Style.space(4)
         y: slot.rowY - 2
         width: 4
@@ -542,7 +546,8 @@ Item {
         // Grows in when its result appears, shrinks away where it was when
         // the result goes.
         scale: slot.alive ? 1 : 0
-        opacity: slot.selected ? 1 : 0.88
+        opacity: slot.selected ? 1 : (slot.lit ? 0.88 : 0.25)
+        Behavior on opacity { enabled: kon.settled; NumberAnimation { duration: 140 } }
         Behavior on x { enabled: slot.glide; NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
         Behavior on y { enabled: slot.glide; NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
         Behavior on width { enabled: slot.glide; NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
@@ -586,7 +591,21 @@ Item {
         }
       }
 
+      // The label sits on a plate of the ground, so a neighbouring shape
+      // never runs through it.
+      Rectangle {
+        visible: slot.selected
+        x: readout.x - Style.space(6)
+        y: readout.y - Style.space(3)
+        width: readout.implicitWidth + Style.space(12)
+        height: readout.implicitHeight + Style.space(6)
+        color: kon.menu.background
+        border.width: 1
+        border.color: Util.alpha(Color.accent, 0.5)
+      }
+
       Text {
+        id: readout
         visible: slot.selected
         x: piece.x + piece.width + Style.space(22)
         y: piece.y + piece.height / 2 - height / 2

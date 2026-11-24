@@ -42,14 +42,6 @@ function spiral(n, step) {
 
 // whether two flat maps hold the same keys and values (the rows' middles,
 // measured again on every scroll step and row laid out).
-// Where the n-th shape stands on the Apps grid's lattice: `columns` across,
-// centred on the field's middle, `step` apart.
-function lattice(n, columns, step) {
-  var cols = Math.max(1, columns)
-  var rows = 6
-  return { x: ((n % cols) - (cols - 1) / 2) * step, y: (Math.floor(n / cols) - (rows - 1) / 2) * step }
-}
-
 function sameMap(a, b) {
   var n = 0
   for (var key in a) {
@@ -65,7 +57,6 @@ if (typeof module !== "undefined") {
     ageDays: ageDays,
     tiltFor: tiltFor,
     spiral: spiral,
-    lattice: lattice,
     sameMap: sameMap
   }
 }
