@@ -13,6 +13,13 @@ Item {
   property real pad: 0
   property bool inPinnedStrip: false
 
+  // The pinned block's tint and outline, as tall as all its lines.
+  PinnedFrame {
+    menu: strip.menu
+    visible: strip.inPinnedStrip && !!strip.info && !!strip.info.tiles
+    anchors.fill: parent
+  }
+
   Repeater {
     model: strip.info && strip.info.tiles ? strip.info.tiles : []
 

@@ -18,31 +18,16 @@ GridView {
   clip: true
   boundsBehavior: Flickable.StopAtBounds
 
-  // The pinned strip's rows end padded to whole rows, so it follows the
-  // column count.
-  onColumnsChanged: if (grid.menu.gridActive && grid.menu.pinnedCount > 0) grid.menu.rebuildDisplay(true)
-
   // Behind the pinned apps (the model's first rows; see Menu.pinnedCount):
-  // the accent tint and outline the list's pinned strip has.
-  Rectangle {
+  // the accent tint and outline the list's pinned strip has. The menu pads
+  // the strip to whole rows of this grid (Menu.gridColumns).
+  PinnedFrame {
     parent: grid.contentItem
     z: -1
+    menu: grid.menu
     visible: grid.menu.pinnedCount > 0
     width: grid.columns * grid.cellWidth
     height: Math.ceil(grid.menu.pinnedCount / grid.columns) * grid.cellHeight
-    radius: grid.menu.cornerRadius
-    color: grid.menu.pinnedBackground
-    border.width: Math.max(1, Style.space(1))
-    border.color: grid.menu.pinnedBorder
-
-    PinBadge {
-      sizeScale: grid.menu.menuFontScale
-      fontFamily: grid.menu.fontFamily
-      ring: grid.menu.background
-      anchors.top: parent.top
-      anchors.right: parent.right
-      anchors.margins: Style.space(6)
-    }
   }
 
   delegate: Item {

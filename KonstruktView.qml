@@ -89,7 +89,7 @@ Item {
     var rows = []
     for (var i = 0; i < n; i++) {
       var r = kon.model.get(i)
-      if (!r || r.kind === "example") continue
+      if (!r || r.kind === "example" || r.kind === "pinpad") continue
       var title = Tabs.headerTitle(r.section) || "·"
       if (sectionIndex[title] === undefined) sectionIndex[title] = sections++
       var within = perSection[title] || 0
@@ -350,12 +350,26 @@ Item {
     onContentYChanged: Qt.callLater(kon.measureRows)
     onContentHeightChanged: Qt.callLater(kon.measureRows)
 
+    // The pinned apps (the model's first rows), framed as on the card.
+    PinnedFrame {
+      parent: tileGrid.contentItem
+      z: -1
+      menu: kon.menu
+      visible: kon.menu.pinnedCount > 0
+      width: tileGrid.columns * tileGrid.cellWidth
+      height: Math.ceil(kon.menu.pinnedCount / tileGrid.columns) * tileGrid.cellHeight
+    }
+
     delegate: LookTile {
       required property int index
       required property string label
       required property string appIcon
       required property string kind
       required property string appId
+      required property string section
+      // The pinned strip's padding cells draw nothing.
+      visible: kind !== "pinpad"
+      inPinnedStrip: section === kon.menu.pinnedSection
       menu: kon.menu
       tileIndex: index
       tileLabel: label

@@ -331,12 +331,26 @@ Item {
       function onCrossYChanged() { Qt.callLater(grid.pin, false) }
     }
 
+    // The pinned apps (the model's first rows), framed as on the card.
+    PinnedFrame {
+      parent: grid.contentItem
+      z: -1
+      menu: axis.menu
+      visible: axis.menu.pinnedCount > 0
+      width: grid.columns * grid.cellWidth
+      height: Math.ceil(axis.menu.pinnedCount / grid.columns) * grid.cellHeight
+    }
+
     delegate: LookTile {
       required property int index
       required property string label
       required property string appIcon
       required property string kind
       required property string appId
+      required property string section
+      // The pinned strip's padding cells draw nothing.
+      visible: kind !== "pinpad"
+      inPinnedStrip: section === axis.menu.pinnedSection
       menu: axis.menu
       tileIndex: index
       tileLabel: label

@@ -61,6 +61,15 @@ Item {
     color: Color.accent
   }
 
+  // Pinned, shown outside the pinned strip: the thumbtack, as on the card.
+  PinBadge {
+    visible: t.tile.tileKind === "app" && !t.tile.inPinnedStrip && t.menu.isAppPinned(t.tile.tileAppId)
+    sizeScale: t.menu.menuFontScale * 0.8
+    fontFamily: t.menu.fontFamily
+    x: icon.x - width * 0.4
+    y: icon.y - height * 0.4
+  }
+
   MouseArea {
     id: mouse
     anchors.fill: parent

@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import "AllTiles.js" as AllTiles
 import qs.Ui
 import "Windows.js" as Windows
 
@@ -33,6 +34,9 @@ BorderSurface {
   // first row draws the whole strip, the rest take no room.
   readonly property var tileInfo: row.menu.allTileAt(row.index, row.menu.layoutSerial)
   readonly property bool tiled: row.tileInfo !== null
+  // The Apps tab's pinned strip (AllTiles.layout's block): one strip of
+  // several lines, inset inside its outline.
+  readonly property bool pinnedStrip: row.tiled && row.tileInfo.lines !== undefined
   readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex && row.kind !== "example"
     && (!row.menu.systemTwoPane || row.menu.systemPane === "right") && !row.tiled
   // Window rows borrow their application's icon when a desktop entry
@@ -298,8 +302,10 @@ BorderSurface {
     visible: row.tiled
     menu: row.menu
     info: row.tiled ? row.tileInfo : null
+    pad: row.pinnedStrip ? row.menu.pinnedStripPad : 0
+    inPinnedStrip: row.pinnedStrip
     x: row.gutter
     width: row.width - row.gutter
-    height: row.menu.allTileHeight
+    height: row.pinnedStrip ? AllTiles.drawnHeight(row.tileInfo, row.menu.allTileHeight, row.menu.pinnedStripPad) : row.menu.allTileHeight
   }
 }

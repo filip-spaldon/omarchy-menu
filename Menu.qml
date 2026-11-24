@@ -259,6 +259,8 @@ Item {
     ? lookViewLoader.item.tileAreaWidth : resultList.width
   readonly property int gridColumns: root.overlayActive && lookViewLoader.item && lookViewLoader.item.gridColumns > 0
     ? lookViewLoader.item.gridColumns : appGrid.columns
+  // The pinned strip's rows end padded to whole rows of the grid on show.
+  onGridColumnsChanged: if (root.gridActive && root.pinnedCount > 0) root.rebuildDisplay(true)
   // Tiles as wide as the Apps grid's at least, stretched to fill the row.
   readonly property int allTileColumns: Math.max(1, Math.floor(root.tileAreaWidth / Math.max(1, root.tileWidth)))
   readonly property int allTileHeight: root.tileHeight
@@ -862,7 +864,11 @@ Item {
     var open = "↵ open" + (root.alwaysNumbered ? "   alt 1–9 jump" : "")
     if (root.activeTab === "files" || root.activeTab === "folders")
       return open + root.fileKeys().map(function(k) { return "   " + k[0] + " " + k[1] }).join("") + "   esc close"
-    if (root.activeTab === "apps") return open + "   ^G " + (root.appsView === "grid" ? "list" : "grid") + "   ⇥ next tab   esc close"
+    if (root.activeTab === "apps") {
+      var app = root.selectedAppRow()
+      var pinned = !!app && Pinned.isPinned(root.pinnedApps, app.appId)
+      return open + "   ^P " + (pinned ? "unpin" : "pin") + "   ^G " + (root.appsView === "grid" ? "list" : "grid") + "   esc close"
+    }
     if (root.activeTab === "clipboard") return "↵ paste   ^C copy   ^F type   esc close"
     return open + "   ⇥ next tab   esc close"
   }
@@ -2447,7 +2453,7 @@ Item {
       var pinned = query ? [] : root.pinnedRows()
       pinnedCount = pinned.length
       if (pinnedCount > 0 && root.appsView === "grid") {
-        var pad = Pinned.gridPadding(pinnedCount, appGrid.columns)
+        var pad = Pinned.gridPadding(pinnedCount, root.gridColumns)
         for (var p = 0; p < pad; p++) pinned.push(Pinned.padRow(p, root.pinnedSection))
       }
       rows = pinned.concat(rows)

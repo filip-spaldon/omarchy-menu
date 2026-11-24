@@ -385,30 +385,10 @@ BorderSurface {
     }
   }
 
-  // The pinned strip's tint and outline, as tall as all its lines.
-  Rectangle {
-    visible: row.pinnedStrip && !!row.tileInfo.tiles
-    width: row.width
-    height: row.pinnedStrip ? AllTiles.drawnHeight(row.tileInfo, row.menu.allTileHeight, row.stripPad) : 0
-    radius: row.menu.cornerRadius
-    color: row.menu.pinnedBackground
-    border.width: Math.max(1, Style.space(1))
-    border.color: row.menu.pinnedBorder
-
-    PinBadge {
-      z: 1
-      sizeScale: row.menu.menuFontScale
-      fontFamily: row.menu.fontFamily
-      ring: row.menu.background
-      anchors.top: parent.top
-      anchors.right: parent.right
-      anchors.margins: Style.space(6)
-    }
-  }
-
   // The strip: up to `columns` tiles across the row's width, the whole tile
   // height tall (the row itself is shorter on purpose; see
-  // AllTiles.stripHeight). Only a lead carries tiles.
+  // AllTiles.stripHeight). Only a lead carries tiles. The pinned strip
+  // brings its tint and outline (TileStrip.qml).
   TileStrip {
     visible: row.tiled
     menu: row.menu
