@@ -105,6 +105,64 @@ that runs your shell — nothing typed into the search field is ever evaluated a
 code. A bare number stays a search term.
 
 
+### Percentages
+
+| Type | Get |
+| --- | --- |
+| `$30 + 20%` | `$36` · `20% of $30 is $6` |
+| `50 - 10%` | `45` |
+| `100 eur - 10%` | `90 EUR` · `10% of 100 EUR is 10 EUR` |
+| `20% off 100 eur` | `80 EUR` · `Saves 20 EUR` |
+| `100 eur - 10% to usd` | the 90 EUR converted to USD, with the rate |
+| `20% off 50` | `40` · `Saves 10` |
+| `15% on 80` | `92` · `Adds 12` |
+| `20% of 50` | `10` |
+| `50 as a % of 200` | `25%` |
+| `50 is what % of 200` | `25%` |
+
+A leading `$ € £ ¥ ₹` or a currency code after the amount (`100 eur`)
+stays on the answer, and the code is a field of the answer form. Add
+`to <currency>` to convert the result with the currency answer's rates; Enter copies the
+number alone (`36`, or `25%` for a share). Decimals take either mark (`2.5` or
+`2,5`); `1,000` is refused for the same reason as below. `%` on its own between
+two numbers is still the calculator's remainder: `50 % 3` is `2`.
+
+
+### Work time
+
+| Type | Get |
+| --- | --- |
+| `40 hours in work days` | `5 work days` |
+| `3 work weeks in hours` | `120 hours` |
+| `2.5 work days in hours` | `20 hours` |
+| `120 hours in work weeks` | `3 work weeks` |
+
+An 8-hour day and a 5-day week. Units: `h hr hrs hour hours`, `work day(s)`,
+`workday(s)`, `working days`, `wd`, `work week(s)`, `ww`. One side has to be a
+work day or week, so `40 hours in days` stays an ordinary (calendar) unit
+conversion.
+
+
+### Editing an answer as a form
+
+When the line is a currency, unit, percentage or work-time answer, its values
+are drawn as fields: `[100] [eur] to [usd]`, `[20]% off [50]`.
+
+| Key | Does |
+| --- | --- |
+| Tab / Shift+Tab | Focus the first / last value, then step between them |
+| typing | Replaces the focused value (first key), then edits it |
+| Backspace / Ctrl+Backspace | Deletes a character / clears the value |
+| Up / Down | Steps the value: numbers by one, currencies through common codes (EUR USD GBP CHF CZK PLN …), units through the same dimension, work time through hours / work days / work weeks |
+| Enter | Copies the answer, as usual |
+| Esc | Leaves the form; the query stays. A second Esc clears it |
+
+The answer updates on every key. While a form is on the line, Tab edits it
+instead of switching tabs; Ctrl+Tab and Ctrl+1…7 still switch. Works with and
+without the leading `/`. The query text itself is what gets edited, so search,
+history and the answer row behave exactly as if the change had been typed.
+
+
 ### Currency conversion
 
 | Type | Get |

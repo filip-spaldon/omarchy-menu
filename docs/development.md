@@ -85,6 +85,18 @@ this list, in review and before a release:
   - URLs are opened only for allowed schemes;
   - files whose default handler runs or installs them open their folder
     instead.
+- **Clipboard tab**: reads only Omarchy's clipboard history file (through
+  `Settings.readFileCommand`, read-only), never the clipboard itself, and acts
+  on the selected snapshot entry, not a fresh history index lookup. Text
+  reaches copy/paste or a private temporary editor file through stdin; only
+  HTTP(S) links go to the browser. Image actions and thumbnails use paths
+  from Omarchy's image folder after one bounded stat finds a regular file
+  (no symlink) of at most 16 MiB. Thumbnails decode asynchronously, uncached,
+  at most 256 px. The paste key depends on the window under the launcher,
+  read with a bounded `hyprctl -j activewindow`; its class and tags are only
+  compared with a fixed list, and only the token `terminal` or `app` reaches
+  the paste script as an argument. Colour swatches are `#AARRGGBB` strings
+  built from parsed numbers, never the copied text.
 - **Answers and displayed text**: capped in size, sanitized
   (`MenuModel.sanitizeText`) and shown as plain text. AI answers are Markdown: they
   go through `AiBackend.markdownSafe` (no images, every `<` escaped, also
@@ -115,6 +127,19 @@ node tests/ai_unit_test.js
 ```
 
 The standard installer and updater follow the repository default branch.
+
+### Branches and releases
+
+- `dev` is where work happens: commits, merged pull requests, testing. Open
+  pull requests against `dev`.
+- `main` is the default branch and holds released versions only. Installs and
+  `omarchy plugin update` follow it, and the marketplace verifies only the
+  current HEAD of `main`.
+
+To release: bump `version` in `manifest.json` on `dev`, run the checks above,
+fast-forward `main` to `dev`, tag it (`git tag -a vX.Y.Z`), push `main` and the
+tag, then file a marketplace **Verify or update a listed plugin** request with
+"Verify and publish a newer upstream commit" and the full SHA of `main`.
 Submit [the repository](https://github.com/filip-spaldon/omarchy-menu) through
 the [marketplace form](https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=submit-plugin.yml)
 with category **Productivity** and tags **launcher**, **quickshell**, **ai**.

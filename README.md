@@ -18,7 +18,9 @@ https://github.com/user-attachments/assets/51d2cada-dd4d-4596-9a6c-2e71191caf62
 ## Open and navigate
 
 `Super+Space` opens the compact search prompt. Start typing, click a tab, use
-Tab / Shift+Tab to cycle, or Ctrl+1…6 to select a visible tab by position.
+Tab / Shift+Tab (or Ctrl+Tab) to cycle, or Ctrl+1…7 to select a visible tab by
+position. Tab switches tabs only when no [answer form](#instant-answers) is on
+the line.
 Switching tabs preserves the query. Arrow keys select a result; Enter activates
 it. Esc clears the query, then closes the menu; Left or Backspace on an empty
 query goes back a level in System.
@@ -47,11 +49,12 @@ an empty query lists every key (so a search can't start with "?").
 | Tab | Contents |
 | --- | --- |
 | **All** | Answers followed by Apps, System, Files and Folders sections, up to five results per section |
-| **Apps** | Installed applications; Ctrl+G switches between list and grid and saves the choice |
+| **Apps** | Installed applications, pinned ones in a strip on top; Ctrl+G switches between list and grid and saves the choice |
 | **System** | Omarchy actions in two panes: categories on the left, their items on the right |
 | **Files** | File name search under your home directory, with type, sort and result-limit controls |
 | **Folders** | Folder search, including a separate System folders filter for configuration directories |
 | **Windows** | Every open window across workspaces; Enter focuses it, switching workspace or raising the scratchpad as needed |
+| **Clipboard** | Omarchy's clipboard history, newest first; Ctrl+F filters by type; Enter pastes, Ctrl+C copies, Ctrl+O opens |
 
 The System tab keeps the category list visible while you browse its items.
 Use Up/Down to select, Right or Enter to open, and Left to go back. Typing
@@ -68,7 +71,55 @@ marks applications that already have windows, and Enter on one switches to it
 instead of starting a second copy. `omarchy-menu toggle windows` opens the tab
 directly.
 
-`Super+Alt+Space` opens Apps directly. Existing routes such as
+Ctrl+P pins the selected app in Apps, or unpins it. Pinned apps sit in a strip
+above the full list, tinted and outlined in the theme accent, in the order they
+were pinned; Ctrl+Shift+arrows move the selected one earlier or later. The
+strip shows only when at least one pinned app is installed, in the list (as a
+block of tiles) and in the grid (as its first rows) alike, and the arrows,
+Enter and Shift+Enter work on it as anywhere else. A pinned app also stays in
+the list under it. While searching the strip is hidden, so the best match is
+still first. The strip carries a pin
+marker in its corner, and a pinned app shows a small pin on its icon wherever
+it appears outside the strip. Pins are saved as `pinnedApps` in `state.json`.
+
+Clipboard lists the clipboard history kept by Omarchy's own clipboard service
+(Omarchy 4.5 and later), newest first: text by its first line with its line
+and character count, images by when they were copied. Typing filters by the
+full text, ignoring case and accents. Ctrl+F (or a click on the chips above
+the list) narrows the list to one type: All Types, Text, Images, Files (lines
+of absolute paths or `file://` URIs), Links (a whole http(s) URL or bare
+domain, shown with its host), or Colors (a whole hex, `rgb()` or `hsl()`
+value, shown with a swatch); Text is whatever is none of the others. The
+filter starts at All Types on every open. Images show inline thumbnails; missing,
+unsafe or larger-than-16-MiB files stay listed with an icon and no actions.
+Enter pastes the selected item into the window that had focus, with
+Ctrl+Shift+V in a terminal (a window Hyprland tags `terminal`, or a known
+terminal class such as kitty, Alacritty, foot or Ghostty) and Shift+Insert
+everywhere else, as Omarchy's universal paste does. Ctrl+C only
+copies it, and Ctrl+O opens it (a link in the browser, text in the editor as a
+private temporary file, an image in the viewer). Actions use the entry shown
+in the menu, even if a new item arrives after opening. The tab reads
+`~/.local/state/omarchy/clipboard-history.json` read-only when it is shown,
+once per open, and never reads the clipboard itself or changes the history.
+Without Omarchy's clipboard service the tab says the history is empty or
+off. Clipboard is never a section of All, so whatever you copied does not
+show up in a search of everything. `omarchy-menu toggle clipboard` opens the
+tab directly.
+
+**Optional: open Omni Clipboard with `Super+Ctrl+V`.** This shortcut opens
+Omarchy's built-in clipboard manager by default. To open Omni's Clipboard
+tab instead, add this to `~/.config/hypr/bindings.lua`:
+
+```lua
+o.rebind("SUPER + CTRL + V", "Clipboard (Omni menu)", hl.dsp.global("omarchy-menu-omni:toggle-clipboard"))
+```
+
+This switches straight to Clipboard if Omni is open on another tab. Press it
+while already on Clipboard to close Omni. Omni does not change your bindings
+automatically.
+
+`omarchy-menu toggle apps` opens Apps directly (see
+[Install](#install) to put it on `Super+Alt+Space`). Existing routes such as
 `omarchy menu summon style.theme` open the corresponding System submenu.
 External select/input prompts (emoji, timezone, keybindings and other dmenu
 consumers) retain their plain prompt without launcher tabs.
@@ -161,6 +212,7 @@ Settings are read on every open from
 {
   "appsView": "grid",
   "allAppsView": "list",
+  "pinnedApps": ["firefox", "org.gnome.Nautilus"],
   "tabOrder": ["all", "apps", "system", "files", "folders"],
   "allSections": ["apps", "system", "files", "folders"],
   "disabledTabs": [],
@@ -183,6 +235,9 @@ The initial application view is `list`; the example selects `grid`.
 up to two rows of them as wide as the card fits. `↑` `↓` move between the tile
 rows and the other sections, `←` `→` between the tiles, Enter opens the
 selected app. Other sections stay rows, and All with nothing typed is unchanged.
+`pinnedApps` lists the desktop ids pinned in Apps (Ctrl+P), in strip order
+(default `[]`). Ids of apps that are not installed are kept but not shown;
+duplicates, anything that is not a desktop id and pins past 50 are dropped.
 `cursorStyle` sets the search cursor: `block` (default), `beam`, `underline`,
 `outline` or `none`; `cursorBlink: false` keeps it solid, and
 `cursorWhenEmpty: false` hides it until something is typed.
@@ -192,10 +247,10 @@ selected app. Other sections stay rows, and All with nothing typed is unchanged.
 `allSections` independently controls the order of result sections in All.
 Unknown or duplicate IDs are ignored; omitted IDs are appended in default order.
 `openTab` picks the tab `Super+Space` opens on: `first` (default) is the first
-tab of `tabOrder` that is on, or name one: `all`, `apps`, `windows`, `system`,
-`files` or `folders`. A named tab that is disabled falls back to the first one
-on. Only `Super+Space` follows it; `Super+Alt+Space` still opens Apps and
-System routes such as `capture` still open System.
+tab of `tabOrder` that is on, or name one: `all`, `apps`, `windows`,
+`clipboard`, `system`, `files` or `folders`. A named tab that is disabled falls back to the first one
+on. Only `Super+Space` follows it; the Apps route (`omarchy-menu toggle apps`)
+still opens Apps and System routes such as `capture` still open System.
 
 To hide file and folder search, set `"disabledTabs": ["files", "folders"]`.
 Their sections also disappear from All and its file searches stop. To keep the
@@ -272,6 +327,8 @@ answer.
 | `100 km to miles` | Unit conversion |
 | `20 c to f` | Temperature conversion |
 | `123 eur to usd` | Currency conversion with rate date |
+| `$30 + 20%`, `100 eur - 10% to usd`, `20% off 50`, `50 as a % of 200` | Percentages |
+| `40 hours in work days` | Work time (8 h/day, 5 days/week) |
 | `time in tokyo` | Local time and offset |
 | `uuid`, `password 24`, `epoch` | Generated values; Ctrl+R refreshes them |
 | `sha256 omarchy`, `base64 hello` | Developer utilities |
@@ -286,6 +343,12 @@ example per command as a read-only hint; typing narrows the hints to the
 commands that still fit (`/pa` → `/password 24`) and they give way to the
 answer once it is unambiguous. Without the slash
 the same text is a normal search with any answer on top.
+
+Currency, unit, percentage and work-time answers turn the line into a form:
+Tab / Shift+Tab steps between the values, typing replaces the focused one,
+Up/Down steps it (common currencies, units of the same kind), and Esc returns
+to plain text. While a form is on the line Tab edits it instead of switching
+tabs; Ctrl+Tab and Ctrl+1…7 still switch.
 
 Unmatched text offers web search. Chromium-family browsers use their configured
 search engine; Firefox uses the fallback template (DuckDuckGo by default).
@@ -371,8 +434,8 @@ omarchy plugin add https://github.com/filip-spaldon/omarchy-menu.git --enable
 
 The installer validates the plugin, places it in
 `~/.config/omarchy/plugins/omarchy-menu-omni`, and enables it. Enabling Omni
-replaces the stock menu while keeping existing `Super+Space`, `Super+Alt+Space`
-and `omarchy menu` routes. It also provides an optional bar button, see
+replaces the stock menu while keeping the existing `Super+Space` and
+`omarchy menu` routes. It also provides an optional bar button, see
 [Bar button and settings](#bar-button-and-settings). Verify with:
 
 ```bash
@@ -383,11 +446,47 @@ omarchy menu summon
 Custom system actions still come from
 `~/.config/omarchy/extensions/omarchy-menu.jsonc`.
 
-For a faster open, bind `Super+Space` and `Super+Alt+Space` to the global
-shortcuts `omarchy-menu-omni:toggle` and `omarchy-menu-omni:toggle-apps`
-(`hl.dsp.global("omarchy-menu-omni:toggle")` in your Hyprland bindings)
-instead of `omarchy-menu`: the press then reaches the shell without starting
-any process. `omarchy-menu-omni:toggle-windows` opens on the Windows tab.
+To make `Super+Space` switch tabs instead of closing an open Omni menu, add:
+
+```lua
+o.rebind("SUPER + SPACE", "Omarchy menu", hl.dsp.global("omarchy-menu-omni:cycle-root"))
+```
+
+The first press opens the tab set in **Open on**. Further presses switch
+between that tab and System. From another tab, the key first goes to All,
+then switches between All and System. If **Open on** is System, it also
+switches between System and All. Each shortcut switch clears the query;
+use Esc to close.
+
+`Super+Alt+Space` is not changed by the plugin. Since Omarchy 4.5 it opens
+Omarchy's own apps launcher (the dock), and the plugin leaves your Hyprland
+bindings alone. To open Omni's Apps tab there instead, add this to
+`~/.config/hypr/bindings.lua`:
+
+```lua
+o.rebind("SUPER + ALT + SPACE", "Apps (Omni)", hl.dsp.global("omarchy-menu-omni:toggle-apps"))
+```
+
+To make Omarchy's System shortcuts switch directly to their Omni submenus, use:
+
+```lua
+o.rebind("SUPER + ESCAPE", "System (Omni)", hl.dsp.global("omarchy-menu-omni:toggle-system"))
+o.rebind("SUPER + CTRL + C", "Capture menu", hl.dsp.global("omarchy-menu-omni:toggle-capture"))
+o.rebind("SUPER + CTRL + O", "Toggle menu", hl.dsp.global("omarchy-menu-omni:toggle-toggles"))
+o.rebind("SUPER + CTRL + H", "Hardware menu", hl.dsp.global("omarchy-menu-omni:toggle-hardware"))
+o.rebind("SUPER + CTRL + S", "Share", hl.dsp.global("omarchy-menu-omni:toggle-share"))
+```
+
+Place the `Super+Esc` override before any lock-screen binding for the same key
+that you want to keep.
+
+Omni's global shortcuts for Apps, Windows (`omarchy-menu-omni:toggle-windows`),
+Clipboard, and System switch straight to their tab or submenu when Omni is open.
+Press the shortcut again at the same destination to close Omni.
+`omarchy-menu-omni:toggle` opens or
+closes the whole menu. These shortcuts start no extra process. The generic
+`omarchy-menu toggle` command still toggles the whole menu; use `omarchy-menu
+summon apps` to switch from a script without closing it first.
 
 ### Update, disable and remove
 
@@ -419,8 +518,9 @@ its authentication; see [AI answers](#ai-answers).
 
 There is no custom installer, remote build or additional service. The plugin
 runs inside the existing shell with your user permissions. It reads menu
-configuration, installed applications and file names beneath your home directory
-and the search roots you added; preferences, cached exchange rates and root
+configuration, installed applications, file names beneath your home directory
+and the search roots you added, and Omarchy's clipboard history while the
+Clipboard tab is shown; preferences, cached exchange rates and root
 indexes are written to the paths documented above. It never mounts or logs in
 to anything.
 Currency queries access the rate service, AI submission starts the chosen agent,
@@ -516,10 +616,11 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `FileSearchController.qml` | Files/Folders search: `fd`/`stat` processes over $HOME and the search roots, root status and background indexing, zoxide scores, results and ranking into rows |
 | `AiController.qml` | AI mode: config, agent discovery and switching, generation processes, terminal handoff |
 | `WindowsController.qml` | Windows tab: the Hyprland window list, refreshed while shown, and focusing a window |
+| `ClipboardController.qml` | Clipboard tab: reads Omarchy's clipboard history once per open and pastes, copies or opens the selected snapshot entry |
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
 | `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
-| `MenuModel.js`, `Tabs.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `KeySheet.js`, `Looks.js`, `Konstrukt.js`, `ai/*.js` | Pure logic, tested with Node |
+| `MenuModel.js`, `Tabs.js`, `AllTiles.js`, `Pinned.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `Clipboard.js`, `KeySheet.js`, `Looks.js`, `Konstrukt.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`
 property.

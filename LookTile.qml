@@ -16,6 +16,8 @@ Item {
   property string tileAppId: ""
   property int tileCol: 0
   property int tileRow: 0
+  // One of the Apps tab's pinned apps (Menu.pinnedSection).
+  property bool inPinnedStrip: false
   readonly property bool hasCursor: host.menu.cursorActive && host.tileIndex === host.menu.selectedIndex
 
   // The pointer, the same for every design: hover moves the cursor, a click
@@ -41,6 +43,7 @@ Item {
       tileIcon: host.tileIcon
       tileKind: host.tileKind
       tileAppId: host.tileAppId
+      inPinnedStrip: host.inPinnedStrip
     }
   }
   Component { id: malaTile; MalaTile { tile: host } }

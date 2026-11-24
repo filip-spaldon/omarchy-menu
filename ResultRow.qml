@@ -3,6 +3,8 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 import "Windows.js" as Windows
+import "Clipboard.js" as Clipboard
+import "AllTiles.js" as AllTiles
 
 // One row of the result list: icon or app icon, label, detail line,
 // right-hand text (a file's mtime) and a chevron for submenus. Roles come
@@ -22,15 +24,29 @@ BorderSurface {
   required property string target
   required property string detail
   required property string path
+  // A clipboard image's file, already checked by ClipboardController
+  // (inside Omarchy's image folder, a regular file under the size cap); ""
+  // on every other row.
+  required property string imagePath
+  // A clipboard colour's swatch, Qt "#AARRGGBB" built by Clipboard.colorSwatch
+  // from parsed numbers; "" on every other row.
+  required property string swatch
   required property string action
   required property int childCount
   required property string trailText
+  required property string section
+  // Installed software and `disabled:` guards: listed, dimmed, never picked.
+  required property bool disabled
 
   // An app of All's Apps section shown as a tile (AllTiles.js): the strip's
   // first row draws the whole strip, the rest take no room. The row's own
   // content and highlight stay hidden; each tile has its own.
   readonly property var tileInfo: row.menu.allTileAt(row.index, row.menu.layoutSerial)
   readonly property bool tiled: row.tileInfo !== null
+  // The Apps tab's pinned strip (AllTiles.layout's block): its lead draws
+  // every line of it, inset by the padding inside its outline.
+  readonly property bool pinnedStrip: row.tiled && row.tileInfo.lines !== undefined
+  readonly property real stripPad: row.pinnedStrip ? row.menu.pinnedStripPad : 0
 
   readonly property bool hasCursor: row.menu.cursorActive && row.index === row.menu.selectedIndex && row.kind !== "example"
     && (!row.menu.systemTwoPane || row.menu.systemPane === "right") && !row.tiled
@@ -38,9 +54,14 @@ BorderSurface {
   // matches the window class, and fall back to a glyph when none does.
   readonly property bool isApp: !row.tiled && (row.kind === "app" || (row.kind === "window" && row.appIcon.length > 0))
   readonly property bool hasIcon: !row.tiled && (row.icon.length > 0 || row.isApp)
+  readonly property bool showsThumb: !row.tiled && row.imagePath.length > 0
+  // Checked again here: only the exact shape colorSwatch writes reaches color.
+  readonly property bool showsSwatch: !row.tiled && !row.showsThumb && Clipboard.isSwatch(row.swatch)
   // Open windows of an application row, for the running marker.
   readonly property int windowCount: row.kind === "app" && !row.tiled ? row.menu.appWindowCount(row.appId) : 0
   readonly property string trailShown: row.tiled ? "" : row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
+  readonly property string shortcutHint: !row.tiled && !row.disabled
+    ? row.menu.systemShortcutHint(row.itemId, row.kind, row.action) : ""
 
   // The row's place among those on screen, 1-9: holding Alt shows it, and
   // Alt+n opens the row.
@@ -48,7 +69,7 @@ BorderSurface {
   readonly property bool numbered: row.menu.altHeld && row.kind !== "example"
     && row.ordinal >= 1 && row.ordinal <= 9
   // Where the label's middle sits, for the number and the actions.
-  readonly property real labelCenterY: contentColumn.y + labelText.y + labelText.height / 2
+  readonly property real labelCenterY: contentColumn.y + labelLine.y + labelText.y + labelText.height / 2
   // The selected row's actions and their keys, where the date was.
   readonly property var actions: !row.hasCursor ? []
     : (row.kind === "file" || row.kind === "folder" ? [["↵", "open"], ["alt ↵", "folder"], ["^C", "path"]]
@@ -63,9 +84,9 @@ BorderSurface {
   Component.onCompleted: if (row.hasCursor) row.menu.cursorRow = row
 
   // Command examples are a read-only hint.
-  opacity: row.kind === "example" ? 0.7 : 1
+  opacity: row.disabled ? 0.4 : (row.kind === "example" ? 0.7 : 1)
   width: ListView.view.width
-  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind)
+  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind, row.imagePath)
   radius: row.menu.rowRadius
   // The selection is drawn by the list (Menu.qml, selMarker), gliding
   // between rows; the rows themselves stay unfilled.
@@ -112,7 +133,9 @@ BorderSurface {
   Text {
     id: iconText
     textFormat: Text.PlainText
-    visible: row.hasIcon && !row.isApp
+    visible: row.hasIcon && !row.isApp && !row.showsThumb
+    // Keeps its place (the label lines up after it) under a colour swatch.
+    opacity: row.showsSwatch ? 0 : 1
     text: row.icon
     color: row.menu.foreground
     font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
@@ -122,7 +145,7 @@ BorderSurface {
     verticalAlignment: Text.AlignVCenter
     anchors.left: parent.left
     anchors.leftMargin: row.menu.rowReservedBorderLeft + Style.space(8)
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    y: contentColumn.y + labelLine.y + labelText.y + (labelText.height - height) / 2
   }
 
   Image {
@@ -139,7 +162,66 @@ BorderSurface {
     asynchronous: true
     anchors.left: parent.left
     anchors.leftMargin: row.menu.rowReservedBorderLeft + Style.space(8) + (row.menu.iconSlotWidth - width) / 2
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    y: contentColumn.y + labelLine.y + labelText.y + (labelText.height - height) / 2
+  }
+
+  // The picture in place of the icon, decoded small and off the UI thread.
+  // Until it is ready, or if it cannot be read, the image glyph stands in.
+  Item {
+    id: thumbBox
+    visible: row.showsThumb
+    height: row.showsThumb ? row.height - Style.space(12) : 0
+    width: row.showsThumb ? Math.round(height * 1.6) : 0
+    anchors.left: parent.left
+    anchors.leftMargin: row.menu.rowReservedBorderLeft + Style.space(8)
+    anchors.verticalCenter: parent.verticalCenter
+
+    Image {
+      id: thumb
+      anchors.fill: parent
+      source: row.showsThumb ? Clipboard.imageSource(row.imagePath) : ""
+      asynchronous: true
+      cache: false
+      autoTransform: true
+      smooth: true
+      fillMode: Image.PreserveAspectFit
+      // Physical pixels, capped: a huge picture is decoded no larger than this.
+      sourceSize.width: Math.min(256, Math.ceil(thumbBox.width * Screen.devicePixelRatio))
+      sourceSize.height: Math.min(256, Math.ceil(thumbBox.height * Screen.devicePixelRatio))
+    }
+
+    Text {
+      textFormat: Text.PlainText
+      visible: thumb.status !== Image.Ready
+      text: row.icon
+      color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+      font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
+      font.pixelSize: row.menu.scaledFont(Style.font.iconLarge)
+      anchors.centerIn: parent
+    }
+  }
+
+  // A colour entry shows the colour itself in the icon's place, outlined so
+  // a transparent one is still visible.
+  Rectangle {
+    visible: row.showsSwatch
+    width: row.menu.scaledFont(Style.font.iconLarge)
+    height: width
+    radius: Math.min(row.menu.cornerRadius, Style.space(4))
+    color: row.showsSwatch ? row.swatch : "transparent"
+    border.width: 1
+    border.color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+    anchors.horizontalCenter: iconText.horizontalCenter
+    anchors.verticalCenter: iconText.verticalCenter
+  }
+
+  PinBadge {
+    visible: row.isApp && row.kind === "app" && row.section !== row.menu.pinnedSection && row.menu.isAppPinned(row.appId)
+    sizeScale: row.menu.menuFontScale
+    fontFamily: row.menu.fontFamily
+    ring: row.hasCursor ? row.menu.selectedBackground : row.menu.background
+    x: appIconImage.x - width * 0.4
+    y: appIconImage.y - height * 0.4
   }
 
   RunningBadge {
@@ -153,23 +235,45 @@ BorderSurface {
   Column {
     id: contentColumn
     visible: !row.tiled
-    anchors.left: row.hasIcon ? iconText.right : parent.left
-    anchors.leftMargin: row.hasIcon ? Style.space(6) : row.menu.rowReservedBorderLeft + Style.space(18)
+    anchors.left: row.showsThumb ? thumbBox.right : row.hasIcon ? iconText.right : parent.left
+    anchors.leftMargin: row.showsThumb ? Style.space(10) : row.hasIcon ? Style.space(6) : row.menu.rowReservedBorderLeft + Style.space(18)
     anchors.right: actionRow.visible ? actionRow.left : (trailLabel.visible ? trailLabel.left : trail.left)
     anchors.rightMargin: Style.space(6)
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(3)
 
-    Text {
-      id: labelText
-      textFormat: row.marked ? Text.StyledText : Text.PlainText
+    Item {
+      id: labelLine
       width: parent.width
-      text: row.marked || row.label
-      color: row.hasCursor ? row.menu.selectionText : row.menu.foreground
-      font.family: row.menu.fontFamily
-      font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.body : Style.font.heading)
-      font.weight: Font.Medium
-      elide: Text.ElideRight
+      implicitHeight: Math.max(labelText.implicitHeight, hintText.visible ? hintText.implicitHeight : 0)
+      readonly property real gap: Style.space(8)
+
+      Text {
+        id: labelText
+        textFormat: row.marked ? Text.StyledText : Text.PlainText
+        width: hintText.visible ? Math.max(0, parent.width - hintText.width - labelLine.gap) : parent.width
+        anchors.verticalCenter: parent.verticalCenter
+        text: row.marked || row.label
+        color: row.hasCursor ? row.menu.selectionText : row.menu.foreground
+        font.family: row.menu.fontFamily
+        font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.body : Style.font.heading)
+        font.weight: Font.Medium
+        elide: Text.ElideRight
+      }
+
+      Text {
+        id: hintText
+        textFormat: Text.PlainText
+        visible: text.length > 0 && implicitWidth + labelLine.gap <= parent.width * 0.45
+        width: implicitWidth
+        anchors.right: parent.right
+        anchors.baseline: labelText.baseline
+        text: row.shortcutHint
+        color: row.hasCursor ? row.menu.selectionText : row.menu.foreground
+        opacity: 0.4
+        font.family: row.menu.fontFamily
+        font.pixelSize: row.menu.scaledFont(Style.font.caption)
+      }
     }
 
     Text {
@@ -255,7 +359,7 @@ BorderSurface {
     width: Style.space(14)
     anchors.right: parent.right
     anchors.rightMargin: row.menu.rowReservedBorderRight + Style.space(8)
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    y: contentColumn.y + labelLine.y + labelText.y + (labelText.height - height) / 2
     spacing: 0
 
     Text {
@@ -281,6 +385,27 @@ BorderSurface {
     }
   }
 
+  // The pinned strip's tint and outline, as tall as all its lines.
+  Rectangle {
+    visible: row.pinnedStrip && !!row.tileInfo.tiles
+    width: row.width
+    height: row.pinnedStrip ? AllTiles.drawnHeight(row.tileInfo, row.menu.allTileHeight, row.stripPad) : 0
+    radius: row.menu.cornerRadius
+    color: row.menu.pinnedBackground
+    border.width: Math.max(1, Style.space(1))
+    border.color: row.menu.pinnedBorder
+
+    PinBadge {
+      z: 1
+      sizeScale: row.menu.menuFontScale
+      fontFamily: row.menu.fontFamily
+      ring: row.menu.background
+      anchors.top: parent.top
+      anchors.right: parent.right
+      anchors.margins: Style.space(6)
+    }
+  }
+
   // The strip: up to `columns` tiles across the row's width, the whole tile
   // height tall (the row itself is shorter on purpose; see
   // AllTiles.stripHeight). Only a lead carries tiles.
@@ -288,8 +413,10 @@ BorderSurface {
     visible: row.tiled
     menu: row.menu
     info: row.tiled ? row.tileInfo : null
+    pad: row.stripPad
+    inPinnedStrip: row.pinnedStrip
     width: row.width
-    height: row.menu.allTileHeight
+    height: row.pinnedStrip ? AllTiles.drawnHeight(row.tileInfo, row.menu.allTileHeight, row.stripPad) : row.menu.allTileHeight
   }
 
   MouseArea {
@@ -297,7 +424,7 @@ BorderSurface {
     enabled: !row.tiled
     anchors.fill: parent
     hoverEnabled: true
-    cursorShape: Qt.PointingHandCursor
+    cursorShape: row.disabled ? Qt.ArrowCursor : Qt.PointingHandCursor
     onEntered: row.menu.selectFromPointer(row.index, row, {
       x: mouseArea.mouseX,
       y: mouseArea.mouseY
@@ -306,6 +433,7 @@ BorderSurface {
       row.menu.selectFromPointer(row.index, row, mouse)
     }
     onClicked: {
+      if (row.disabled) return
       row.menu.cursorActive = true
       row.menu.selectedIndex = row.index
       row.menu.activateIndex(row.index, true)

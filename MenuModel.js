@@ -226,12 +226,24 @@ function normalizeItem(id, raw) {
     action: value.action || "",
     provider: value.provider || "",
     aliases: aliases,
+    // Search-only terms: matched by nameSearchText, never by resolveRoute.
+    // Translations put the English label here so English search keeps
+    // working without making English words routable commands.
+    searchTerms: normalizeAliases(value.searchTerms),
     when: value.when || "",
-    checked: value.checked || ""
+    checked: value.checked || "",
+    disabled: value.disabled || ""
   }
 }
 
 function parseMenuJsonc(raw) {
+  return readMenuJsonc(raw) || []
+}
+
+// Like parseMenuJsonc, but null when the text is not a menu at all: what a
+// reader sees of a file caught mid-write by an update, a checkout or an
+// editor's save. A file of nothing but comments is still an empty menu.
+function readMenuJsonc(raw) {
   var stripped = stripJsonc(raw)
   if (!stripped.trim()) return []
 
@@ -239,9 +251,9 @@ function parseMenuJsonc(raw) {
   try {
     parsed = JSON.parse(stripped)
   } catch (e) {
-    return []
+    return null
   }
-  if (typeof parsed !== "object" || parsed === null) return []
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null
 
   var source = (parsed.items && typeof parsed.items === "object" && !Array.isArray(parsed.items))
     ? parsed.items
@@ -255,7 +267,22 @@ function parseMenuJsonc(raw) {
   return out
 }
 
-function mergeMenuSources(defaultItems, userItems) {
+// The rows a watched menu file leaves after a read. An update, a checkout or
+// an editor's save can be read mid-write, and that read must not replace good
+// rows with nothing, so it keeps the previous ones until a later read finds
+// the file whole. The shipped menu is never legitimately empty, so for it
+// (required) an empty read is mid-write too.
+function keepMenuRows(previous, raw, required) {
+  var items = readMenuJsonc(raw)
+  if (!items || (required && items.length === 0)) return previous
+  return items
+}
+
+// The root row has no JSONC entry, so the merge injects it when neither
+// source supplies one; only then does rootLabel (the catalog's translation
+// of "Go") apply. A root row from either source keeps its own label, so a
+// user-supplied heading is never overwritten by the catalog.
+function mergeMenuSources(defaultItems, userItems, rootLabel) {
   var nextItems = ({})
   var nextOrder = []
   var sources = [defaultItems || [], userItems || []]
@@ -276,7 +303,7 @@ function mergeMenuSources(defaultItems, userItems) {
   }
 
   if (!nextItems.root) {
-    nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", action: "", provider: "" }
+    nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: (typeof rootLabel === "string" && rootLabel) ? rootLabel : "Go", title: "", target: "", description: "", aliases: [], searchTerms: [], when: "", checked: "", disabled: "", action: "", provider: "" }
     nextOrder.unshift("root")
   }
   for (var k3 = 0; k3 < nextOrder.length; k3++) nextItems[nextOrder[k3]].order = k3
@@ -463,10 +490,20 @@ function isVisible(items, itemOrder, whenResults, entry, depth) {
   return false
 }
 
-function labelFor(entry, checkedResults) {
+// A `disabled:` row stays listed but goes dim and unselectable. The
+// Install submenus use it so software already on the machine reads as
+// installed rather than disappearing from the list it was installed from.
+function isDisabled(disabledResults, entry) {
+  if (!entry || !entry.disabled) return false
+  return !!(disabledResults && disabledResults[entry.id])
+}
+
+// A disabled row is software you already have, which is the same thing the ✓
+// says everywhere else in the menu, so it earns the same marker.
+function labelFor(entry, checkedResults, disabledResults) {
   if (!entry) return ""
-  if (entry.checked && checkedResults && checkedResults[entry.id]) return entry.label + " ✓"
-  return entry.label
+  var marked = (entry.checked && checkedResults && checkedResults[entry.id]) || isDisabled(disabledResults, entry)
+  return marked ? entry.label + " ✓" : entry.label
 }
 
 function searchableToken(value) {
@@ -481,7 +518,7 @@ function leafIdFor(id) {
 function nameSearchText(entry) {
   if (!entry) return ""
   var aliases = []
-  var values = Array.isArray(entry.aliases) ? entry.aliases : []
+  var values = (Array.isArray(entry.aliases) ? entry.aliases : []).concat(Array.isArray(entry.searchTerms) ? entry.searchTerms : [])
   for (var i = 0; i < values.length; i++) aliases.push(searchableToken(values[i]))
   return [entry.label, searchableToken(leafIdFor(entry.id)), aliases.join(" ")].join(" ").toLowerCase()
 }
@@ -573,23 +610,22 @@ function searchScore(items, entry, query) {
   return score * 1000 + depthFor(items, entry.id) * 25 + entry.order
 }
 
-function displayRow(items, itemOrder, checkedResults, entry, detail, score, section) {
+function displayRow(items, itemOrder, checkedResults, disabledResults, entry, detail, score, section) {
   var target = entry.kind === "link" ? entry.target : entry.id
   return {
     itemId: entry.id,
-    // Menu rows are always actionable. The role is declared here anyway so
-    // every row in the ListView carries it: query rows set it while they wait
-    // on something, and a ListModel fixes its roles on the first row appended.
-    disabled: false,
+    disabled: isDisabled(disabledResults, entry),
     kind: entry.kind,
     icon: entry.icon,
     iconFont: entry.iconFont || "",
     appIcon: entry.appIcon || "",
     appId: entry.appId || "",
-    label: labelFor(entry, checkedResults),
+    label: labelFor(entry, checkedResults, disabledResults),
     target: target,
     detail: detail || "",
     path: pathFor(items, entry.id),
+    imagePath: "",
+    swatch: "",
     childCount: (entry.kind === "menu" || entry.kind === "link") ? childCount(items, itemOrder, target) : 0,
     action: entry.action || "",
     provider: entry.provider || "",
@@ -608,12 +644,25 @@ function displayRow(items, itemOrder, checkedResults, entry, detail, score, sect
 // cached while one expression runs lives in that subshell only, so a lazy
 // memo never survives to the expression after it.
 var GUARD_READERS = [
+  "omarchy-bar background",
+  "omarchy-bar get omarchy.power showPercentage",
+  "omarchy-bar get omarchy.clock format",
+  "omarchy-bar get omarchy.clock verticalFormat",
+  "omarchy-bar position",
   "omarchy-channel-current",
   "omarchy-default-agent",
   "omarchy-default-browser",
   "omarchy-default-editor",
   "omarchy-default-terminal",
-  "omarchy-dns"
+  "omarchy-default-dictation",
+  "omarchy-dns",
+  "omarchy-dock autohide",
+  "omarchy-dock position",
+  "omarchy-hyprland-corners",
+  "omarchy-hyprland-window-transparency",
+  "omarchy-hyprland-workspace-layout-default",
+  "omarchy-shell notifications isDnd",
+  "omarchy-toggle-nightlight --status"
 ]
 
 // Package and command presence account for most of what the guards ask, and
@@ -634,12 +683,58 @@ var GUARD_READERS = [
 // is set in the environment, which a login shell may well have done, so the
 // parser follows the indented lines rather than reading the first one and
 // dropping half of what is installed.
-function guardHelpers() {
-  return 'declare -A __omarchy_pkgs=()\n'
-    + 'mapfile -t __omarchy_pkg_names < <({ pacman -Qq; LC_ALL=C pacman -Qi'
+//
+// Building the set is most of the batch's runtime (~75ms of `-Qi` over a
+// thousand packages), yet it only changes when a transaction does. So it is
+// kept in $XDG_RUNTIME_DIR, stamped with the local database directory's
+// identity and change times: every install, removal and upgrade adds, removes
+// or renames a `name-version` entry there, which moves them. A set is stored
+// only from a build no transaction can have overlapped -- the same stamp
+// before and after, and no db.lck at either end -- so a half-written database
+// is never what gets remembered. The stamp and the set are read through one
+// descriptor, so a writer replacing the file mid-read cannot pair one stamp
+// with another set.
+//
+// A build that failed is used for this run, as before, but never stored:
+// only when both queries succeed does it end with a `/` line, which no
+// package name can contain.
+//
+// The database is wherever pacman.conf's DBPath puts it, so pacman-conf
+// names the directory the stamp and lock are read from; one that cannot be
+// named is never cached.
+function guardPackageSnapshot() {
+  var build = '{ set -o pipefail; pacman -Qq && LC_ALL=C pacman -Qi'
     + " | awk '/^[A-Za-z]/ { provides = ($0 ~ /^Provides/); sub(/^[^:]*: /, \"\") }"
     + ' provides && $0 != "None" { n = split($0, p, " ");'
-    + ' for (i = 1; i <= n; i++) { sub(/[<>=].*/, "", p[i]); print p[i] } }\'; } 2>/dev/null)\n'
+    + ' for (i = 1; i <= n; i++) { sub(/[<>=].*/, "", p[i]); print p[i] } }\' && echo /; } 2>/dev/null'
+  var stamp = 'stat -c "%d:%i:%.9Y:%.9Z" -- "$__omarchy_pkg_db/local" 2>/dev/null'
+
+  return '__omarchy_pkg_db=${OMARCHY_PACMAN_DB_PATH:-$(pacman-conf DBPath 2>/dev/null)} || __omarchy_pkg_db=""\n'
+    + '__omarchy_pkg_db=${__omarchy_pkg_db%/}\n'
+    + '__omarchy_pkg_cache=${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/omarchy-menu-packages}\n'
+    + '__omarchy_pkg_stamp=""\n'
+    + '[[ -z $__omarchy_pkg_db ]] || __omarchy_pkg_stamp=$(' + stamp + ') || __omarchy_pkg_stamp=""\n'
+    + '__omarchy_pkg_names=()\n'
+    + 'if [[ -n $__omarchy_pkg_cache && -n $__omarchy_pkg_stamp ]]'
+    + ' && { IFS= read -r __omarchy_pkg_line && [[ $__omarchy_pkg_line == "$__omarchy_pkg_stamp" ]]'
+    + ' && mapfile -t __omarchy_pkg_names; } 2>/dev/null <"$__omarchy_pkg_cache"; then :\n'
+    + 'else\n'
+    + '  __omarchy_pkg_names=()\n'
+    + '  [[ ! -e $__omarchy_pkg_db/db.lck ]] || __omarchy_pkg_stamp=""\n'
+    + '  mapfile -t __omarchy_pkg_names < <(' + build + ')\n'
+    + '  if ((${#__omarchy_pkg_names[@]})) && [[ ${__omarchy_pkg_names[-1]} == "/" ]]; then unset "__omarchy_pkg_names[-1]"; else __omarchy_pkg_stamp=""; fi\n'
+    + '  if [[ -n $__omarchy_pkg_cache && -n $__omarchy_pkg_stamp && ! -e $__omarchy_pkg_db/db.lck ]]'
+    + ' && [[ $(' + stamp + ') == "$__omarchy_pkg_stamp" ]]; then\n'
+    + '    { printf "%s\\n" "$__omarchy_pkg_stamp" "${__omarchy_pkg_names[@]}" >"$__omarchy_pkg_cache.$$"'
+    + ' && mv -f -- "$__omarchy_pkg_cache.$$" "$__omarchy_pkg_cache"; } 2>/dev/null'
+    + ' || rm -f -- "$__omarchy_pkg_cache.$$" 2>/dev/null || :\n'
+    + '  fi\n'
+    + 'fi\n'
+}
+
+function guardHelpers() {
+  return 'declare -A __omarchy_pkgs=()\n'
+    + guardPackageSnapshot()
     + 'for __omarchy_pkg in "${__omarchy_pkg_names[@]}"; do __omarchy_pkgs[$__omarchy_pkg]=1; done\n'
     + '__omarchy_pkg_has() { [[ -n ${__omarchy_pkgs[$1]-} ]] && return 0; '
     + '[[ $1 == *[\\<\\>=]* ]] && { pacman -Q "$1" &>/dev/null; return; }; return 1; }\n'
@@ -655,19 +750,31 @@ function guardHelpers() {
 // same way unquoted -- while a function would also catch `command -v reader`,
 // `VAR=x reader`, and every other form, and answer those wrong. Anything but
 // the plain substitution is left alone to run the real command.
+//
+// The readers are separate programs with nothing to share, so they all start
+// at once, before the package set is built, each on a process substitution
+// of its own; the batch then reads each one's output in turn. Run one after
+// another they were a quarter of the batch. Reading to EOF and dropping the
+// trailing newlines is what `$(...)` does with the same output.
 function guardPrelude(guards) {
-  var prelude = guardHelpers()
+  var start = ""
+  var collect = ""
 
   for (var i = 0; i < GUARD_READERS.length; i++) {
     // The guards arrive already substituted, so what marks a reader as wanted
     // is the slot standing in for it, not the call it replaced.
     if (guards.indexOf(guardReaderSlot(i)) < 0) continue
-    // `|| :` so a reader that exits nonzero cannot take the batch down with
-    // it under a login shell that turned on errexit.
-    prelude += "__omarchy_read_" + i + "=$(" + GUARD_READERS[i] + " 2>/dev/null) || :\n"
+    var value = "__omarchy_read_" + i
+    var fd = "__omarchy_read_fd_" + i
+    start += "exec {" + fd + "}< <(" + GUARD_READERS[i] + " 2>/dev/null)\n"
+    // `|| :` because read reports the EOF it stops at, and a login shell may
+    // have turned on errexit.
+    collect += "IFS= read -r -d '' " + value + " <&$" + fd + " || :\n"
+      + "exec {" + fd + "}<&-\n"
+      + value + "=${" + value + "%\"${" + value + "##*[!$'\\n']}\"}\n"
   }
 
-  return prelude
+  return start + guardHelpers() + collect
 }
 
 function guardReaderSlot(index) {
@@ -686,22 +793,120 @@ function guardLine(id, tag, expression) {
     + id + ":" + tag + ":1; else echo " + id + ":" + tag + ":0; fi\n"
 }
 
-// One bash script for every `when:` and `checked:` in the menu, reporting
-// `<id>:<w|c>:<0|1>` per line. Speed is the whole point: the menu opens on
-// the last evaluation's answers, so however long this takes is how long a row
-// can contradict the state it describes.
+// How many subshells share the guards. Most of what is left of the batch is
+// a few dozen separate programs (hardware probes, systemctl, the screen
+// recorder's status), each waiting on its own process start rather than on
+// a core, so running them side by side is where the time comes back. Eight
+// took the shipped menu's batch from ~400ms to ~160ms on a 32-thread desktop
+// (~195ms to ~55ms once the package set was cached); more stopped paying.
+var GUARD_GROUPS = 8
+
+// One bash script for every `when:`, `checked:` and `disabled:` in the menu,
+// reporting `<id>:<w|c|d>:<0|1>` per line. Speed is the whole point: the menu
+// opens on the last evaluation's answers, so however long this takes is how
+// long a row can contradict the state it describes.
+//
+// Guards are dealt round-robin into GUARD_GROUPS background subshells, each
+// inheriting the package set, the shadowed helpers and the readers' answers,
+// and the batch exits once all of them have. Lines arrive in any order, which
+// the menu never relied on: each names its row, and each is one short write
+// to the pipe, which the kernel never interleaves.
+//
+// A group that dies part way (a guard tripping a login shell's `set -u`, say)
+// has left its remaining rows unanswered, and the menu keeps the last full
+// set only when the batch fails. So each group is waited for by pid, and the
+// batch's status is nonzero if any of them was.
 function guardScript(items) {
-  var guards = ""
+  var lines = []
   var ids = Object.keys(items || {})
 
   for (var i = 0; i < ids.length; i++) {
     var entry = items[ids[i]]
     if (!entry) continue
-    if (entry.when) guards += guardLine(ids[i], "w", entry.when)
-    if (entry.checked) guards += guardLine(ids[i], "c", entry.checked)
+    if (entry.when) lines.push(guardLine(ids[i], "w", entry.when))
+    if (entry.checked) lines.push(guardLine(ids[i], "c", entry.checked))
+    if (entry.disabled) lines.push(guardLine(ids[i], "d", entry.disabled))
+  }
+  if (lines.length === 0) return ""
+
+  var groups = []
+  for (var j = 0; j < lines.length; j++) {
+    var group = j % GUARD_GROUPS
+    groups[group] = (groups[group] || "") + lines[j]
   }
 
-  return guards ? guardPrelude(guards) + guards : ""
+  var script = guardPrelude(lines.join("")) + "__omarchy_groups=()\n"
+  for (var k = 0; k < groups.length; k++) script += "{\n" + groups[k] + "} &\n__omarchy_groups+=($!)\n"
+  return script + "__omarchy_failed=0\n"
+    + 'for __omarchy_group in "${__omarchy_groups[@]}"; do wait "$__omarchy_group" || __omarchy_failed=1; done\n'
+    + "((__omarchy_failed == 0))\n"
+}
+
+// An action that only asks this shell to summon one of its own plugins can be
+// run in-process, skipping the bash and qs ipc spawns. Anything more than the
+// bare call, such as a second command or a shell-expanded payload, is left to
+// bash.
+function summonAction(action) {
+  var match = /^omarchy-shell shell summon ([A-Za-z0-9._-]+)(?: '([^']*)')?$/.exec(String(action || ""))
+  if (!match) return null
+  return { id: match[1], payload: match[2] || "{}" }
+}
+
+
+// Multi-select requests return stable values, without icons, in option order.
+function dmenuValue(option) {
+  var parts = String(option || "").split("\t")
+  if (parts.length > 1) parts.shift()
+  return parts.join("\t")
+}
+
+function dmenuSelections(options, selected, preserveOrder) {
+  var available = options.map(dmenuValue)
+  return (preserveOrder ? selected : available).filter(function(value, index, values) {
+    return available.indexOf(value) !== -1 && selected.indexOf(value) !== -1 && values.indexOf(value) === index
+  })
+}
+
+function toggleDmenuSelection(selected, value) {
+  return selected.indexOf(value) === -1 ? selected.concat([value])
+    : selected.filter(function(item) { return item !== value })
+}
+
+// Returns a copy of items with label/title/description replaced from a
+// translation catalog ({id: {label, title, description}}), as shipped in
+// default/i18n/<code>/menu.json. The English label stays searchable by
+// moving it into searchTerms when the translation differs — searchTerms
+// feed search but never resolveRoute, so English words do not become
+// routable commands in other languages. Items without a
+// catalog entry pass through untouched, so an incomplete (or missing)
+// catalog degrades to English row by row. Applied to the default items
+// before the user extension merges, so user rows and retitles always win.
+function applyTranslations(items, catalog) {
+  var source = Array.isArray(items) ? items : []
+  var strings = (catalog && typeof catalog === "object") ? catalog : ({})
+  var out = []
+  for (var i = 0; i < source.length; i++) {
+    var entry = source[i]
+    var translated = entry && strings[entry.id]
+    if (!translated || typeof translated !== "object") {
+      out.push(entry)
+      continue
+    }
+    var next = {}
+    for (var k in entry) next[k] = entry[k]
+    if (translated.label) {
+      if (translated.label !== entry.label && entry.label) {
+        var terms = Array.isArray(entry.searchTerms) ? entry.searchTerms.slice() : []
+        if (terms.indexOf(entry.label) < 0) terms.push(entry.label)
+        next.searchTerms = terms
+      }
+      next.label = translated.label
+    }
+    if (translated.title) next.title = translated.title
+    if (translated.description) next.description = translated.description
+    out.push(next)
+  }
+  return out
 }
 
 // --- Calculator -------------------------------------------------------------
@@ -1231,16 +1436,23 @@ function webSearchUrl(query, template) {
 
 var UNITS = ({})
 
+// Every unit once, in the order defined, for stepping through a dimension
+// (Up/Down on a unit field of an answer form). `name` is the first spelling,
+// which is one unitFor reads back -- unlike the symbol, which can be "m/s".
+var UNIT_ORDER = []
+
 function defineUnit(dimension, factor, symbol, names) {
-  var unit = { dimension: dimension, factor: factor, symbol: symbol }
   var list = names.split(" ")
+  var unit = { dimension: dimension, factor: factor, symbol: symbol, name: list[0] }
   for (var i = 0; i < list.length; i++) UNITS[list[i]] = unit
+  UNIT_ORDER.push(unit)
 }
 
 function defineTemperature(symbol, names, toKelvin, fromKelvin) {
-  var unit = { dimension: "temperature", symbol: symbol, toKelvin: toKelvin, fromKelvin: fromKelvin }
   var list = names.split(" ")
+  var unit = { dimension: "temperature", symbol: symbol, name: list[0], toKelvin: toKelvin, fromKelvin: fromKelvin }
   for (var i = 0; i < list.length; i++) UNITS[list[i]] = unit
+  UNIT_ORDER.push(unit)
 }
 
 // Length, against the metre.
@@ -1376,6 +1588,396 @@ function formatUnitValue(value) {
   if (typeof value !== "number" || !isFinite(value)) return ""
   var text = String(parseFloat(value.toPrecision(6)))
   return text === "-0" ? "0" : text
+}
+
+// --- Percentages and work time -----------------------------------------------
+// The sums people otherwise open a spreadsheet for: "$30 + 20%", "20% off 50",
+// "50 as a % of 200", "40 hours in work days". Each is a short fixed sentence
+// with numbers in it, so each is one regular expression whose capture groups
+// cover the whole query end to end. That partition is what lets the same match
+// both answer the query and say where its numbers sit on the search line --
+// which is what the answer forms below are made of.
+
+var FORM_NUMBER = "(?:\\d+(?:[.,]\\d+)?|[.,]\\d+)"
+var FORM_MONEY = "[$€£¥₹]?"
+var FORM_CODE = "[^\\s0-9.,()+\\-*\\/%^=]+"
+var FORM_CONNECTOR = "(?:\\s+(?:to|into|in|as)\\s+|\\s*(?:->|=>|→)\\s*)"
+
+function compileForm(pattern) {
+  return new RegExp(pattern
+    .replace(/\{N\}/g, FORM_NUMBER)
+    .replace(/\{M\}/g, FORM_MONEY)
+    .replace(/\{C\}/g, FORM_CODE)
+    .replace(/\{TO\}/g, FORM_CONNECTOR), "i")
+}
+
+// A number as typed by hand, with either decimal mark: "2.5" or "2,5". The one
+// spelling that reads both ways -- "1,000" -- reads as neither, which is the
+// line the calculator draws too.
+function parseLooseNumber(text) {
+  var raw = String(text === undefined || text === null ? "" : text).trim()
+  if (!new RegExp("^" + FORM_NUMBER + "$").test(raw)) return null
+  if (/^\d+,\d{3}$/.test(raw)) return null
+  var value = parseFloat(raw.replace(",", "."))
+  return isFinite(value) ? value : null
+}
+
+// The part of the search line an answer reads -- past a leading "/" and short
+// of a trailing "=" -- and the offset it starts at, so a span found in the
+// body maps back onto the line as typed.
+function answerBody(text) {
+  var src = String(text || "")
+  var lead = src.match(/^\s*\/?\s*/)[0].length
+  var tail = src.slice(lead).match(/\s*=?\s*$/)[0].length
+  return { start: lead, text: src.slice(lead, src.length - tail) }
+}
+
+// Where each capture group of a full-length match sits, offset onto the line.
+// Index 0 is unused so the list lines up with the groups. Null when the
+// groups do not tile the match, which would make every span after it wrong.
+function formGroupSpans(match, offset) {
+  var spans = [null]
+  var at = offset
+  for (var i = 1; i < match.length; i++) {
+    var length = (match[i] || "").length
+    spans.push({ start: at, end: at + length })
+    at += length
+  }
+  return at === offset + match[0].length ? spans : null
+}
+
+// `a` and `b` are the groups holding the two numbers, `money` the one holding
+// a currency symbol to carry over onto the answer, `code` an optional
+// currency code after the amount ("100 eur - 10%"), checked against the
+// currency table before the form counts. `to` is an optional target
+// currency ("100 eur - 10% to usd"): the sum is worked out in the source
+// currency and converted by the caller, which holds the rates.
+var PERCENT_FORMS = [
+  { op: "add", re: compileForm("^({M})({N})(\\s*{C})?(\\s*\\+\\s*)({N})(\\s*%)(?:({TO})({C}))?$"), money: 1, a: 2, code: 3, b: 5, to: 8 },
+  { op: "sub", re: compileForm("^({M})({N})(\\s*{C})?(\\s*[-−]\\s*)({N})(\\s*%)(?:({TO})({C}))?$"), money: 1, a: 2, code: 3, b: 5, to: 8 },
+  { op: "off", re: compileForm("^({N})(\\s*%\\s*off\\s+)({M})({N})(\\s*{C})?(?:({TO})({C}))?$"), money: 3, a: 1, b: 4, code: 5, to: 7 },
+  { op: "of", re: compileForm("^({N})(\\s*%\\s*of\\s+)({M})({N})(\\s*{C})?(?:({TO})({C}))?$"), money: 3, a: 1, b: 4, code: 5, to: 7 },
+  { op: "on", re: compileForm("^({N})(\\s*%\\s*on\\s+)({M})({N})(\\s*{C})?(?:({TO})({C}))?$"), money: 3, a: 1, b: 4, code: 5, to: 7 },
+  { op: "ratio", re: compileForm("^({M})({N})(\\s+(?:as\\s+(?:an?\\s+)?|is\\s+what\\s+)(?:%|percent(?:age)?)\\s+of\\s+)({M})({N})$"),
+    money: 0, a: 2, b: 5 }
+]
+
+function percentForm(text) {
+  var body = answerBody(text)
+  if (!body.text) return null
+  for (var i = 0; i < PERCENT_FORMS.length; i++) {
+    var match = body.text.match(PERCENT_FORMS[i].re)
+    if (!match) continue
+    var codeText = PERCENT_FORMS[i].code ? (match[PERCENT_FORMS[i].code] || "") : ""
+    var code = codeText ? currencyCodeFor(codeText) : ""
+    // A word after the amount that is no currency: not a percentage sum.
+    if (codeText && !code) return null
+    // "€100 eur" says the currency twice.
+    if (code && PERCENT_FORMS[i].money && match[PERCENT_FORMS[i].money]) return null
+    var toText = PERCENT_FORMS[i].to ? (match[PERCENT_FORMS[i].to] || "") : ""
+    var to = toText ? currencyCodeFor(toText) : ""
+    // A target needs a known currency on both sides; a symbol counts as one.
+    var from = code || (PERCENT_FORMS[i].money ? currencyCodeFor(match[PERCENT_FORMS[i].money] || "") : "")
+    if (toText && (!to || !from)) return null
+    return { form: PERCENT_FORMS[i], match: match, start: body.start, code: code, from: from, to: to }
+  }
+  return null
+}
+
+// { value, label, detail, copy } for a percentage sum, or null. A currency
+// symbol typed on the amount stays on the answer; the copied value is the
+// number alone, ready to paste into something that does its own formatting.
+function evaluatePercent(query) {
+  var found = percentForm(query)
+  if (!found) return null
+
+  var form = found.form
+  var a = parseLooseNumber(found.match[form.a])
+  var b = parseLooseNumber(found.match[form.b])
+  if (a === null || b === null) return null
+
+  var money = form.money ? found.match[form.money] : ""
+  // A code reads after the number: "90 EUR", like the currency answers.
+  var unit = found.code ? " " + found.code : ""
+  var value = 0
+  var detail = ""
+  if (form.op === "add" || form.op === "sub") {
+    var share = a * b / 100
+    value = form.op === "add" ? a + share : a - share
+    detail = formatMathResult(b) + "% of " + money + formatMathResult(a) + unit + " is " + money + formatMathResult(share) + unit
+  } else if (form.op === "off" || form.op === "on" || form.op === "of") {
+    var part = b * a / 100
+    value = form.op === "off" ? b - part : form.op === "on" ? b + part : part
+    detail = form.op === "of"
+      ? formatMathResult(a) + "% of " + money + formatMathResult(b) + unit
+      : (form.op === "off" ? "Saves " : "Adds ") + money + formatMathResult(part) + unit
+  } else {
+    if (b === 0) return null
+    value = a / b * 100
+    detail = formatMathResult(a) + " of " + formatMathResult(b)
+  }
+
+  var number = formatMathResult(value)
+  if (!number) return null
+  var ratio = form.op === "ratio"
+  return {
+    value: value,
+    label: ratio ? number + "%" : money + number + unit,
+    // Set when the sum is to be converted: "100 eur - 10% to usd".
+    from: found.to ? found.from : "",
+    to: found.to || "",
+    detail: detail,
+    copy: ratio ? number + "%" : number
+  }
+}
+
+// Work time: hours against an 8-hour day and a 5-day week. A question about
+// work time always names a work day or week, which is what keeps "40 hours in
+// days" an ordinary (calendar) unit conversion.
+var WORK_HOURS_PER_DAY = 8
+var WORK_DAYS_PER_WEEK = 5
+
+var WORK_TIME_UNITS = [
+  { id: "hours", hours: 1, one: "hour", many: "hours", re: /^(?:h|hrs?|hours?)$/i },
+  { id: "days", hours: WORK_HOURS_PER_DAY, one: "work day", many: "work days", re: /^(?:work(?:ing)?\s*days?|wd)$/i },
+  { id: "weeks", hours: WORK_HOURS_PER_DAY * WORK_DAYS_PER_WEEK, one: "work week", many: "work weeks",
+    re: /^(?:work(?:ing)?\s*weeks?|ww)$/i }
+]
+
+var WORK_UNIT_PATTERN = "(?:h|hrs?|hours?|work(?:ing)?\\s*days?|wd|work(?:ing)?\\s*weeks?|ww)"
+var WORK_TIME_FORM = compileForm("^({N})(\\s*)(" + WORK_UNIT_PATTERN + ")({TO})(" + WORK_UNIT_PATTERN + ")$")
+
+function workTimeUnit(token) {
+  var raw = String(token || "").trim()
+  for (var i = 0; i < WORK_TIME_UNITS.length; i++)
+    if (WORK_TIME_UNITS[i].re.test(raw)) return WORK_TIME_UNITS[i]
+  return null
+}
+
+function workTimeForm(text) {
+  var body = answerBody(text)
+  var match = body.text.match(WORK_TIME_FORM)
+  if (!match) return null
+  var from = workTimeUnit(match[3])
+  var to = workTimeUnit(match[5])
+  if (!from || !to || from.id === to.id) return null
+  if (from.id === "hours" && to.id === "hours") return null
+  return { match: match, start: body.start, from: from, to: to }
+}
+
+// { value, label, detail, copy } for "40 hours in work days", or null.
+function evaluateWorkTime(query) {
+  var found = workTimeForm(query)
+  if (!found) return null
+  var amount = parseLooseNumber(found.match[1])
+  if (amount === null) return null
+
+  var value = amount * found.from.hours / found.to.hours
+  var number = formatMathResult(value)
+  if (!number) return null
+  return {
+    value: value,
+    label: number + " " + (value === 1 ? found.to.one : found.to.many),
+    detail: formatMathResult(amount) + " " + (amount === 1 ? found.from.one : found.from.many)
+          + " · " + WORK_HOURS_PER_DAY + " h/day, " + WORK_DAYS_PER_WEEK + " days/week",
+    copy: number
+  }
+}
+
+// --- Answer forms ------------------------------------------------------------
+// A recognised conversion or sum turns the search line into a form: its values
+// are fields the keyboard can step between and retype one at a time, so
+// changing the amount in "100 eur to usd" does not mean retyping the rest.
+// The line itself stays the only state -- a field is a span of it, and editing
+// one splices the line -- so search, history and the answer rows never learn
+// the form exists.
+
+var CONVERSION_FORMS = [
+  // "100 eur to usd", "5ft in cm"
+  { re: compileForm("^({N})(\\s*)({C})({TO})({C})$"), fields: [[1, "number"], [3, "code"], [5, "code"]] },
+  // "$120 to eur", "usd 100 to eur"
+  { re: compileForm("^({C})(\\s*)({N})({TO})({C})$"), fields: [[1, "code"], [3, "number"], [5, "code"]] },
+  // "eur to usd": the rate for one unit
+  { re: compileForm("^({C})({TO})({C})$"), fields: [[1, "code"], [3, "code"]] }
+]
+
+function formFields(spans, list) {
+  var fields = []
+  for (var i = 0; i < list.length; i++)
+    fields.push({ start: spans[list[i][0]].start, end: spans[list[i][0]].end, kind: list[i][1] })
+  return fields
+}
+
+// { kind, fields: [{ start, end, kind }] } for a line that is an answer form,
+// or null. Field ranges are offsets into `text` exactly as given, leading
+// slash and spaces included. Field kinds: "number", "currency", "unit",
+// "workunit". The form kinds are the answer kinds: "percent", "worktime",
+// "currency", "unit".
+function answerFormFields(text) {
+  var src = String(text || "")
+  var spans = null
+
+  var percent = percentForm(src)
+  if (percent && evaluatePercent(src)) {
+    spans = formGroupSpans(percent.match, percent.start)
+    if (!spans) return null
+    var list = [[percent.form.a, "number"], [percent.form.b, "number"]]
+    if (percent.code) list.push([percent.form.code, "currency"])
+    if (percent.to) list.push([percent.form.to, "currency"])
+    list.sort(function(x, y) { return x[0] - y[0] })
+    var fields = formFields(spans, list)
+    // The code's group carries the space before it; the field is the code.
+    for (var f = 0; f < fields.length; f++) {
+      if (fields[f].kind !== "currency") continue
+      var lead = src.slice(fields[f].start, fields[f].end).match(/^\s*/)[0].length
+      fields[f].start += lead
+    }
+    return { kind: "percent", fields: fields }
+  }
+
+  var work = workTimeForm(src)
+  if (work && evaluateWorkTime(src)) {
+    spans = formGroupSpans(work.match, work.start)
+    if (!spans) return null
+    return { kind: "worktime", fields: formFields(spans, [[1, "number"], [3, "workunit"], [5, "workunit"]]) }
+  }
+
+  var body = answerBody(src)
+  if (!body.text) return null
+  var kind = parseCurrencyQuery(body.text) ? "currency" : parseUnitQuery(body.text) ? "unit" : ""
+  if (!kind) return null
+
+  for (var i = 0; i < CONVERSION_FORMS.length; i++) {
+    var match = body.text.match(CONVERSION_FORMS[i].re)
+    if (!match) continue
+    spans = formGroupSpans(match, body.start)
+    if (!spans) return null
+    var fields = formFields(spans, CONVERSION_FORMS[i].fields)
+    for (var j = 0; j < fields.length; j++)
+      if (fields[j].kind === "code") fields[j].kind = kind
+    return { kind: kind, fields: fields }
+  }
+  return null
+}
+
+// Fields in order, each inside the line and none overlapping.
+function formFieldsValid(text, fields) {
+  var src = String(text || "")
+  if (!(fields instanceof Array) || fields.length === 0) return false
+  var at = 0
+  for (var i = 0; i < fields.length; i++) {
+    var field = fields[i]
+    if (!field || typeof field.start !== "number" || typeof field.end !== "number") return false
+    if (field.start < at || field.end < field.start || field.end > src.length) return false
+    at = field.end
+  }
+  return true
+}
+
+// The line cut into what the prompt draws: [{ text, field }], `field` being
+// the index of the field a piece is, or -1 for the text between fields. An
+// empty field still gets its (empty) piece, so it can be drawn as a gap to
+// type into. Spans that do not fit the line give the line as one plain piece.
+function formSegments(text, fields) {
+  var src = String(text || "")
+  if (!formFieldsValid(src, fields)) return src ? [{ text: src, field: -1 }] : []
+
+  var segments = []
+  var at = 0
+  for (var i = 0; i < fields.length; i++) {
+    if (fields[i].start > at) segments.push({ text: src.slice(at, fields[i].start), field: -1 })
+    segments.push({ text: src.slice(fields[i].start, fields[i].end), field: i })
+    at = fields[i].end
+  }
+  if (at < src.length) segments.push({ text: src.slice(at), field: -1 })
+  return segments
+}
+
+function sameFormShape(a, b) {
+  if (a.length !== b.length) return false
+  for (var i = 0; i < a.length; i++)
+    if ((a[i].kind === "number") !== (b[i].kind === "number")) return false
+  return true
+}
+
+// Replace field `index` with `replacement`. Returns { text, kind, fields,
+// parsed }, or null for spans that do not fit the line.
+//
+// The fields after the edited one shift by however much it grew or shrank. A
+// half-typed field ("" or "1.") usually leaves the line no longer a form, and
+// the shifted spans are what keep the form editable through that; once the
+// line reads as the same form again, its freshly derived spans take over
+// (`parsed` true), which is also how a unit field that now names money picks
+// up the currency kind.
+function editFormField(text, fields, index, replacement) {
+  var src = String(text || "")
+  if (!formFieldsValid(src, fields) || !(index >= 0 && index < fields.length)) return null
+
+  var value = String(replacement === undefined || replacement === null ? "" : replacement)
+  var field = fields[index]
+  var next = src.slice(0, field.start) + value + src.slice(field.end)
+  var delta = value.length - (field.end - field.start)
+
+  var shifted = []
+  for (var i = 0; i < fields.length; i++) {
+    var f = fields[i]
+    if (i < index) shifted.push({ start: f.start, end: f.end, kind: f.kind })
+    else if (i === index) shifted.push({ start: f.start, end: f.start + value.length, kind: f.kind })
+    else shifted.push({ start: f.start + delta, end: f.end + delta, kind: f.kind })
+  }
+
+  var fresh = answerFormFields(next)
+  if (fresh && sameFormShape(fresh.fields, shifted))
+    return { text: next, kind: fresh.kind, fields: fresh.fields, parsed: true }
+  return { text: next, kind: "", fields: shifted, parsed: false }
+}
+
+// The codes Up/Down steps a currency field through. Short on purpose: these
+// are the ones worth reaching by arrow key, and any other is a few letters.
+var FORM_CURRENCIES = ["EUR", "USD", "GBP", "CHF", "CZK", "PLN", "HUF", "SEK", "NOK", "DKK", "JPY", "CNY", "CAD", "AUD"]
+
+function cycleIn(list, index, step) {
+  if (list.length === 0) return ""
+  if (index < 0) return step > 0 ? list[0] : list[list.length - 1]
+  return list[((index + step) % list.length + list.length) % list.length]
+}
+
+// The next value for a field on Up (step 1) or Down (step -1), or "" when
+// there is nothing sensible to step to. Numbers step by one and keep a typed
+// decimal comma; currency walks FORM_CURRENCIES (an unknown code starts it);
+// a unit walks the other units of its own dimension, so the pair stays one
+// that converts.
+function cycleFormValue(kind, value, step) {
+  var direction = step < 0 ? -1 : 1
+  var raw = String(value === undefined || value === null ? "" : value).trim()
+
+  if (kind === "number") {
+    var number = parseLooseNumber(raw)
+    if (number === null) return ""
+    var stepped = formatMathResult(number + direction)
+    return raw.indexOf(",") >= 0 ? stepped.replace(".", ",") : stepped
+  }
+
+  if (kind === "currency")
+    return cycleIn(FORM_CURRENCIES, FORM_CURRENCIES.indexOf(currencyCodeFor(raw)), direction)
+
+  if (kind === "unit") {
+    var unit = unitFor(raw)
+    if (!unit) return ""
+    var same = []
+    for (var i = 0; i < UNIT_ORDER.length; i++)
+      if (UNIT_ORDER[i].dimension === unit.dimension) same.push(UNIT_ORDER[i])
+    var nextUnit = cycleIn(same, same.indexOf(unit), direction)
+    return nextUnit ? nextUnit.name : ""
+  }
+
+  if (kind === "workunit") {
+    var names = []
+    for (var j = 0; j < WORK_TIME_UNITS.length; j++) names.push(WORK_TIME_UNITS[j].many)
+    return cycleIn(names, WORK_TIME_UNITS.indexOf(workTimeUnit(raw)), direction)
+  }
+
+  return ""
 }
 
 // --- Utilities ---------------------------------------------------------------
@@ -1905,6 +2507,7 @@ function zoneDifference(offsetSeconds, localOffsetSeconds) {
 
 if (typeof module !== "undefined") {
   module.exports = {
+    summonAction: summonAction,
     guardReaders: GUARD_READERS,
     guardScript: guardScript,
     sanitizeText: sanitizeText,
@@ -1917,6 +2520,7 @@ if (typeof module !== "undefined") {
     normalizeAliases: normalizeAliases,
     normalizeItem: normalizeItem,
     parseMenuJsonc: parseMenuJsonc,
+    keepMenuRows: keepMenuRows,
     mergeMenuSources: mergeMenuSources,
     mergeAppRows: mergeAppRows,
     swapProviderRows: swapProviderRows,
@@ -1929,6 +2533,7 @@ if (typeof module !== "undefined") {
     isDescendantOf: isDescendantOf,
     childCount: childCount,
     isVisible: isVisible,
+    isDisabled: isDisabled,
     labelFor: labelFor,
     searchableToken: searchableToken,
     leafIdFor: leafIdFor,
@@ -1937,6 +2542,10 @@ if (typeof module !== "undefined") {
     descriptionTextMatches: descriptionTextMatches,
     matchesQuery: matchesQuery,
     searchScore: searchScore,
+    dmenuValue: dmenuValue,
+    dmenuSelections: dmenuSelections,
+    toggleDmenuSelection: toggleDmenuSelection,
+    applyTranslations: applyTranslations,
     pathMatchTerms: pathMatchTerms,
     displayRow: displayRow,
     tokenizeMath: tokenizeMath,
@@ -1956,6 +2565,17 @@ if (typeof module !== "undefined") {
     parseUnitQuery: parseUnitQuery,
     convertUnit: convertUnit,
     formatUnitValue: formatUnitValue,
+    parseLooseNumber: parseLooseNumber,
+    evaluatePercent: evaluatePercent,
+    WORK_HOURS_PER_DAY: WORK_HOURS_PER_DAY,
+    WORK_DAYS_PER_WEEK: WORK_DAYS_PER_WEEK,
+    evaluateWorkTime: evaluateWorkTime,
+    answerFormFields: answerFormFields,
+    formFieldsValid: formFieldsValid,
+    formSegments: formSegments,
+    editFormField: editFormField,
+    cycleFormValue: cycleFormValue,
+    FORM_CURRENCIES: FORM_CURRENCIES,
     base64Encode: base64Encode,
     base64Decode: base64Decode,
     sha256Hex: sha256Hex,

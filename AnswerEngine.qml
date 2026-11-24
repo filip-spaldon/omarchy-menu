@@ -97,12 +97,16 @@ Item {
   // Order settles the overlaps. Arithmetic goes first because it is the
   // strictest grammar. Currency goes before units so that "100 cup to eur" is
   // the Cuban peso, while units still take "2 cup to ml" -- currency declines
-  // it, since "ml" is not money.
+  // it, since "ml" is not money. Percentages are sentences the calculator
+  // refuses ("30 + 20%" leaves its % without an operand), and work time names
+  // work days or weeks, which no unit does, so neither argues with anything.
   function queryRows(query) {
     var builders = [
       answers.shellRow,
       answers.calculatorRow,
+      answers.percentRow,
       answers.currencyRow,
+      answers.workTimeRow,
       answers.unitRow,
       answers.timeRow,
       answers.utilityRow,
@@ -110,7 +114,9 @@ Item {
       answers.killRows
     ]
 
+    var measured = menu.perfEnabled
     for (var i = 0; i < builders.length; i++) {
+      var start = measured ? Date.now() : 0
       var produced = null
       // These parse whatever was typed, and a throw in one of them would
       // otherwise take the whole result list down with it -- the search would
@@ -118,8 +124,10 @@ Item {
       try {
         produced = builders[i](query)
       } catch (e) {
-        console.warn("omarchy.menu: query row builder failed:", e)
+        console.warn("omarchy.menu: query row builder failed:", i)
         continue
+      } finally {
+        if (measured) console.info("omni-perf generation/builder_index/ms", menu.perfGeneration, i, Date.now() - start)
       }
 
       if (!produced) continue
@@ -143,6 +151,66 @@ Item {
       icon: "󰃬",
       label: result,
       detail: "Copy to clipboard"
+    })
+  }
+
+  // "$30 + 20%", "20% off 50", "50 as a % of 200". Copied like a calculator
+  // result: the number alone, without any currency symbol it was typed with.
+  function percentRow(query) {
+    var result = MenuModel.evaluatePercent(query)
+    if (!result) return null
+    if (result.to) return answers.percentCurrencyRow(result)
+
+    return answers.menu.queryRow({
+      kind: "calc",
+      icon: "󰏰",
+      label: result.label,
+      detail: result.detail,
+      payload: result.copy
+    })
+  }
+
+  // "100 eur - 10% to usd": the sum in the source currency, then the same
+  // conversion and rates as the currency answer.
+  function percentCurrencyRow(result) {
+    answers.ensureCurrencyRates()
+    var snapshot = answers.currencyRates
+    var converted = snapshot
+      ? MenuModel.convertCurrency({ amount: result.value, from: result.from, to: result.to }, snapshot.rates) : null
+    var label = ""
+    var detail = result.label
+    if (converted) {
+      label = MenuModel.formatCurrencyValue(converted.value) + " " + result.to
+      detail += " at " + MenuModel.formatCurrencyRate(converted.rate)
+      var asOf = answers.currencyRatesDate()
+      if (asOf) detail += " · " + asOf
+    } else {
+      label = result.label + " → " + result.to
+      detail = !snapshot ? (answers.currencyFetchFailed ? "Exchange rates unavailable" : "Fetching exchange rates…")
+        : "No rate for " + (snapshot.rates[result.from] ? result.to : result.from)
+    }
+    return answers.menu.queryRow({
+      kind: "currency",
+      icon: "󰏰",
+      label: label,
+      detail: detail,
+      payload: converted ? MenuModel.formatCurrencyValue(converted.value) : "",
+      ready: !!converted
+    })
+  }
+
+  // "40 hours in work days": an 8-hour day and a 5-day week, which the
+  // detail line says, since that is the whole of the assumption.
+  function workTimeRow(query) {
+    var result = MenuModel.evaluateWorkTime(query)
+    if (!result) return null
+
+    return answers.menu.queryRow({
+      kind: "calc",
+      icon: "󰔟",
+      label: result.label,
+      detail: result.detail,
+      payload: result.copy
     })
   }
 

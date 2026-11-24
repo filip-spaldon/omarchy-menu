@@ -4,6 +4,7 @@ import Quickshell.Wayland
 import Quickshell.Hyprland
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Settings.js" as Settings
 import "MenuModel.js" as MenuModel
@@ -11,11 +12,30 @@ import "KeySheet.js" as KeySheet
 import "Looks.js" as Looks
 import "Tabs.js" as Tabs
 import "AllTiles.js" as AllTiles
+import "Pinned.js" as Pinned
 import "FileSearch.js" as FileSearch
+import "Clipboard.js" as Clipboard
+import "SystemShortcuts.js" as SystemShortcuts
 import "ai/AiBackend.js" as AiBackend
 
 Item {
   id: root
+
+  readonly property bool perfEnabled: Quickshell.env("OMNI_MENU_PERF") === "1"
+  property int perfGeneration: 0
+  property int perfRebuilds: 0
+  property real perfRebuildMs: 0
+  property real perfRouteStart: 0
+
+  // One animation tick once the panel is visible; no swap/presentation feedback.
+  FrameAnimation {
+    running: root.perfRouteStart !== 0 && panel.visible
+    onTriggered: {
+      var elapsed = Date.now() - root.perfRouteStart
+      root.perfRouteStart = 0
+      console.info("omni-perf openRoute_to_visible_animation_tick_ms", elapsed)
+    }
+  }
 
   // Injected by omarchy-shell when this plugin is summoned.
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
@@ -61,6 +81,14 @@ Item {
   // path doesn't have to shell out to bash + jq on every open.
   property string defaultMenuPath: omarchyPath + "/default/omarchy/omarchy-menu.jsonc"
   property string userMenuPath: Quickshell.env("HOME") + "/.config/omarchy/extensions/omarchy-menu.jsonc"
+  // Display language for the shipped rows. The code lives in
+  // ~/.config/omarchy/language (omarchy-language owns it); a missing file
+  // means English. The catalog at default/i18n/<code>/menu.json is applied
+  // to the default items before the user extension merges on top, so a
+  // user's own rows and retitles always win.
+  property string language: "en"
+  property var menuCatalog: ({})
+  readonly property string languagePath: Quickshell.env("OMARCHY_LANGUAGE_FILE") || ((Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/language")
   property var defaultMenuItems: []
   property var userMenuItems: []
   // The bytes each source last yielded. Compared before anything is rebuilt so
@@ -72,6 +100,12 @@ Item {
   readonly property bool dmenuActive: mode === "select" || mode === "input"
   property string dmenuPrompt: ""
   property var dmenuOptions: []
+  property bool dmenuMultiple: false
+  property var dmenuSelected: []
+  // What the last confirmed change applied; a failed change returns the checks here.
+  property var dmenuSaved: []
+  property string dmenuChangeKey: ""
+  property var dmenuOnChange: []
   property string selectionFile: ""
   property string doneFile: ""
   property int dmenuWidth: 300
@@ -83,6 +117,26 @@ Item {
   // keybindings, anything piping options through omarchy-menu-select) is
   // somebody else's picker and keeps its plain list.
   property string activeTab: "all"
+  // The screen the menu is on: the focused monitor when it opens, or when a
+  // shortcut is pressed from another monitor while it is open.
+  property var menuScreen: null
+  readonly property bool onFocusedMonitor: !root.menuScreen || !Hyprland.focusedMonitor
+    || root.menuScreen.name === Hyprland.focusedMonitor.name
+
+  function focusedScreen() {
+    var monitor = Hyprland.focusedMonitor
+    if (!monitor) return null
+    var screens = Quickshell.screens
+    for (var i = 0; i < screens.length; i++) if (screens[i].name === monitor.name) return screens[i]
+    return null
+  }
+
+  function followFocusedMonitor() {
+    var target = root.focusedScreen()
+    if (target) root.menuScreen = target
+  }
+  property string rootShortcutReturnTab: ""
+  onActiveTabChanged: if (root.activeTab !== "system") root.rootShortcutReturnTab = ""
   readonly property bool tabsActive: !root.dmenuActive
   // Command mode: a query that starts with "/" asks for an answer only --
   // `/2+3`, `/100 km to miles`, `/password`, `/shell ls` -- and the list
@@ -91,6 +145,24 @@ Item {
   // any answer on top. answerQuery is the text the answer builders read.
   readonly property bool commandMode: root.tabsActive && /^\s*\//.test(root.filterText) && !aiCtl.isAiMode
   readonly property string answerQuery: root.filterText.replace(/^\s*\//, "").trim()
+  // Answer forms: a conversion or sum on show ("100 eur to usd", "20% off
+  // 50", "40 hours in work days") draws its values as fields, and Tab steps
+  // into them to retype one value without touching the rest. answerForm is
+  // { kind, fields: [{ start, end, kind }] } (MenuModel.answerFormFields), or
+  // null; formField is the focused field, -1 while the line is plain text.
+  // filterText stays the only state: a field is a span of it, and an edit is
+  // a splice (MenuModel.editFormField). While a field is focused the spans are
+  // carried through the edit rather than re-derived, so a field emptied on the
+  // way to a new value does not end the form.
+  property var answerForm: null
+  property int formField: -1
+  // A freshly focused field is replaced by the first key typed into it.
+  property bool formFresh: false
+  // Set around the form's own writes to filterText; any other write (paste,
+  // Ctrl+U, a tab switch) leaves the form.
+  property bool formWriting: false
+  readonly property bool formEditing: root.formField >= 0 && root.answerForm !== null
+  readonly property var answerFormSegments: root.answerForm ? MenuModel.formSegments(root.filterText, root.answerForm.fields) : []
   // Search cursor look, from state.json (SettingsStore.qml).
   property string cursorStyle: "block"
   property bool cursorBlink: true
@@ -122,6 +194,39 @@ Item {
   property int systemMatchIndex: 0
   readonly property bool systemTwoPane: root.tabsActive && root.activeTab === "system" && !aiCtl.isAiMode && !root.commandMode
     && (!root.filterText.trim() || root.systemMatches.length > 0)
+  readonly property bool systemShortcutsNeeded: root.opened && root.tabsActive && root.activeTab === "system"
+  property var systemBindings: null
+  onSystemShortcutsNeededChanged: {
+    root.systemBindings = null
+    if (root.systemShortcutsNeeded) root.refreshSystemBindings()
+  }
+
+  function refreshSystemBindings() {
+    if (systemShortcutProc.running) {
+      systemShortcutProc.refreshPending = true
+      return
+    }
+    systemShortcutProc.command = root.boundedCommand("hyprctl -j binds 2>/dev/null", 2, 262144)
+    systemShortcutProc.running = true
+  }
+
+  function systemShortcutHint(itemId, kind, action) {
+    return root.systemTwoPane ? SystemShortcuts.hintFor(root.systemBindings, itemId, kind, action) : ""
+  }
+
+  Process {
+    id: systemShortcutProc
+    property bool refreshPending: false
+    stdout: StdioCollector { id: systemShortcutOut; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) {
+      if (systemShortcutProc.refreshPending) {
+        systemShortcutProc.refreshPending = false
+        if (root.systemShortcutsNeeded) Qt.callLater(root.refreshSystemBindings)
+      } else if (root.systemShortcutsNeeded && exitCode === 0 && !exitStatus) {
+        root.systemBindings = SystemShortcuts.parseBindings(systemShortcutOut.text)
+      }
+    }
+  }
   property string systemPane: "left"
   property int systemCategoryIndex: 0
   readonly property var systemCategories: root.systemTwoPane ? root.systemCategoryRows(root.layoutSerial) : []
@@ -166,7 +271,96 @@ Item {
   }
 
   function allTileRowHeight(index) {
-    return AllTiles.stripHeight(root.allTiles[index], index, root.allTileHeight, root.rowSpacing)
+    var info = root.allTiles[index]
+    return AllTiles.stripHeight(info, index, root.allTileHeight, root.rowSpacing, root.stripPad(info))
+  }
+
+  // state.json "pinnedApps": desktop ids in pin order (Pinned.js). The Apps
+  // tab shows the installed ones as a highlighted strip above every app while
+  // nothing is typed: in the list as one block of tiles (AllTiles.layout's
+  // block), in the grid as its first rows, padded out to whole rows by empty
+  // cells the cursor steps over. pinnedCount is how many are on show (set by
+  // rebuildDisplay), 0 when the strip is not.
+  property var pinnedApps: []
+  property int pinnedCount: 0
+  readonly property string pinnedSection: "pinned"
+  readonly property int pinnedStripPad: Style.space(6)
+  // The strip's tint and outline: the theme accent, faint enough under the
+  // cursor's own highlight to read in light and dark themes alike.
+  readonly property color pinnedBackground: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10)
+  readonly property color pinnedBorder: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.55)
+
+  function stripPad(info) {
+    return info && info.lines ? root.pinnedStripPad : 0
+  }
+
+  // Pinned or not, whatever copy of the app is asked about.
+  function isAppPinned(appId) {
+    return !!appId && Pinned.isPinned(root.pinnedApps, appId)
+  }
+
+  function pinnedEntry(id) {
+    var entry = root.item("apps." + id)
+    return entry && entry.kind === "app" ? entry : null
+  }
+
+  function pinnedRows() {
+    var ids = Pinned.shown(root.pinnedApps, function(id) { return root.pinnedEntry(id) !== null })
+    var rows = []
+    for (var i = 0; i < ids.length; i++) {
+      var entry = root.pinnedEntry(ids[i])
+      rows.push(root.displayRow(entry, entry.description, 0, root.pinnedSection))
+    }
+    return rows
+  }
+
+  // The selected row when it is an application of the Apps tab, else null.
+  function selectedAppRow() {
+    if (!root.tabsActive || root.commandMode || root.activeTab !== "apps" || !root.cursorActive) return null
+    if (root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
+    var row = displayModel.get(root.selectedIndex)
+    return row && row.kind === "app" ? row : null
+  }
+
+  // The row of `itemId` in the strip (inStrip) or in the list under it, -1
+  // when there is none.
+  function indexOfAppRow(itemId, inStrip) {
+    for (var i = 0; i < displayModel.count; i++) {
+      var row = displayModel.get(i)
+      if (row.itemId === itemId && (row.section === root.pinnedSection) === inStrip) return i
+    }
+    return -1
+  }
+
+  // Ctrl+P: pin the selected app or unpin it. The cursor stays on the app
+  // where it was picked, or on its list row once it leaves the strip.
+  function togglePinSelected() {
+    var row = root.selectedAppRow()
+    if (!row) return
+    var next = Pinned.toggle(root.pinnedApps, row.appId)
+    if (JSON.stringify(next) === JSON.stringify(root.pinnedApps)) return
+    if (!settingsStore.saveState("pinnedApps", next)) return
+    var itemId = row.itemId
+    var inStrip = row.section === root.pinnedSection && Pinned.isPinned(next, row.appId)
+    root.pinnedApps = next
+    root.rebuildDisplay()
+    var at = root.indexOfAppRow(itemId, inStrip)
+    if (at >= 0) root.selectedIndex = at
+  }
+
+  // Ctrl+Shift+arrows on a pinned app: one place earlier or later.
+  function movePinnedSelected(delta) {
+    var row = root.selectedAppRow()
+    if (!row || row.section !== root.pinnedSection) return
+    var shown = Pinned.shown(root.pinnedApps, function(id) { return root.pinnedEntry(id) !== null })
+    var next = Pinned.move(root.pinnedApps, row.appId, delta, shown)
+    if (JSON.stringify(next) === JSON.stringify(root.pinnedApps)) return
+    if (!settingsStore.saveState("pinnedApps", next)) return
+    var itemId = row.itemId
+    root.pinnedApps = next
+    root.rebuildDisplay()
+    var at = root.indexOfAppRow(itemId, true)
+    if (at >= 0) root.selectedIndex = at
   }
   readonly property string cacheHome: Quickshell.env("XDG_CACHE_HOME") || (root.homeDir + "/.cache")
   readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (root.homeDir + "/.local/state")) + "/omarchy-menu-omni"
@@ -194,16 +388,28 @@ Item {
   // the re-read on open can still change it (SettingsStore.applyState), until
   // the user switches tab or types.
   property bool openTabPending: false
-  onFilterTextChanged: if (root.filterText) root.openTabPending = false
+  onFilterTextChanged: {
+    if (root.perfEnabled) {
+      root.perfGeneration++
+      root.perfRebuilds = 0
+      root.perfRebuildMs = 0
+    }
+    if (root.filterText) root.openTabPending = false
+    if (!root.formWriting && root.formField >= 0) {
+      root.formField = -1
+      root.formFresh = false
+    }
+  }
   readonly property var orderedTabs: Tabs.visibleTabs(root.tabOrder, root.disabledTabs, root.activeTab)
 
   function tabEnabled(id) {
     return root.disabledTabs.indexOf(id) < 0
   }
 
-  // Whether All searches a section: its tab is on and it is not left out.
+  // Whether All searches a section: it is one of All's sections (never
+  // Clipboard), its tab is on and it is not left out.
   function inAll(id) {
-    return root.tabEnabled(id) && root.allSectionsOff.indexOf(id) < 0
+    return Tabs.DEFAULT_ALL_SECTIONS.indexOf(id) >= 0 && root.tabEnabled(id) && root.allSectionsOff.indexOf(id) < 0
   }
 
   property string filterText: ""
@@ -227,6 +433,8 @@ Item {
     root.altHeld = false
     root.cheatOpen = false
     if (opened) return
+    root.perfRouteStart = 0
+    root.rootShortcutReturnTab = ""
     if (root.launcherPositionMoved) {
       root.launcherPositionMoved = false
       settingsStore.savePosition(root.launcherPosition)
@@ -581,9 +789,15 @@ Item {
   // what Alt does instead. Empty: fall back to the text footer.
   function footerKeys() {
     // Where the card went (Alt+arrows) shows as text for a moment instead.
-    if (settingsStore.error || root.positionHint || answerEngine.killActive || root.commandMode || root.shortFooter) return []
+    if (settingsStore.error || root.positionHint || answerEngine.killActive || root.commandMode || root.shortFooter
+        || root.formEditing || root.answerForm) return []
     if (root.altHeld) return [["alt 1–9", "open that row"], ["alt ←→↑↓", "move the card"], ["alt 0", "reset"]]
-    if (root.activeTab === "apps") return [["↵", "open"], ["shift ↵", "new window"], ["^G", root.appsView === "grid" ? "list" : "grid"], ["?", "all keys"]]
+    if (root.activeTab === "apps") {
+      var app = root.selectedAppRow()
+      var pinned = !!app && Pinned.isPinned(root.pinnedApps, app.appId)
+      return [["↵", "open"], ["shift ↵", "new window"], ["^P", pinned ? "unpin" : "pin"], ["^G", root.appsView === "grid" ? "list" : "grid"], ["?", "all keys"]]
+    }
+    if (root.activeTab === "clipboard") return [["↵", "paste"], ["^C", "copy"], ["^O", "open"], ["^F", "type"], ["?", "all keys"]]
     if (root.activeTab === "windows") return [["↵", "go to"], ["⇥", "next tab"], ["?", "all keys"]]
     if (root.activeTab === "files" || root.activeTab === "folders") return [["↵", "open"]].concat(root.fileKeys(), [["?", "all keys"]])
     if (root.activeTab === "system" && root.systemTwoPane) return [["↑↓", "browse"], ["→", "open"], ["←", "back"], ["?", "all keys"]]
@@ -607,6 +821,7 @@ Item {
   readonly property string emptyText: displayModel.count > 0 || root.mode === "input" || aiCtl.isAiMode || root.systemTwoPane ? ""
     : root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
     : fileCtl.fileSearching ? "Searching…"
+    : root.activeTab === "clipboard" && root.tabsActive && clipboardCtl.emptyText() ? clipboardCtl.emptyText()
     : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
   function refocus() { Qt.callLater(function() { keyCatcher.forceActiveFocus() }) }
 
@@ -642,24 +857,34 @@ Item {
   // A short footer: the three keys that matter most here. The tab's own
   // shortcuts are in the full list.
   function shortFooterHints() {
-    if (answerEngine.killActive || root.commandMode) return root.fullFooterHints()
+    if (answerEngine.killActive || root.commandMode || root.formEditing || root.answerForm) return root.fullFooterHints()
     if (root.activeTab === "system" && root.systemTwoPane) return "↑↓ browse   → open   ← back   esc close"
     var open = "↵ open" + (root.alwaysNumbered ? "   alt 1–9 jump" : "")
     if (root.activeTab === "files" || root.activeTab === "folders")
       return open + root.fileKeys().map(function(k) { return "   " + k[0] + " " + k[1] }).join("") + "   esc close"
     if (root.activeTab === "apps") return open + "   ^G " + (root.appsView === "grid" ? "list" : "grid") + "   ⇥ next tab   esc close"
+    if (root.activeTab === "clipboard") return "↵ paste   ^C copy   ^F type   esc close"
     return open + "   ⇥ next tab   esc close"
   }
 
   function fullFooterHints() {
+    if (root.formEditing) return "Tab next field · type to edit · ↑↓ step · Enter copy · Esc text"
+    if (root.answerForm) return "Tab edit values · Enter copy · Esc clear"
     if (answerEngine.killActive)
       return "Enter end process · Ctrl+E " + (answerEngine.killExpanded ? "one row per app" : "every process") + " · Esc clear"
     if (root.commandMode) return root.answerQuery ? "Answers only · Enter use · Ctrl+R new value · Esc clear"
                                                   : "Type a command after / · Esc clear"
-    if (root.activeTab === "apps")
-      return "Enter open/switch · Shift+Enter new · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
+    if (root.activeTab === "apps") {
+      var app = root.selectedAppRow()
+      var pinned = !!app && Pinned.isPinned(root.pinnedApps, app.appId)
+      return "Enter open/switch · Shift+Enter new · Ctrl+P " + (pinned ? "unpin" : "pin")
+        + (app && app.section === root.pinnedSection && root.pinnedCount > 1 ? " · Ctrl+Shift+←→ reorder" : "")
+        + " · Ctrl+G " + (root.appsView === "grid" ? "list" : "grid") + " · Del uninstall · Tab next tab · Esc close"
+    }
     if (root.activeTab === "windows")
       return "Enter go to window · type to filter by title, app or workspace · Tab next tab · Esc close"
+    if (root.activeTab === "clipboard")
+      return "Enter paste · Ctrl+C copy · Ctrl+O open · Ctrl+F type · Tab next tab · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
       return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · "
         + (fileCtl.hasRoots ? "Ctrl+R where · " : "") + "Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
@@ -681,6 +906,8 @@ Item {
     }
     if (root.activeTab === "apps") return "Search applications…"
     if (root.activeTab === "windows") return "Search open windows…"
+    if (root.activeTab === "clipboard")
+      return clipboardCtl.filter.noun ? "Search clipboard " + clipboardCtl.filter.noun + "…" : "Search clipboard…"
     if (root.activeTab === "files") return "Search files…"
     if (root.activeTab === "folders") return "Search folders…"
     return "Search everything…"
@@ -703,6 +930,9 @@ Item {
   property int contentSpacing: Style.spacing.md
   property int baseRowHeight: Math.max(root.menuRowFloor, root.scaledFont(Style.font.body) + Style.spacing.rowPaddingX * 2)
   property int detailRowHeight: Math.max(root.menuDetailRowFloor, root.scaledFont(Style.font.body) + root.scaledFont(Style.font.caption) + Style.spacing.rowPaddingX * 2)
+  // A clipboard image row: tall enough for a thumbnail that can be told
+  // apart, about two two-line rows.
+  property int imageRowHeight: Math.round(root.detailRowHeight * 1.9)
   // How much of the first hidden row stays visible at the fold — enough to
   // read as a cut-off row rather than a bottom border.
   property int rowPeek: Math.round(baseRowHeight * 0.55)
@@ -710,7 +940,7 @@ Item {
   property int dividerHeight: Style.space(17)
   property bool searchDivider: false
   property int layoutSerial: 0
-  property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : Style.space(root.launcherCardWidth), panel.width - Style.gapsOut * 2)
+  property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : ((root.activeMenu === "trigger.capture.screenrecord" || root.activeMenu === "appearance.font" || root.activeMenu === "update.kernel") ? Math.max(Style.space(520), Style.space(root.launcherCardWidth)) : Style.space(root.launcherCardWidth)), panel.width - Style.gapsOut * 2)
   readonly property int launcherBodyHeight: Math.max(root.baseRowHeight * 3, Math.round(panel.height * root.launcherBodyFraction))
   // A fitted body still takes the full height for the grid and AI answers,
   // whose size is not a row count.
@@ -725,6 +955,7 @@ Item {
   readonly property int launcherChromeHeight: Math.ceil(cardInsets) + headerHeight
     + (tabBar.visible ? contentSpacing + tabBar.height : 0)
     + (fileBar.visible ? contentSpacing + fileBar.height : 0)
+    + (clipboardBar.visible ? contentSpacing + clipboardBar.height : 0)
     + (desiredRowsHeight > 0 ? contentSpacing : 0)
     + (footer.visible ? contentSpacing + Math.ceil(footer.implicitHeight) : 0)
   MenuGeometry {
@@ -781,14 +1012,20 @@ Item {
     var command = String(action || "")
     if (!command) return
 
+    var summon = MenuModel.summonAction(command)
+    // A third-party menu gets a scoped shell API that may not offer summon().
+    if (summon && root.shell && typeof root.shell.summon === "function" && root.shell.summon(summon.id, summon.payload)) return
+
     Util.execDetached(command)
   }
 
   // Menu rows only surface their detail while a search is narrowing them;
   // dmenu rows carry caller-supplied subtext that must always be visible.
-  function rowHeightForDetail(detail, kind) {
+  // A row with a picture to show (`imagePath`, Clipboard tab) is taller.
+  function rowHeightForDetail(detail, kind, imagePath) {
     // Command hints are a compact, smaller-type list.
     if (kind === "example") return Math.round(root.detailRowHeight * 0.72)
+    if (imagePath) return root.imageRowHeight
     return root.showsDetail("", detail) ? root.detailRowHeight : root.baseRowHeight
   }
 
@@ -798,7 +1035,7 @@ Item {
     if (!detail) return false
     if (root.filterText || root.dmenuActive) return true
     return kind === "file" || kind === "folder" || root.activeTab === "files" || root.activeTab === "folders"
-      || root.activeTab === "windows"
+      || root.activeTab === "windows" || root.activeTab === "clipboard"
   }
 
   // Height the card can devote to rows before running off the screen — or
@@ -862,7 +1099,7 @@ Item {
       var row = rows[i]
       if (i > 0) total += root.rowSpacing
       if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
-      total += root.allTiles[i] ? root.allTileRowHeight(i) : root.rowHeightForDetail(row.detail, row.kind)
+      total += root.allTiles[i] ? root.allTileRowHeight(i) : root.rowHeightForDetail(row.detail, row.kind, row.imagePath)
       previousSection = row.section
       totals.push(total)
     }
@@ -1008,11 +1245,35 @@ Item {
     return MenuModel.parseMenuJsonc(raw)
   }
 
+  function parseCatalog(raw) {
+    try {
+      var parsed = JSON.parse(raw || "{}")
+      return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : ({})
+    } catch (e) {
+      return ({})
+    }
+  }
+
+  function setLanguage(raw) {
+    var code = String(raw || "").trim()
+    if (!/^[a-z]{2,3}(-[A-Za-z]{2})?$/.test(code)) code = "en"
+    if (root.language === code) return
+    root.language = code
+    menuCatalogFile.reload()
+  }
+
   // Merge defaults + user extension. Later entries override earlier ones
   // on a per-key basis (so the user can tweak label/icon/action without
   // re-declaring the whole row).
-  function rebuildItemsFromSources() {
-    var mergedMenu = MenuModel.mergeMenuSources(root.defaultMenuItems, root.userMenuItems)
+  // Catalog-only rebuilds pass skipGuards: retitling rows cannot change any
+  // when/checked answer, so re-running the guard batch would be pure waste.
+  function rebuildItemsFromSources(skipGuards) {
+    var translatedDefaults = MenuModel.applyTranslations(root.defaultMenuItems, root.menuCatalog)
+    // The root row is injected by the merge (it has no JSONC entry), so its
+    // "Go" label comes from the catalog's root entry; the merge only uses
+    // it for the injected row, never over a user-supplied heading.
+    var rootCatalog = root.menuCatalog.root
+    var mergedMenu = MenuModel.mergeMenuSources(translatedDefaults, root.userMenuItems, rootCatalog && rootCatalog.label)
     root.providerRevision += 1
     root.providersLoaded = ({})
     root.providerQueue = []
@@ -1021,7 +1282,7 @@ Item {
     root.rowsLoaded = true
     // New sources, new guards: evaluated again the next time System rows
     // are shown (the rebuild below does it when they are on screen now).
-    root.guardsCurrent = false
+    if (!skipGuards) root.guardsCurrent = false
     if (root.opened) {
       root.rebuildDisplay()
       if (!root.dmenuActive) {
@@ -1046,7 +1307,31 @@ Item {
     "power-profiles": {
       script: "current=$(powerprofilesctl get 2>/dev/null); omarchy-powerprofiles-list 2>/dev/null | while read -r p; do [[ -z $p ]] && continue; printf '%s\\t%s\\t%s\\n' \"$p\" \"$p\" \"$current\"; done",
       icon: "\udb81\udc0b",
+      // Profile names are powerprofilesctl ids; only the label is translated,
+      // and the id stays searchable through searchTerms.
+      labelFor: function(value) {
+        if (value === "power-saver") return Commons.I18n.t("menu.powerProfilePowerSaver")
+        if (value === "balanced") return Commons.I18n.t("menu.powerProfileBalanced")
+        if (value === "performance") return Commons.I18n.t("menu.powerProfilePerformance")
+        return value
+      },
       actionFor: function(value) { return "omarchy-powerprofiles-set autodetect " + Util.shellQuote(value) }
+    },
+    // Kernel names are package names, the same in every language.
+    "kernels": {
+      script: "current=$(omarchy-kernel get 2>/dev/null); omarchy-kernel list 2>/dev/null | while read -r k; do [[ -z $k ]] && continue; printf '%s\\t%s\\t%s\\n' \"$k\" \"$k\" \"$current\"; done",
+      icon: "\uf17c",
+      volatile: true,
+      actionFor: function(value) { return "omarchy-kernel set " + Util.shellQuote(value) }
+    },
+    // Rows carry a fourth field (the English name) so searching "danish"
+    // finds the row labeled with its native name; mergeProviderRows turns
+    // it into an alias.
+    "languages": {
+      script: "current=$(omarchy-language 2>/dev/null); omarchy-language list 2>/dev/null | while IFS=$'\\t' read -r name code english; do [[ -z $code ]] && continue; printf '%s\\t%s\\t%s\\t%s\\n' \"$name\" \"$code\" \"$current\" \"$english\"; done",
+      icon: "\uf1ab",
+      volatile: true,
+      actionFor: function(value) { return "omarchy-language " + Util.shellQuote(value) }
     }
   })
 
@@ -1207,8 +1492,10 @@ Item {
         action: "",
         provider: "",
         aliases: aliases,
+        searchTerms: [],
         when: "",
         checked: "",
+        disabled: "",
         order: 0
       })
     }
@@ -1249,7 +1536,8 @@ Item {
       var line = lines[i].trim()
       if (!line) continue
       var parts = line.split("\t")
-      var label = parts[0] || ""
+      var rawLabel = parts[0] || ""
+      var label = spec.labelFor ? spec.labelFor(rawLabel) : rawLabel
       var value = parts[1] || parts[0] || ""
       var current = parts[2] || ""
       if (!label) continue
@@ -1272,8 +1560,10 @@ Item {
         action: spec.actionFor(value),
         provider: "",
         aliases: [],
+        searchTerms: (parts[3] ? [parts[3]] : []).concat(label !== rawLabel ? [rawLabel] : []),
         when: "",
         checked: "",
+        disabled: "",
         order: 0
       })
     }
@@ -1355,6 +1645,12 @@ Item {
 
 
 
+  function selectedClipboardRow() {
+    if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
+    var row = displayModel.get(root.selectedIndex)
+    return row && row.kind === "clipboard" ? row : null
+  }
+
   function selectedFileRow() {
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
     var row = displayModel.get(root.selectedIndex)
@@ -1428,6 +1724,8 @@ Item {
     var next = root.appsView === "grid" ? "list" : "grid"
     if (!settingsStore.saveState("appsView", next)) return
     root.appsView = next
+    // The pinned strip is laid out differently in each.
+    if (root.pinnedCount > 0) root.rebuildDisplay(true)
     Qt.callLater(function() { if (displayModel.count > 0) root.revealCursor() })
   }
 
@@ -1450,6 +1748,7 @@ Item {
 
   // Arrow keys in the grid: sideways by one tile, up and down by a row.
   // Unlike the list it does not wrap -- off the edge of a grid is nowhere.
+  // The pinned strip's empty cells are stepped over.
   function gridMove(delta) {
     if (displayModel.count === 0) return
     root.disarmPointer()
@@ -1457,7 +1756,7 @@ Item {
       root.cursorActive = true
       root.selectedIndex = 0
     } else {
-      root.selectedIndex = Math.max(0, Math.min(displayModel.count - 1, root.selectedIndex + delta))
+      root.selectedIndex = Pinned.gridStep(root.selectedIndex, delta, displayModel.count, root.rowSelectable)
     }
     root.revealCursor()
   }
@@ -1580,6 +1879,10 @@ Item {
     if (!Tabs.isTab(id) || root.dmenuActive) return
     root.openTabPending = false
     panel.freezeCardTop()
+    // The new tab may not show the answer the form edits; it is offered
+    // again by the rebuild if it does.
+    root.formField = -1
+    root.formFresh = false
     root.activeTab = id
     root.selectedIndex = 0
     root.cursorActive = true
@@ -1595,9 +1898,7 @@ Item {
     root.disarmPointer()
     if (id === "apps") root.loadProviderForMenu("apps")
     if (root.filterText.trim()) root.loadProvidersForSearch()
-    root.updateSystemMatches()
-    root.rebuildDisplay()
-    if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
+    root.rebuildForQuery()
     fileCtl.requestFileSearch()
   }
 
@@ -1652,9 +1953,10 @@ Item {
     return memo.visible[id]
   }
 
-  // Label with the ✓ marker baked in when `checked:` evaluated truthy.
+  // Label with the ✓ marker baked in when `checked:` or `disabled:` evaluated
+  // truthy.
   function labelFor(entry) {
-    return MenuModel.labelFor(entry, root.checkedResults)
+    return MenuModel.labelFor(entry, root.checkedResults, root.disabledResults)
   }
 
   function searchableToken(value) {
@@ -1677,8 +1979,17 @@ Item {
     return MenuModel.descriptionTextMatches(query, text)
   }
 
+  // Rows whose `disabled:` evaluated truthy stay listed but dimmed, and the
+  // cursor steps over them.
+  function isDisabled(entry) {
+    return MenuModel.isDisabled(root.disabledResults, entry)
+  }
+
+  // A disabled row earns its place in the submenu it belongs to, where the
+  // list around it is the point. Search is a list of what you can do, so it
+  // leaves them out.
   function matchesQuery(entry, query) {
-    return MenuModel.matchesQuery(entry, query, root.isVisible(entry))
+    return MenuModel.matchesQuery(entry, query, root.isVisible(entry) && !root.isDisabled(entry))
   }
 
   function searchScore(entry, query) {
@@ -1686,7 +1997,38 @@ Item {
   }
 
   function displayRow(entry, detail, score, section) {
-    return MenuModel.displayRow(root.items, root.itemOrder, root.checkedResults, entry, detail, score, section)
+    return MenuModel.displayRow(root.items, root.itemOrder, root.checkedResults, root.disabledResults, entry, detail, score, section)
+  }
+
+  function rowSelectable(index) {
+    if (index < 0 || index >= displayModel.count) return false
+    return !displayModel.get(index).disabled
+  }
+
+  // First selectable row at or past `from`, continuing in the direction of
+  // travel and wrapping. -1 when every row is disabled, which leaves the menu
+  // with no cursor at all rather than one parked on a row Enter won't run.
+  function nextSelectable(from, direction) {
+    var count = displayModel.count
+    if (count === 0) return -1
+
+    var step = direction < 0 ? -1 : 1
+    var index = ((from % count) + count) % count
+    for (var i = 0; i < count; i++) {
+      if (root.rowSelectable(index)) return index
+      index = (index + step + count) % count
+    }
+
+    return -1
+  }
+
+  // Park the cursor on a selectable row after the rows underneath it changed.
+  // A menu with nothing selectable in it -- every app in it already installed
+  // -- shows no cursor at all, and grows one the moment a row can take it.
+  function settleCursor() {
+    var target = root.nextSelectable(root.selectedIndex, 1)
+    root.selectedIndex = target >= 0 ? target : 0
+    root.cursorActive = target >= 0
   }
 
   // Some searches answer themselves. They all end up as one row at the top of
@@ -1753,6 +2095,8 @@ Item {
       target: spec.payload || "",
       detail: spec.detail || "",
       path: "",
+      imagePath: "",
+      swatch: "",
       childCount: 0,
       action: "",
       provider: "",
@@ -1784,27 +2128,6 @@ Item {
 
 
 
-  function rowSelectable(index) {
-    if (index < 0 || index >= displayModel.count) return false
-    return !displayModel.get(index).disabled
-  }
-
-  // First selectable row at or past `from`, continuing in the direction of
-  // travel and wrapping. -1 when every row is disabled, which leaves the menu
-  // with no cursor at all rather than one parked on a row Enter won't run.
-  function nextSelectable(from, direction) {
-    var count = displayModel.count
-    if (count === 0) return -1
-
-    var step = direction < 0 ? -1 : 1
-    var index = ((from % count) + count) % count
-    for (var i = 0; i < count; i++) {
-      if (root.rowSelectable(index)) return index
-      index = (index + step + count) % count
-    }
-
-    return -1
-  }
 
   // Goes through the same in-place sync as rebuildDisplay: both fill the one
   // displayModel, and a direct append would bypass the role bookkeeping that
@@ -1819,6 +2142,14 @@ Item {
     }
 
     var rows = []
+    if (root.dmenuMultiple && root.dmenuOnChange.length === 0) {
+      rows.push(MenuModel.sanitizeRow({
+        itemId: "dmenu.apply", disabled: false, kind: "dmenu", icon: "", iconFont: "",
+        appIcon: "", appId: "", label: Commons.I18n.t("common.apply"), target: "",
+        detail: Commons.I18n.tn("menu.selectedCount", root.dmenuSelected.length).arg(Commons.I18n.formatNumber(root.dmenuSelected.length)), path: "", imagePath: "", swatch: "", childCount: 0,
+        action: "", provider: "", score: -1, section: "", trailText: ""
+      }))
+    }
     var query = root.filterText.trim().toLowerCase()
     for (var i = 0; i < root.dmenuOptions.length; i++) {
       // An option is "<label>", "<glyph>\t<label>", or
@@ -1835,7 +2166,7 @@ Item {
         itemId: "dmenu." + i,
         disabled: false,
         kind: "dmenu",
-        icon: icon,
+        icon: root.dmenuMultiple ? (root.dmenuSelected.indexOf(MenuModel.dmenuValue(root.dmenuOptions[i])) !== -1 ? "✓" : "○") : icon,
         iconFont: "",
         appIcon: "",
         appId: "",
@@ -1843,6 +2174,8 @@ Item {
         target: "",
         detail: detail,
         path: "",
+        imagePath: "",
+        swatch: "",
         childCount: 0,
         action: "",
         provider: "",
@@ -1862,6 +2195,18 @@ Item {
     Qt.callLater(function() {
       if (displayModel.count > 0) root.revealCursor()
     })
+  }
+
+  function updateDmenuChecks() {
+    for (var i = 0; i < displayModel.count; i++) {
+      var row = displayModel.get(i)
+      if (row.itemId === "dmenu.apply") {
+        displayModel.setProperty(i, "detail", Commons.I18n.tn("menu.selectedCount", root.dmenuSelected.length).arg(Commons.I18n.formatNumber(root.dmenuSelected.length)))
+      } else if (row.kind === "dmenu") {
+        var value = MenuModel.dmenuValue(root.dmenuOptions[Number(row.itemId.substring(6))])
+        displayModel.setProperty(i, "icon", root.dmenuSelected.indexOf(value) !== -1 ? "✓" : "○")
+      }
+    }
   }
 
   // How many rows each source gets in All before its own tab is the place to
@@ -2027,12 +2372,26 @@ Item {
   // keepSelection: the list is being rebuilt under an unchanged query (late
   // results, a provider refresh), so the cursor follows its item rather than
   // staying on an index that now holds something else.
+  function recordRebuild(start) {
+    var elapsed = Date.now() - start
+    root.perfRebuildMs += elapsed
+    root.perfRebuilds++
+    console.info("omni-perf generation/rebuild_count/rebuild_ms/cumulative_ms",
+                 root.perfGeneration, root.perfRebuilds, elapsed, root.perfRebuildMs)
+  }
+
   function rebuildDisplay(keepSelection) {
-    // Only All's branch below lays out tiles; every other list has none.
+    var start = root.perfEnabled ? Date.now() : 0
+    // Only All's branch and Apps' pinned strip lay out tiles; every other
+    // list has none.
     var tiles = []
+    var pinnedCount = 0
+    root.pinnedCount = 0
     if (root.dmenuActive) {
       root.allTiles = tiles
+      root.refreshAnswerForm([])
       root.rebuildDmenuDisplay()
+      if (start) root.recordRebuild(start)
       return
     }
 
@@ -2042,13 +2401,18 @@ Item {
     // in the model when they arrive and would otherwise drag the cursor down
     // to wherever it ranks.)
     var previousId = ""
-    if (keepSelection && root.selectedIndex > 0 && root.selectedIndex < displayModel.count)
+    var previousSection = ""
+    if (keepSelection && root.selectedIndex > 0 && root.selectedIndex < displayModel.count) {
       previousId = displayModel.get(root.selectedIndex).itemId
+      previousSection = displayModel.get(root.selectedIndex).section
+    }
 
     if (!root.rowsLoaded) {
+      root.refreshAnswerForm([])
       root.allTiles = tiles
       root.shownRows.rows = []
       displayModel.clear()
+      if (start) root.recordRebuild(start)
       return
     }
     if (root.showsSystemRows()) root.ensureGuards()
@@ -2075,8 +2439,23 @@ Item {
     else if (root.activeTab === "system" && root.systemTwoPane)
       rows = active === "root" ? [] : root.systemTabRows("", active)
     else if (root.activeTab === "system") rows = root.systemTabRows(query, active)
-    else if (root.activeTab === "apps") rows = root.appTabRows(query)
+    else if (root.activeTab === "apps") {
+      rows = root.appTabRows(query)
+      // The pinned strip: only before anything is typed, where a search
+      // ranks the best match first and Enter takes it. A pinned app is also
+      // in the list under it, where alphabetical order expects it.
+      var pinned = query ? [] : root.pinnedRows()
+      pinnedCount = pinned.length
+      if (pinnedCount > 0 && root.appsView === "grid") {
+        var pad = Pinned.gridPadding(pinnedCount, appGrid.columns)
+        for (var p = 0; p < pad; p++) pinned.push(Pinned.padRow(p, root.pinnedSection))
+      }
+      rows = pinned.concat(rows)
+      if (pinnedCount > 0 && root.appsView !== "grid")
+        tiles = AllTiles.layout(rows, root.pinnedSection, root.allTileColumns, true)
+    }
     else if (root.activeTab === "windows") rows = windowCtl.windowRows(query)
+    else if (root.activeTab === "clipboard") rows = clipboardCtl.rows(query)
     else if (root.activeTab === "all") {
       rows = root.allTabRows(query)
       if (root.allAppsView === "grid")
@@ -2085,6 +2464,7 @@ Item {
     else if (root.activeTab === "files" || root.activeTab === "folders") rows = fileCtl.filesTabRows()
 
     root.showingCommandHints = root.commandMode && rows.length > 0 && rows[0].kind === "example"
+    root.refreshAnswerForm(rows)
     if (root.showingCommandHints) root.cursorActive = false
 
     // Sanitized here rather than in each builder: this is the one place
@@ -2092,19 +2472,23 @@ Item {
     for (var k = 0; k < rows.length; k++) rows[k] = root.markRow(MenuModel.sanitizeRow(rows[k]))
     // Before the sync, so a delegate made for a tile row already sees it.
     root.allTiles = tiles
+    root.pinnedCount = pinnedCount
     root.syncDisplayModel(rows)
     layoutSerial += 1
 
-    var kept = Tabs.indexOfItem(rows, previousId)
+    // A pinned app is listed twice: follow the copy that was selected.
+    var kept = -1
+    for (var r = 0; r < rows.length && kept < 0 && previousId; r++)
+      if (rows[r].itemId === previousId && rows[r].section === previousSection) kept = r
+    if (kept < 0) kept = Tabs.indexOfItem(rows, previousId)
     if (kept >= 0) selectedIndex = kept
 
-    if (displayModel.count === 0) selectedIndex = 0
-    else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
-    else if (selectedIndex < 0) selectedIndex = 0
+    root.settleCursor()
 
     Qt.callLater(function() {
       if (displayModel.count > 0) root.revealCursor()
     })
+    if (start) root.recordRebuild(start)
   }
 
   // Contain alone parks the cursor row flush with the viewport edge, hiding
@@ -2117,7 +2501,8 @@ Item {
       return
     }
     // A tile is revealed as its whole strip: the strip's lead row, drawn the
-    // full tile height tall.
+    // full tile height tall. In the pinned block, the tile's line of it (and
+    // the block's padding at either end).
     var tile = root.allTiles[root.selectedIndex]
     var index = tile ? tile.lead : root.selectedIndex
     var last = tile ? tile.lead + tile.count - 1 : index
@@ -2125,16 +2510,22 @@ Item {
 
     var item = resultList.itemAtIndex(index)
     if (!item) return
+    var top = item.y
     var itemHeight = tile ? root.allTileHeight : item.height
+    if (tile && tile.lines) {
+      var pad = root.stripPad(tile)
+      top += tile.line > 0 ? pad + tile.line * root.allTileHeight : 0
+      itemHeight = root.allTileHeight + (tile.line > 0 ? 0 : pad) + (tile.line === tile.lines - 1 ? pad : 0)
+    }
 
     var reach = root.rowPeek + root.rowSpacing
     if (last < displayModel.count - 1) {
       var maxY = Math.max(resultList.originY, resultList.originY + resultList.contentHeight - resultList.height)
-      var overhang = item.y + itemHeight + reach - (resultList.contentY + resultList.height)
+      var overhang = top + itemHeight + reach - (resultList.contentY + resultList.height)
       if (overhang > 0) resultList.contentY = Math.min(resultList.contentY + overhang, maxY)
     }
-    if (index > 0) {
-      var underhang = resultList.contentY - (item.y - reach)
+    if (index > 0 || top > item.y) {
+      var underhang = resultList.contentY - (top - reach)
       if (underhang > 0) resultList.contentY = Math.max(resultList.contentY - underhang, resultList.originY)
     }
   }
@@ -2149,14 +2540,19 @@ Item {
     root.disarmPointer()
     // All's app tiles (AllTiles.js): Up and Down go strip by strip, and a
     // move that lands inside a strip from outside it takes its first tile.
+    var target
     if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = AllTiles.enter(root.allTiles, delta < 0 ? displayModel.count - 1 : 0)
+      target = AllTiles.enter(root.allTiles, delta < 0 ? displayModel.count - 1 : 0)
     } else if (Math.abs(delta) === 1) {
-      selectedIndex = AllTiles.step(root.allTiles, selectedIndex, delta, displayModel.count)
+      target = AllTiles.step(root.allTiles, selectedIndex, delta, displayModel.count)
     } else {
-      selectedIndex = AllTiles.enter(root.allTiles, (selectedIndex + delta + displayModel.count) % displayModel.count)
+      target = AllTiles.enter(root.allTiles, (selectedIndex + delta + displayModel.count) % displayModel.count)
     }
+    // Disabled rows (installed software, `disabled:` guards) never take the cursor.
+    target = root.nextSelectable(target, delta)
+    if (target < 0) return
+    cursorActive = true
+    selectedIndex = target
     revealCursor()
   }
 
@@ -2167,10 +2563,96 @@ Item {
     root.cursorActive = root.mode !== "input"
     root.disarmPointer()
     if (!root.dmenuActive && !root.commandMode && root.filterText.trim()) root.loadProvidersForSearch()
-    root.updateSystemMatches()
-    root.rebuildDisplay()
-    if (root.systemTwoPane && root.systemMatches.length > 0) root.jumpToSystemMatch(0)
+    root.rebuildForQuery()
     fileCtl.requestFileSearch()
+  }
+
+  // ------------------------------------------------------------ answer forms
+
+  // Whether the line reads as a form. Only offered while its answer leads the
+  // rows -- a form for an answer that is not on show would edit nothing
+  // visible -- and left alone while a field is focused, where the spans are
+  // the ones the edits carried along.
+  function refreshAnswerForm(rows) {
+    if (root.formField >= 0) return
+    var lead = rows.length > 0 ? rows[0] : null
+    var shown = !!lead && (lead.kind === "calc" || lead.kind === "currency" || lead.kind === "unit")
+    var form = shown && !aiCtl.isAiMode ? MenuModel.answerFormFields(root.filterText) : null
+    if (JSON.stringify(form) !== JSON.stringify(root.answerForm)) root.answerForm = form
+  }
+
+  // Tab focuses the first value, Shift+Tab the last.
+  function enterForm(back) {
+    if (!root.answerForm || root.answerForm.fields.length === 0) return false
+    root.formField = back ? root.answerForm.fields.length - 1 : 0
+    root.formFresh = true
+    return true
+  }
+
+  function leaveForm() {
+    root.formField = -1
+    root.formFresh = false
+    root.rebuildDisplay(true)
+  }
+
+  function moveFormField(step) {
+    var count = root.answerForm.fields.length
+    root.formField = ((root.formField + step) % count + count) % count
+    root.formFresh = true
+  }
+
+  function focusedFieldText() {
+    var field = root.answerForm.fields[root.formField]
+    return root.filterText.slice(field.start, field.end)
+  }
+
+  // Splice the focused field and keep the spans the edit worked out.
+  function applyFormEdit(replacement) {
+    var edited = MenuModel.editFormField(root.filterText, root.answerForm.fields, root.formField, replacement)
+    if (!edited) {
+      root.leaveForm()
+      return
+    }
+    root.answerForm = { kind: edited.kind || root.answerForm.kind, fields: edited.fields }
+    root.formFresh = false
+    root.formWriting = true
+    try {
+      root.setFilter(edited.text)
+    } finally {
+      root.formWriting = false
+    }
+  }
+
+  // Keys while a field is focused. Returns false for anything that should
+  // fall through to the menu: Enter, Ctrl+1..7, Ctrl+Tab, paste, Ctrl+U.
+  function handleFormKey(event) {
+    var plain = event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier
+    if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && !(event.modifiers & Qt.ControlModifier)) {
+      root.moveFormField(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
+      return true
+    }
+    if (event.key === Qt.Key_Escape) {
+      root.leaveForm()
+      return true
+    }
+    if (event.key === Qt.Key_Backspace && !(event.modifiers & (Qt.AltModifier | Qt.MetaModifier))) {
+      root.applyFormEdit((event.modifiers & Qt.ControlModifier) ? "" : root.focusedFieldText().slice(0, -1))
+      return true
+    }
+    if ((event.key === Qt.Key_Up || event.key === Qt.Key_Down) && event.modifiers === Qt.NoModifier) {
+      var field = root.answerForm.fields[root.formField]
+      var next = MenuModel.cycleFormValue(field.kind, root.focusedFieldText(), event.key === Qt.Key_Up ? 1 : -1)
+      if (!next) return false
+      root.applyFormEdit(next)
+      // Still a value picked, not one being typed: the next key replaces it.
+      root.formFresh = true
+      return true
+    }
+    if (plain && event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+      root.applyFormEdit(root.formFresh ? event.text : root.focusedFieldText() + event.text)
+      return true
+    }
+    return false
   }
 
   // Menu entries matching the query, best first (ids).
@@ -2191,13 +2673,20 @@ Item {
   // Put the tree on a match: open the menu it lives in and park the cursor on
   // it, or -- for a top-level category -- highlight it on the left. The query
   // stays; Esc clears it and leaves the tree where it is.
+  function rebuildForQuery() {
+    root.updateSystemMatches()
+    // A jump commits the destination rows before selecting the hit. Only
+    // build here when there was no jump; keep the result ready for Enter.
+    if (!root.systemTwoPane || !root.jumpToSystemMatch(0)) root.rebuildDisplay()
+  }
+
   function jumpToSystemMatch(index) {
     var count = root.systemMatches.length
-    if (count === 0) return
+    if (count === 0) return false
     index = ((index % count) + count) % count
     root.systemMatchIndex = index
     var entry = root.item(root.systemMatches[index])
-    if (!entry) return
+    if (!entry) return false
     root.navStack = []
     root.cursorActive = true
     if (entry.parent === "root") {
@@ -2206,7 +2695,7 @@ Item {
       root.syncSystemCategoryTo(entry.id)
       root.systemPane = "left"
       root.selectedIndex = 0
-      return
+      return true
     }
     root.activeMenu = entry.parent
     root.rebuildDisplay()
@@ -2216,6 +2705,7 @@ Item {
       if (displayModel.get(i).itemId === entry.id) { root.selectedIndex = i; break }
     }
     root.revealCursor()
+    return true
   }
 
   function setActiveMenu(id, pushHistory, fromPointer) {
@@ -2238,16 +2728,33 @@ Item {
     if (root.activeMenu === "root") return false
     if (root.systemTwoPane) Qt.callLater(root.syncSystemCategory)
 
+    // Coming back lands on the row that was opened, not the top of the list.
+    var left = root.activeMenu
     if (root.navStack.length > 0) {
       var previous = root.navStack[root.navStack.length - 1]
       root.navStack = root.navStack.slice(0, root.navStack.length - 1)
       root.setActiveMenu(previous, false)
-      return true
+    } else {
+      var active = root.item(root.activeMenu)
+      root.setActiveMenu((active && active.parent) ? active.parent : "root", false)
     }
-
-    var active = root.item(root.activeMenu)
-    root.setActiveMenu((active && active.parent) ? active.parent : "root", false)
+    root.selectRowFor(left)
     return true
+  }
+
+  // Put the cursor on the row that opens `id` (a submenu, or a link to it).
+  function selectRowFor(id) {
+    for (var i = 0; i < displayModel.count; i++) {
+      var row = displayModel.get(i)
+      if (row.itemId === id || (row.kind === "link" && row.target === id)) {
+        if (!root.rowSelectable(i)) return false
+        root.selectedIndex = i
+        root.cursorActive = true
+        Qt.callLater(root.revealCursor)
+        return true
+      }
+    }
+    return false
   }
 
   // launchNew: Shift+Enter on an application starts another instance even
@@ -2261,11 +2768,26 @@ Item {
       }
       if (index < 0 || index >= displayModel.count) return
       var picked = displayModel.get(index)
-      root.applyDmenuSelection(picked.detail ? picked.label + "\t" + picked.detail : picked.label)
+      if (root.dmenuMultiple) {
+        if (picked.itemId === "dmenu.apply") {
+          root.applyDmenuSelection(JSON.stringify(MenuModel.dmenuSelections(root.dmenuOptions, root.dmenuSelected)))
+        } else {
+          var value = MenuModel.dmenuValue(root.dmenuOptions[Number(picked.itemId.substring(6))])
+          var selected = MenuModel.toggleDmenuSelection(selectionProc.requestedSelection(), value)
+          if (root.dmenuOnChange.length > 0) {
+            selectionProc.enqueue(selected)
+          } else {
+            root.dmenuSelected = selected
+            root.updateDmenuChecks()
+          }
+        }
+      } else {
+        root.applyDmenuSelection(picked.detail ? picked.label + "\t" + picked.detail : picked.label)
+      }
       return
     }
 
-    if (index < 0 || index >= displayModel.count) return
+    if (!root.rowSelectable(index)) return
 
     var row = displayModel.get(index)
     if (row.kind === "menu" || row.kind === "link") {
@@ -2292,6 +2814,8 @@ Item {
       root.launchApp(appId, label)
     } else if (row.kind === "window") {
       root.focusWindow(row.target)
+    } else if (row.kind === "clipboard") {
+      clipboardCtl.paste(row.target, false)
     } else if (row.kind === "example") {
       return // read-only hint
     } else if (row.kind === "shell") {
@@ -2447,6 +2971,7 @@ Item {
     // Guards are evaluated when System rows are first shown in this open,
     // not here: see ensureGuards.
     root.guardsCurrent = false
+    root.followFocusedMonitor()
     opened = true
     rebuildDisplay()
     invalidateVolatileProvider(activeMenu)
@@ -2456,13 +2981,14 @@ Item {
     if (root.appLibrary) root.appLibrary.refreshIcons()
     else root.refreshFallbackIcons()
 
+    panel.primeFocus()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function openDmenu(payload) {
     requestSerial += 1
     mode = payload.mode === "input" ? "input" : "select"
-    dmenuPrompt = MenuModel.sanitizeText(String(payload.prompt || (mode === "input" ? "Input" : "Select")), 256)
+    dmenuPrompt = MenuModel.sanitizeText(String(payload.prompt || (mode === "input" ? Commons.I18n.t("menu.inputPrompt") : Commons.I18n.t("menu.selectPrompt"))), 256)
     // Whatever a caller sends over IPC: at most 100000 options, and none
     // over 64 KiB (the value is returned as typed, so a longer one is left
     // out rather than cut).
@@ -2473,6 +2999,14 @@ Item {
       if (option.length <= 65536) options.push(option)
     }
     dmenuOptions = options
+    dmenuMultiple = mode === "select" && payload.multiple === true
+    dmenuOnChange = dmenuMultiple && Array.isArray(payload.onChange)
+      && payload.onChange.every(function(arg) { return typeof arg === "string" }) ? payload.onChange : []
+    dmenuChangeKey = String(payload.changeKey || JSON.stringify(dmenuOnChange))
+    dmenuSelected = MenuModel.dmenuSelections(dmenuOptions, Array.isArray(payload.selected) ? payload.selected : [], dmenuOnChange.length > 0)
+    dmenuSaved = dmenuSelected
+    if (dmenuOnChange.length > 0)
+      dmenuSelected = MenuModel.dmenuSelections(dmenuOptions, selectionProc.requestedSelection(), true)
     selectionFile = String(payload.selectionFile || "")
     doneFile = String(payload.doneFile || "")
     requestActive = !!doneFile
@@ -2484,9 +3018,13 @@ Item {
     selectedIndex = 0
     cursorActive = mode !== "input"
     root.disarmPointer()
+    panel.cardTop = -1
+    panel.maxRowsHeight = -1
+    root.followFocusedMonitor()
     opened = true
     rebuildDisplay()
 
+    panel.primeFocus()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -2520,6 +3058,11 @@ Item {
     menu: root
   }
 
+  ClipboardController {
+    id: clipboardCtl
+    menu: root
+  }
+
   SettingsStore {
     id: settingsStore
     menu: root
@@ -2536,11 +3079,43 @@ Item {
   // on the VM before the shell hears of it). Until the host has handed this
   // plugin its shell API (on the first summon), a press takes the old way.
   function toggleFromShortcut(route) {
+    // Open on another monitor: the first press brings it here (and to the
+    // shortcut's destination) rather than closing it out of sight.
+    if (root.opened && !root.onFocusedMonitor) {
+      if (route === "root" || root.dmenuActive) {
+        root.followFocusedMonitor()
+        panel.primeFocus()
+      } else {
+        root.openRoute(route)
+      }
+      return
+    }
+    // The host's toggle closes any visible panel before looking at its
+    // route. Handle a different tab or System submenu without closing.
+    if (root.opened && !root.dmenuActive && Tabs.shortcutSwitchesDestination(route, root.activeTab, root.activeMenu)) {
+      root.openRoute(route)
+      return
+    }
     if (root.shell) {
       root.shell.toggle("omarchy.menu", JSON.stringify({ menu: route }))
       return
     }
     Quickshell.execDetached(["omarchy-menu", "toggle", route])
+  }
+
+  function cycleFromRootShortcut() {
+    if (!root.opened || root.dmenuActive || !root.onFocusedMonitor) {
+      root.toggleFromShortcut("root")
+      return
+    }
+    const from = root.activeTab
+    const defaultTab = Tabs.openTabFor(root.openTab, root.tabOrder, root.disabledTabs)
+    const next = Tabs.rootShortcutTab(from, defaultTab, root.rootShortcutReturnTab)
+    root.filterText = ""
+    // A key pressed from another monitor's window takes the keyboard back.
+    panel.primeFocus()
+    root.setTab(next)
+    if (next === "system") root.rootShortcutReturnTab = from
   }
 
   GlobalShortcut {
@@ -2552,16 +3127,65 @@ Item {
 
   GlobalShortcut {
     appid: "omarchy-menu-omni"
+    name: "cycle-root"
+    description: "Open Omni or switch between search and System"
+    onPressed: root.cycleFromRootShortcut()
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
     name: "toggle-apps"
-    description: "Open or close the Omarchy menu on Apps"
+    description: "Open or switch to Apps; close if already on Apps"
     onPressed: root.toggleFromShortcut("apps")
   }
 
   GlobalShortcut {
     appid: "omarchy-menu-omni"
     name: "toggle-windows"
-    description: "Open or close the Omarchy menu on Windows"
+    description: "Open or switch to Windows; close if already on Windows"
     onPressed: root.toggleFromShortcut("windows")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-clipboard"
+    description: "Open or switch to Clipboard; close if already on Clipboard"
+    onPressed: root.toggleFromShortcut("clipboard")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-system"
+    description: "Open or switch to System power actions"
+    onPressed: root.toggleFromShortcut("system")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-capture"
+    description: "Open or switch to the Capture menu"
+    onPressed: root.toggleFromShortcut("trigger.capture")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-toggles"
+    description: "Open or switch to the Toggle menu"
+    onPressed: root.toggleFromShortcut("trigger.toggle")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-hardware"
+    description: "Open or switch to the Hardware menu"
+    onPressed: root.toggleFromShortcut("trigger.hardware")
+  }
+
+  GlobalShortcut {
+    appid: "omarchy-menu-omni"
+    name: "toggle-share"
+    description: "Open or switch to the Share menu"
+    onPressed: root.toggleFromShortcut("trigger.share")
   }
 
   // What the controllers reach for through `menu`.
@@ -2592,19 +3216,26 @@ Item {
   }
 
   function openRoute(initialMenu) {
+    var start = root.perfEnabled ? Date.now() : 0
     var id = root.resolveRoute(initialMenu)
     var entry = root.items[id]
+    // Omni's own tabs win over menu entries of the same name: Omarchy 4.5 made
+    // `apps` an action that opens the dock's launcher, which would otherwise
+    // run instead of opening the Apps tab.
+    var tabRoute = Tabs.tabForRoute(String(initialMenu || ""))
+    if (tabRoute.tab === "apps" || tabRoute.tab === "windows" || tabRoute.tab === "clipboard") entry = null
     // If the resolved id is an action (i.e. the user invoked an alias for
     // a leaf, e.g. `omarchy menu summon screenrecord-stop`), run it directly
     // instead of opening an action with no children.
     if (entry && entry.kind === "action" && entry.action) {
+      root.perfRouteStart = 0
       root.cancel()
       root.runAction(entry.action)
       return "ok"
     }
     // If it's a link (a redirect to another menu), follow the link.
     if (entry && entry.kind === "link" && entry.target) id = entry.target
-    var place = Tabs.tabForRoute(id)
+    var place = entry === null && tabRoute.tab !== "system" ? tabRoute : Tabs.tabForRoute(id)
     aiCtl.loadAiConfig()
     settingsStore.loadStyle()
     settingsStore.loadState()
@@ -2620,6 +3251,7 @@ Item {
     fileCtl.fileFilterIndex = 0
     fileCtl.folderFilterIndex = 0
     fileCtl.rootScope = "all"
+    clipboardCtl.filterIndex = 0
     fileCtl.prepare()
     root.pendingInitialMenu = place.menu
     root.openExistingMenu(place.menu)
@@ -2630,6 +3262,7 @@ Item {
     if (place.tab === "system") Qt.callLater(root.enterSystemPanes)
     if (place.tab === "apps") root.loadProviderForMenu("apps")
     fileCtl.requestFileSearch()
+    if (root.perfEnabled) root.perfRouteStart = start
     root.openTabPending = bareSummon
     return "ok"
   }
@@ -2641,6 +3274,7 @@ Item {
   function selectFromPointer(index, item, mouse) {
     if (root.showingCommandHints) return
     if (!pointerGate.moved(item, mouse)) return
+    if (!root.rowSelectable(index)) return
     root.cursorActive = true
     root.selectedIndex = index
   }
@@ -2689,6 +3323,66 @@ Item {
       clipboardProc.stdinEnabled = false
     }
     onExited: if (clipboardProc.hasQueued) Qt.callLater(clipboardProc.startNext)
+  }
+
+  Process {
+    id: selectionProc
+    property int serial: 0
+    property string changeKey: ""
+    property var selected: []
+    property var queue: []
+    property string collected: ""
+
+    function requestedSelection() {
+      for (var i = queue.length - 1; i >= 0; i--) {
+        if (queue[i].key === root.dmenuChangeKey) return queue[i].selected
+      }
+      if (running && changeKey === root.dmenuChangeKey) return selected
+      return root.dmenuSelected
+    }
+
+    function enqueue(values) {
+      var selected = MenuModel.dmenuSelections(root.dmenuOptions, values, true)
+      queue = queue.concat([{
+        serial: root.requestSerial, key: root.dmenuChangeKey, selected: selected,
+        command: root.dmenuOnChange.concat([JSON.stringify(selected)])
+      }])
+      if (!running) startNext()
+    }
+
+    function startNext() {
+      if (queue.length === 0) return
+      var change = queue[0]
+      queue = queue.slice(1)
+      serial = change.serial
+      changeKey = change.key
+      selected = change.selected
+      collected = ""
+      command = change.command
+      running = true
+    }
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: selectionProc.collected = text
+    }
+    onExited: function(exitCode) {
+      if (changeKey === root.dmenuChangeKey && root.dmenuActive && root.dmenuOnChange.length > 0) {
+        if (exitCode === 0) {
+          var applied = selected
+          if (collected.trim()) {
+            try { applied = JSON.parse(collected) } catch (error) { applied = root.dmenuSelected }
+          }
+          if (Array.isArray(applied))
+            root.dmenuSelected = MenuModel.dmenuSelections(root.dmenuOptions, applied, true)
+          root.dmenuSaved = root.dmenuSelected
+        } else {
+          root.dmenuSelected = root.dmenuSaved
+        }
+        root.updateDmenuChecks()
+      }
+      startNext()
+    }
   }
 
   Process {
@@ -2812,6 +3506,28 @@ Item {
     }
   }
 
+  // The language choice and its catalog are watched the same way, so
+  // picking a language under Setup retitles the menu with no shell restart.
+  FileView {
+    id: languageFile
+    path: root.languagePath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.setLanguage(text())
+    onLoadFailed: root.setLanguage("")
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: menuCatalogFile
+    path: root.omarchyPath + "/default/i18n/" + root.language + "/menu.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: { root.menuCatalog = root.parseCatalog(text()); root.rebuildItemsFromSources(true) }
+    onLoadFailed: { root.menuCatalog = ({}); root.rebuildItemsFromSources(true) }
+    onFileChanged: reload()
+  }
+
 
 
 
@@ -2825,6 +3541,7 @@ Item {
 
   property var whenResults: ({})       // id → true|false (allow visibility)
   property var checkedResults: ({})    // id → true|false (show ✓)
+  property var disabledResults: ({})   // id → true|false (dim, skip cursor)
   property bool guardsPending: false
   // Whether the guards have been evaluated during this open. The batch runs
   // every `when:`/`checked:` expression of the menu -- about 180 of them,
@@ -2866,6 +3583,7 @@ Item {
     if (!script) {
       root.whenResults = ({})
       root.checkedResults = ({})
+      root.disabledResults = ({})
       return
     }
     guardProc.collected = ""
@@ -2900,6 +3618,7 @@ Item {
 
       var nextWhen = ({})
       var nextChecked = ({})
+      var nextDisabled = ({})
       var lines = guardProc.collected.split("\n")
       for (var i = 0; i < lines.length; i++) {
         var line = lines[i].trim()
@@ -2914,9 +3633,11 @@ Item {
         var tag = rest.substring(tagAt + 1)
         if (tag === "w") nextWhen[id] = value
         else if (tag === "c") nextChecked[id] = value
+        else if (tag === "d") nextDisabled[id] = value
       }
       root.whenResults = nextWhen
       root.checkedResults = nextChecked
+      root.disabledResults = nextDisabled
       if (root.opened) root.rebuildDisplay()
       // Run the evaluation that had to stand aside. Deferred by a turn so the
       // process is settled before its command is set again.
@@ -2930,8 +3651,49 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "omarchy-menu"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    // A brief Exclusive prime takes the keyboard on every open, then
+    // OnDemand: Exclusive makes Hyprland send every pointer event to this
+    // surface whatever output the cursor is on, which left the other
+    // monitors unclickable while the menu was up (Ui/KeyboardPanel.qml does
+    // the same). On OnDemand a click elsewhere goes to that window and the
+    // menu stays; a click on this screen outside the card still closes it.
+    //
+    // The keyboard follows the focused monitor (the cursor with
+    // follow_mouse, or a workspace switch): on another monitor the menu lets
+    // go of it entirely, so typing there never lands in the menu, and coming
+    // back primes it again, so typing here does without a click.
+    property bool focusPrimed: false
+    screen: root.menuScreen
+    WlrLayershell.keyboardFocus: !panel.visible || !root.onFocusedMonitor ? WlrKeyboardFocus.None
+      : panel.focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
+
+    function primeFocus() {
+      panel.focusPrimed = false
+      focusPrimeTimer.restart()
+    }
+
+    Connections {
+      target: root
+      function onOnFocusedMonitorChanged() {
+        if (!panel.visible) return
+        if (root.onFocusedMonitor) {
+          panel.primeFocus()
+          Qt.callLater(function() { if (panel.visible) keyCatcher.forceActiveFocus() })
+        } else {
+          focusPrimeTimer.stop()
+          panel.focusPrimed = false
+        }
+      }
+    }
+
+    Timer {
+      id: focusPrimeTimer
+      // A few commit cycles: long enough for Hyprland to hand over the
+      // keyboard, short enough that the compositor-wide grab is not felt.
+      interval: 75
+      onTriggered: if (panel.visible) panel.focusPrimed = true
+    }
 
     // The card opens centered exactly as always. The first search keystroke
     // or submenu move freezes the top line where it currently sits — from
@@ -2956,7 +3718,10 @@ Item {
         maxRowsHeight = root.visibleRowsHeight
       }
     }
-    onVisibleChanged: if (!visible) { cardTop = -1; maxRowsHeight = -1 }
+    onVisibleChanged: {
+      if (!visible) { cardTop = -1; maxRowsHeight = -1; focusPrimeTimer.stop(); focusPrimed = false }
+      else primeFocus()
+    }
 
     Rectangle {
       anchors.fill: parent
@@ -3025,7 +3790,9 @@ Item {
             return
           }
           if (root.deleteConfirmOpen) {
-            if (deleteConfirm.handleKey(event)) event.accepted = true
+            // Swallow the rest too, or it would type into the search line behind the dialog.
+            deleteConfirm.handleKey(event)
+            event.accepted = true
             return
           }
 
@@ -3065,11 +3832,22 @@ Item {
                      && event.key >= Qt.Key_1 && event.key < Qt.Key_1 + aiCtl.aiAgents.length) {
             aiCtl.setAiAgent(aiCtl.aiAgents[event.key - Qt.Key_1])
             event.accepted = true
+          } else if (root.formEditing && root.handleFormKey(event)) {
+            event.accepted = true
+          } else if (root.tabsActive && root.answerForm && !(event.modifiers & Qt.ControlModifier)
+                     && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
+            // A form on the line: Tab steps into its values instead of the
+            // next tab. Ctrl+Tab and Ctrl+1..7 still switch tabs.
+            root.enterForm(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier))
+            event.accepted = true
           } else if (root.tabsActive && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
             // Claimed before anything else: left alone, Tab moves QML focus
             // off the key catcher and the menu stops hearing the keyboard.
+            // A "/" command answers the same on every tab, so plain Tab
+            // would only switch the tab out of sight; it does nothing there.
             var back = event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier)
-            root.setTab(Tabs.cycleTab(root.activeTab, back ? -1 : 1, root.orderedTabs))
+            if (!root.commandMode || (event.modifiers & Qt.ControlModifier))
+              root.setTab(Tabs.cycleTab(root.activeTab, back ? -1 : 1, root.orderedTabs))
             event.accepted = true
           } else if (root.tabsActive && (event.modifiers & Qt.ControlModifier)
                      && event.key >= Qt.Key_1 && event.key < Qt.Key_1 + root.orderedTabs.length) {
@@ -3116,6 +3894,16 @@ Item {
           } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                      && (event.modifiers & Qt.AltModifier) && root.selectedFileRow()) {
             root.openEnclosingFolder(root.selectedFileRow())
+            event.accepted = true
+          } else if (event.key === Qt.Key_C && event.modifiers === Qt.ControlModifier && root.selectedClipboardRow()) {
+            clipboardCtl.paste(root.selectedClipboardRow().target, true)
+            event.accepted = true
+          } else if (event.key === Qt.Key_O && event.modifiers === Qt.ControlModifier && root.selectedClipboardRow()) {
+            clipboardCtl.open(root.selectedClipboardRow().target)
+            event.accepted = true
+          } else if (root.activeTab === "clipboard" && root.tabsActive && event.modifiers === Qt.ControlModifier
+                     && event.key === Qt.Key_F) {
+            clipboardCtl.cycleFilter()
             event.accepted = true
           } else if (event.key === Qt.Key_C && event.modifiers === Qt.ControlModifier && root.selectedFileRow()) {
             root.copyPath(root.selectedFileRow())
@@ -3165,6 +3953,15 @@ Item {
             // Only claimed when there was something to reroll, so Ctrl+R stays
             // free everywhere else in the menu.
             event.accepted = true
+          } else if (event.key === Qt.Key_P && event.modifiers === Qt.ControlModifier && root.selectedAppRow()) {
+            root.togglePinSelected()
+            event.accepted = true
+          } else if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)
+                     && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
+                         || event.key === Qt.Key_Up || event.key === Qt.Key_Down)
+                     && root.selectedAppRow() && root.selectedAppRow().section === root.pinnedSection) {
+            root.movePinnedSelected(event.key === Qt.Key_Left || event.key === Qt.Key_Up ? -1 : 1)
+            event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
             event.accepted = true
@@ -3186,7 +3983,7 @@ Item {
             root.selectedIndex = AllTiles.side(root.allTiles, root.selectedIndex, event.key === Qt.Key_Left ? -1 : 1)
             root.revealCursor()
             event.accepted = true
-          } else if ((event.key === Qt.Key_Backspace || event.key === Qt.Key_Left) && !root.filterText) {
+          } else if ((event.key === Qt.Key_Backspace || Util.readingKey(event) === Qt.Key_Left) && !root.filterText) {
             // Only System has submenus to back out of.
             if (!root.tabsActive || root.activeTab === "system") root.goBack()
             event.accepted = true
@@ -3202,12 +3999,12 @@ Item {
           } else if (event.key === Qt.Key_PageDown) {
             root.select(6)
             event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Right) {
+          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || Util.readingKey(event) === Qt.Key_Right) {
             if (root.dmenuActive) {
               if (root.mode === "input") root.applyDmenuSelection(root.filterText)
               else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
             } else if (root.cursorActive) root.activateIndex(root.selectedIndex, false, (event.modifiers & Qt.ShiftModifier) !== 0)
-            else if (displayModel.count > 0 && !root.showingCommandHints) root.cursorActive = true
+            else if (!root.showingCommandHints) root.settleCursor()
             event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
             root.setFilter(root.filterText + event.text)
@@ -3221,8 +4018,8 @@ Item {
           anchors.fill: parent
           opened: root.deleteConfirmOpen
           z: 10
-          message: "Do you want to uninstall " + ((root.deleteTarget && root.deleteTarget.label) || "") + "?"
-          confirmText: "Uninstall"
+          message: Commons.I18n.t("common.uninstallConfirm").arg((root.deleteTarget && root.deleteTarget.label) || "")
+          confirmText: Commons.I18n.t("common.uninstall")
           background: root.background
           foreground: root.foreground
           scrim: root.scrim
@@ -3315,10 +4112,13 @@ Item {
               id: searchCursor
               readonly property real textEnd: searchText.x + (root.filterText ? Math.min(searchText.contentWidth, searchText.width) : 0)
               readonly property int cellWidth: Math.max(2, Math.round(searchText.font.pixelSize * 0.55))
+              // A focused form field draws its own caret.
               visible: root.opened && root.cursorStyle !== "none" && (root.cursorWhenEmpty || root.filterText !== "")
+                       && !root.formEditing
               width: root.cursorStyle === "beam" ? Math.max(2, Math.round(searchText.font.pixelSize / 8)) : cellWidth
               height: Math.round(searchText.font.pixelSize * 1.15)
-              x: root.filterText ? textEnd + 1 : searchText.x
+              x: root.answerForm ? formLine.x + Math.min(formRow.width, formLine.width) + 1
+                 : root.filterText ? textEnd + 1 : searchText.x
               anchors.verticalCenter: parent.verticalCenter
               // Over the placeholder a filled block stays see-through enough
               // to leave its letter readable.
@@ -3337,7 +4137,7 @@ Item {
 
               CursorBlink {
                 id: cursorBlink
-                active: searchCursor.visible && root.cursorBlink
+                active: (searchCursor.visible || root.formEditing) && root.cursorBlink
               }
               Connections {
                 target: root
@@ -3358,11 +4158,84 @@ Item {
               // the dmenu, and the title from the JSONC.
               text: MenuModel.sanitizeText(root.filterText || root.positionHint || root.promptText())
               color: root.foreground
-              opacity: root.filterText ? 1 : 0.58
+              // Kept for its layout while a form draws the line instead.
+              opacity: root.answerForm ? 0 : root.filterText ? 1 : 0.58
               font.family: root.fontFamily
               font.pixelSize: root.queryFontSize
               font.weight: root.queryScale > 1 ? Font.Light : Font.Normal
               elide: Text.ElideRight
+            }
+
+            // The line as an answer form: the same text, with each value on a
+            // pill. The focused one is filled while the next key would replace
+            // it, and outlined with a caret once it is being typed into.
+            Item {
+              id: formLine
+              visible: root.answerForm !== null
+              anchors.left: searchText.left
+              anchors.right: searchText.right
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              clip: true
+
+              Row {
+                id: formRow
+                anchors.verticalCenter: parent.verticalCenter
+
+                Repeater {
+                  model: root.answerFormSegments
+
+                  delegate: Item {
+                    id: formPiece
+                    required property var modelData
+                    readonly property bool isField: modelData.field >= 0
+                    readonly property bool focused: root.formEditing && modelData.field === root.formField
+                    readonly property int pad: isField ? Style.space(3) : 0
+                    width: Math.max(pieceText.implicitWidth, isField ? searchCursor.cellWidth : 0) + pad * 2
+                    height: pieceText.implicitHeight + (isField ? Style.space(2) : 0)
+
+                    Rectangle {
+                      anchors.fill: parent
+                      visible: formPiece.isField
+                      radius: Math.round(height / 4)
+                      color: formPiece.focused && root.formFresh ? root.selectedBackground : "transparent"
+                      border.width: formPiece.focused && !root.formFresh ? 1 : 0
+                      border.color: Color.accent
+
+                      Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        visible: !(formPiece.focused && root.formFresh)
+                        color: root.foreground
+                        opacity: formPiece.focused ? 0.16 : 0.1
+                      }
+                    }
+
+                    Text {
+                      id: pieceText
+                      textFormat: Text.PlainText
+                      x: formPiece.pad
+                      anchors.verticalCenter: parent.verticalCenter
+                      // Spaces kept as spaces: a trailing one would otherwise
+                      // not count towards the width.
+                      text: MenuModel.sanitizeText(formPiece.modelData.text).replace(/ /g, "\u00a0")
+                      color: formPiece.focused && root.formFresh ? root.selectedText : root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: root.scaledFont(Style.font.heading)
+                    }
+
+                    Rectangle {
+                      visible: formPiece.focused && !root.formFresh
+                      x: formPiece.pad + pieceText.implicitWidth
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: Math.max(2, Math.round(pieceText.font.pixelSize / 8))
+                      height: Math.round(pieceText.font.pixelSize * 1.15)
+                      color: root.foreground
+                      opacity: (!root.cursorBlink || cursorBlink.on) ? 0.85 : 0
+                    }
+                  }
+                }
+              }
             }
 
           }
@@ -3395,6 +4268,25 @@ Item {
             id: fileBar
             menu: root
             width: parent.width
+          }
+
+          // The Clipboard type filter (Ctrl+F), chips like the Files filter.
+          TabBar {
+            id: clipboardBar
+            visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && root.activeTab === "clipboard"
+            width: parent.width
+            height: visible ? implicitHeight : 0
+            tabs: Clipboard.FILTERS.map(function(f) { return { id: f.id, label: f.label, icon: "" } })
+            activeTab: clipboardCtl.filter.id
+            fontFamily: root.fontFamily
+            foreground: root.foreground
+            accent: Color.accent
+            fontSize: root.scaledFont(Style.font.caption)
+            anim: root.tabAnim
+            onTabClicked: function(id) {
+              clipboardCtl.setFilter(id)
+              Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+            }
           }
 
           Item {
