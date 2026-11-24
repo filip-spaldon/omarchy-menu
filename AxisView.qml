@@ -473,7 +473,7 @@ Item {
     y: axis.height - Style.space(48)
     textFormat: Text.PlainText
     // The tab's own keys where it has some (Files, Folders, Apps).
-    readonly property bool tabKeys: ["files", "folders", "apps"].indexOf(axis.menu.activeTab) >= 0
+    readonly property bool tabKeys: ["files", "folders", "apps", "clipboard"].indexOf(axis.menu.activeTab) >= 0
     text: tabKeys ? axis.menu.shortFooterHints() : "↑↓ the list moves, the cross stays   ⇥ scope   ↵ open   esc let go"
     color: axis.ink
     opacity: 0.45

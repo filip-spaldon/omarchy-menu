@@ -8,6 +8,7 @@ function shapeFor(kind) {
   if (kind === "file") return "square"
   if (kind === "folder") return "triangle"
   if (kind === "window") return "bar"
+  if (kind === "clipboard") return "ring"
   return "cross"
 }
 

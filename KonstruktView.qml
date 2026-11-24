@@ -36,6 +36,7 @@ Item {
     if (kind === "file") return turn(-40, 0.72)
     if (kind === "folder") return Qt.rgba(kon.menu.foreground.r, kon.menu.foreground.g, kon.menu.foreground.b, 0.85)
     if (kind === "window") return turn(-80, 0.6)
+    if (kind === "clipboard") return turn(60, 0.66)
     return turn(25, 0.62)
   }
 
@@ -590,6 +591,17 @@ Item {
           antialiasing: true
         }
 
+        // A clipboard entry: a ring, the one shape that is only an outline.
+        Rectangle {
+          visible: slot.form === "ring"
+          anchors.fill: parent
+          radius: width / 2
+          color: "transparent"
+          border.width: Math.max(3, width * 0.18)
+          border.color: slot.fill
+          antialiasing: true
+        }
+
         Shape {
           visible: slot.form === "triangle"
           anchors.fill: parent
@@ -729,7 +741,7 @@ Item {
     y: kon.height - Style.space(48)
     textFormat: Text.PlainText
     text: kon.sys ? "System has no chaos: categories on a grid, sized by their entries; the open one's entries on a ring"
-      : "● app   ■ file   ▲ folder   ✚ system   ▬ window     size = match · tilt = age · spiral = rank"
+      : "● app   ■ file   ▲ folder   ✚ system   ▬ window   ○ clipboard     size = match · tilt = age · spiral = rank"
     color: kon.ink
     opacity: 0.45
     font.family: kon.menu.fontFamily
@@ -741,7 +753,7 @@ Item {
     y: kon.height - Style.space(48)
     textFormat: Text.PlainText
     // The tab's own keys where it has some (Files, Folders, Apps).
-    readonly property bool tabKeys: ["files", "folders", "apps"].indexOf(kon.menu.activeTab) >= 0
+    readonly property bool tabKeys: ["files", "folders", "apps", "clipboard"].indexOf(kon.menu.activeTab) >= 0
     text: tabKeys ? kon.menu.shortFooterHints() : "↑↓ move   ↵ open   ⇥ tab   ai ask   esc close"
     color: kon.ink
     opacity: 0.45
