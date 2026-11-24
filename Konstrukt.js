@@ -40,6 +40,19 @@ function spiral(n, step) {
   return { x: r * Math.cos(a), y: r * Math.sin(a) }
 }
 
+// Where Alt+arrows put the layout, from the launcher position. Konstrukt
+// already fills the screen, so it reads the position its own way: right puts
+// the list on the right and the field on the left (left and centre keep the
+// list on the left), and lower rows move the spiral's centre down the field,
+// shrinking it just enough to stay inside. The default (centre, top) is the
+// layout as it always was. swap: 0 or 1; fy: the spiral's centre as a share
+// of the field's height; fit: the spiral's scale.
+function placement(pos) {
+  var p = pos || {}
+  var fy = ({ top: 0.5, middle: 0.59, bottom: 0.68 })[p.anchorY] || 0.5
+  return { swap: p.anchorX === "right" ? 1 : 0, fy: fy, fit: Math.min(1, Math.min(fy, 1 - fy) * 2) }
+}
+
 // whether two flat maps hold the same keys and values (the rows' middles,
 // measured again on every scroll step and row laid out).
 function sameMap(a, b) {
@@ -57,6 +70,7 @@ if (typeof module !== "undefined") {
     ageDays: ageDays,
     tiltFor: tiltFor,
     spiral: spiral,
+    placement: placement,
     sameMap: sameMap
   }
 }

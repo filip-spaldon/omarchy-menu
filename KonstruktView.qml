@@ -41,10 +41,24 @@ Item {
 
   readonly property color ink: kon.menu.foreground
   readonly property int maxShapes: 36
-  readonly property real listX: Math.round(width * 0.06)
+  // Alt+arrows (Konstrukt.placement): right swaps the list and the field,
+  // lower positions move the spiral down. Slides only on a key move; opening
+  // at a saved position draws it in place.
+  readonly property var placed: Konstrukt.placement(kon.menu.launcherPosition)
+  property real swap: kon.placed.swap
+  Behavior on swap {
+    enabled: kon.menu.launcherMoving
+    NumberAnimation { duration: kon.menu.launcherMoveMs; easing.type: kon.menu.launcherMoveEasing }
+  }
+  // While the sides swap, the shapes follow the field frame by frame rather
+  // than gliding after it.
+  onSwapChanged: { kon.settled = false; kon.rebuild(); settle.restart() }
+  readonly property bool listRight: kon.swap > 0.5
+  readonly property real listX: Math.round(width * (0.06 + 0.54 * kon.swap))
   readonly property real listW: Math.round(width * 0.34)
-  readonly property rect area: Qt.rect(width * 0.46, height * 0.08, width * 0.5, height * 0.8)
-  readonly property point centre: Qt.point(area.x + area.width / 2, area.y + area.height / 2)
+  readonly property rect area: Qt.rect(width * (0.46 - 0.42 * kon.swap), height * 0.08, width * 0.5, height * 0.8)
+  readonly property point centre: Qt.point(area.x + area.width / 2, area.y + area.height * kon.placed.fy)
+  onCentreChanged: if (kon.swap === kon.placed.swap) Qt.callLater(kon.rebuild)
   readonly property real step: Math.min(area.width, area.height) / 11
   // The Apps grid's selected row: its shapes are lit and connected, the rest
   // of the field recedes (36 lines from a grid would only tangle).
@@ -106,7 +120,7 @@ Item {
       var row = rows[m]
       var slot = place[row.id]
       if (slot === undefined) { while (used[free]) free++; slot = free; used[slot] = true }
-      var p = Konstrukt.spiral(m, kon.step)
+      var p = Konstrukt.spiral(m, kon.step * kon.placed.fit)
       var days = row.kind === "file" || row.kind === "folder" ? Konstrukt.ageDays(row.trail, now) : 0
       next[slot] = { id: row.id, index: row.index, kind: row.kind, x: kon.centre.x + p.x, y: kon.centre.y + p.y,
                      size: kon.step * (0.45 + 1.1 * row.strength), tilt: Konstrukt.tiltFor(days),
@@ -514,7 +528,7 @@ Item {
       Rectangle {
         readonly property real x2: piece.x + piece.width / 2
         readonly property real y2: piece.y + piece.height / 2
-        readonly property real x1: list.x + list.width + Style.space(6)
+        readonly property real x1: kon.listRight ? list.x - Style.space(6) : list.x + list.width + Style.space(6)
         visible: slot.rowY >= 0 && slot.lit && piece.scale > 0.05
         x: x1
         y: slot.rowY
@@ -529,7 +543,7 @@ Item {
 
       Rectangle {
         visible: slot.rowY >= 0 && slot.lit
-        x: list.x + list.width + Style.space(4)
+        x: kon.listRight ? list.x - Style.space(8) : list.x + list.width + Style.space(4)
         y: slot.rowY - 2
         width: 4
         height: 4
