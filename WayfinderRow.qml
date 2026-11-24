@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import "AllTiles.js" as AllTiles
+import "Clipboard.js" as Clipboard
 import qs.Ui
 import "Windows.js" as Windows
 
@@ -27,6 +28,12 @@ BorderSurface {
   required property string detail
   required property string path
   required property string action
+  required property string imagePath
+  // A copied image (Clipboard): its thumbnail is the entry.
+  readonly property bool showsThumb: !row.tiled && row.imagePath.length > 0
+  required property string swatch
+  // A copied colour: the colour itself, checked again here (Clipboard.isSwatch).
+  readonly property bool showsSwatch: !row.tiled && !row.showsThumb && Clipboard.isSwatch(row.swatch)
   required property int childCount
   required property string trailText
 
@@ -73,7 +80,7 @@ BorderSurface {
   // Command examples are a read-only hint.
   opacity: row.kind === "example" ? 0.7 : 1
   width: ListView.view.width
-  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind)
+  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind, row.imagePath)
   radius: row.menu.rowRadius
   // The selected row is filled with the theme's selection colours.
   color: row.hasCursor ? row.menu.selectedBackground : "transparent"
@@ -136,7 +143,7 @@ BorderSurface {
     Text {
       id: iconText
       textFormat: Text.PlainText
-      visible: row.hasIcon && !row.isApp
+      visible: row.hasIcon && !row.isApp && !row.showsThumb && !row.showsSwatch
       text: row.icon
       color: row.menu.foreground
       font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
@@ -174,10 +181,39 @@ BorderSurface {
       y: appIconImage.y + appIconImage.height - height * 0.6
     }
 
+    // A copied image: its thumbnail stands at the stop, where the icon goes.
+    ClipThumb {
+      id: thumbBox
+      visible: row.showsThumb
+      menu: row.menu
+      path: row.showsThumb ? row.imagePath : ""
+      glyph: row.icon
+      glyphFont: row.iconFont
+      height: row.showsThumb ? row.height - Style.space(14) : 0
+      width: row.showsThumb ? Math.round(height * 1.6) : 0
+      anchors.left: parent.left
+      anchors.leftMargin: row.gutter + Style.space(4)
+      anchors.verticalCenter: parent.verticalCenter
+    }
+
+    Rectangle {
+      id: swatchBox
+      visible: row.showsSwatch
+      width: row.showsSwatch ? row.menu.scaledFont(Style.font.iconLarge) : 0
+      height: width
+      radius: Math.min(row.menu.cornerRadius, Style.space(4))
+      color: row.showsSwatch ? row.swatch : "transparent"
+      border.width: 1
+      border.color: row.menu.foreground
+      anchors.left: parent.left
+      anchors.leftMargin: row.gutter + Style.space(4) + (row.menu.iconSlotWidth - width) / 2
+      y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    }
+
     Column {
       id: contentColumn
-      anchors.left: row.hasIcon ? iconText.right : parent.left
-      anchors.leftMargin: row.hasIcon ? Style.space(6) : row.gutter + Style.space(8)
+      anchors.left: row.showsThumb ? thumbBox.right : row.hasIcon ? iconText.right : parent.left
+      anchors.leftMargin: row.showsThumb ? Style.space(10) : row.hasIcon ? Style.space(6) : row.gutter + Style.space(8)
       anchors.right: trailLabel.visible ? trailLabel.left : refCap.left
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter

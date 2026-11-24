@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 import "AllTiles.js" as AllTiles
+import "Clipboard.js" as Clipboard
 import "Windows.js" as Windows
 
 // One row in the Mala look: no icon, no box. The number in the margin (the
@@ -25,6 +26,12 @@ Item {
   required property string detail
   required property string path
   required property string action
+  required property string imagePath
+  // A copied image (Clipboard): its thumbnail is the entry.
+  readonly property bool showsThumb: !row.tiled && row.imagePath.length > 0
+  required property string swatch
+  // A copied colour: the colour itself, checked again here (Clipboard.isSwatch).
+  readonly property bool showsSwatch: !row.tiled && !row.showsThumb && Clipboard.isSwatch(row.swatch)
   required property int childCount
   required property string trailText
 
@@ -57,7 +64,7 @@ Item {
 
   opacity: row.kind === "example" ? 0.7 : 1
   width: ListView.view.width
-  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind)
+  height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind, row.imagePath)
 
   // A row of All's app tiles draws the strip instead (TileStrip.qml); the
   // row's own content stays hidden.
@@ -79,10 +86,40 @@ Item {
       y: Math.round(row.labelCenterY - height / 2)
     }
 
-    Column {
-      id: contentColumn
+    // Before the words, dimmed like them and lit with the selection.
+    ClipThumb {
+      id: thumbBox
+      visible: row.showsThumb
+      menu: row.menu
+      path: row.showsThumb ? row.imagePath : ""
+      glyph: row.icon
+      glyphFont: row.iconFont
+      height: row.showsThumb ? row.height - Style.space(14) : 0
+      width: row.showsThumb ? Math.round(height * 1.6) : 0
       anchors.left: parent.left
       anchors.leftMargin: row.menu.rowReservedBorderLeft + row.gutter + Style.space(8)
+      anchors.verticalCenter: parent.verticalCenter
+      opacity: row.hasCursor ? 1 : 0.55
+    }
+
+    Rectangle {
+      id: swatchBox
+      visible: row.showsSwatch
+      width: row.showsSwatch ? row.menu.scaledFont(Style.font.iconLarge) : 0
+      height: width
+      radius: Math.min(row.menu.cornerRadius, Style.space(4))
+      color: row.showsSwatch ? row.swatch : "transparent"
+      border.width: 1
+      border.color: row.menu.foreground
+      anchors.left: parent.left
+      anchors.leftMargin: row.menu.rowReservedBorderLeft + row.gutter + Style.space(8)
+      y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    }
+
+    Column {
+      id: contentColumn
+      anchors.left: row.showsThumb ? thumbBox.right : row.showsSwatch ? swatchBox.right : parent.left
+      anchors.leftMargin: row.showsThumb ? Style.space(12) : row.showsSwatch ? Style.space(10) : row.menu.rowReservedBorderLeft + row.gutter + Style.space(8)
       anchors.right: trailLabel.visible ? trailLabel.left : trail.left
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
