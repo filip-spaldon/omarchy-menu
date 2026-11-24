@@ -45,7 +45,10 @@ BorderSurface {
   readonly property bool hasIcon: row.icon.length > 0 || row.isApp
   // Open windows of an application row, for the running marker.
   readonly property int windowCount: row.kind === "app" ? row.menu.appWindowCount(row.appId) : 0
-  readonly property string trailShown: row.trailText.length > 0 ? row.trailText : Windows.runningLabel(row.windowCount)
+  // A System entry's keyboard shortcut (Menu.systemShortcutHint) stands where
+  // the trail text would, when the row has none.
+  readonly property string trailShown: row.trailText.length > 0 ? row.trailText
+    : Windows.runningLabel(row.windowCount) || (row.tiled ? "" : row.menu.systemShortcutHint(row.itemId, row.kind, row.action))
 
   // The row's place among those on screen, 1-9, shown in its map
   // reference; Alt+n opens the row.
