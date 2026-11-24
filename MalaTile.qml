@@ -1,10 +1,10 @@
 import QtQuick
 import qs.Commons
 
-// An app in the Mala look's grid: only its name, a word among words. No icon
-// or box; names are dimmed and the selected one is in full ink with the
-// accent bead before it, as Mala's rows are. Open windows are a small count
-// after the name.
+// An app in the Mala look's grid: a small icon and its name, a word among
+// words. No box; icon and name are dimmed and the selected one is in full ink
+// with the accent bead before it, as Mala's rows are. Open windows are a small
+// count after the name.
 Item {
   id: t
   required property var tile
@@ -24,9 +24,23 @@ Item {
     anchors.verticalCenter: label.verticalCenter
   }
 
+  Image {
+    id: icon
+    x: Style.space(16)
+    width: Math.round(Style.space(16) * t.menu.menuFontScale)
+    height: width
+    anchors.verticalCenter: parent.verticalCenter
+    fillMode: Image.PreserveAspectFit
+    sourceSize.width: width * Screen.devicePixelRatio
+    sourceSize.height: height * Screen.devicePixelRatio
+    source: t.tile.tileKind === "app" ? t.menu.appIconSource(t.tile.tileIcon) : ""
+    asynchronous: true
+    opacity: t.tile.hasCursor ? 1 : 0.55
+  }
+
   Text {
     id: label
-    x: Style.space(16)
+    x: icon.x + icon.width + Style.space(7)
     width: Math.min(implicitWidth, parent.width - x - (count.visible ? count.implicitWidth + Style.space(6) : 0))
     anchors.verticalCenter: parent.verticalCenter
     textFormat: Text.PlainText
