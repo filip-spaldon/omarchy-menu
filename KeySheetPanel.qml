@@ -106,7 +106,7 @@ Rectangle {
                 Text {
                   visible: sheet.mala
                   textFormat: Text.PlainText
-                  text: KeySheet.keyGlyphs(keyRow.modelData[0].toLowerCase())
+                  text: keyRow.modelData[0].toLowerCase()
                   color: sheet.menu.foreground
                   font.family: sheet.menu.fontFamily
                   font.pixelSize: sheet.menu.scaledFont(Style.font.bodySmall)
@@ -128,7 +128,7 @@ Rectangle {
                     id: capKey
                     anchors.centerIn: parent
                     textFormat: Text.PlainText
-                    text: KeySheet.keyGlyphs(keyRow.modelData[0])
+                    text: keyRow.modelData[0]
                     color: sheet.menu.foreground
                     opacity: sheet.wayfinder ? 0.7 : 1
                     font.family: sheet.menu.fontFamily

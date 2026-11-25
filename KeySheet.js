@@ -57,16 +57,6 @@ function tabKeys(s) {
           ["^G", "apps " + (s.allAppsView === "grid" ? "list" : "grid"), false], ["ai", "ask", true], all]
 }
 
-// Modifier names as the glyphs keys are printed with: ❖ Super, ⎇ Alt,
-// ⇧ Shift (Ctrl is already ^). Whole words only, so "ai" stays "ai".
-var KEY_GLYPHS = { super: "❖", alt: "⎇", shift: "⇧" }
-function keyGlyphs(key) {
-  return String(key === undefined || key === null ? "" : key).split(" ").map(function(word) {
-    var glyph = KEY_GLYPHS[word.toLowerCase()]
-    return glyph === undefined ? word : glyph
-  }).join(" ")
-}
-
 // The keycaps: the core keys, as [key, what it does].
 function coreKeys(keys) {
   return keys.filter(function(k) { return k[2] }).map(function(k) { return [k[0], k[1]] })
@@ -77,9 +67,9 @@ function coreKeys(keys) {
 // look whose rows are always numbered.
 function footerText(keys, full, jump) {
   var shown = keys.filter(function(k) { return full || k[2] })
-  var parts = shown.map(function(k) { return keyGlyphs(k[0]) + " " + k[1] })
+  var parts = shown.map(function(k) { return k[0] + " " + k[1] })
   var enter = shown.findIndex(function(k) { return k[0] === "↵" })
-  if (jump && enter >= 0) parts.splice(enter + 1, 0, keyGlyphs("alt") + " 1–9 jump")
+  if (jump && enter >= 0) parts.splice(enter + 1, 0, "alt 1–9 jump")
   if (shown.length !== 1 || shown[0][0] !== "any key") parts.push("esc close")
   return parts.join("   ")
 }
@@ -125,7 +115,6 @@ if (typeof module !== "undefined") {
     tabKeys: tabKeys,
     coreKeys: coreKeys,
     footerText: footerText,
-    keyGlyphs: keyGlyphs,
     tabNumber: tabNumber,
     ctrlAlone: ctrlAlone
   }

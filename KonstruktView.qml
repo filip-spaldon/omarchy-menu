@@ -782,7 +782,7 @@ Item {
               }
               Text {
                 textFormat: Text.PlainText
-                text: KeySheet.keyGlyphs(keyRow.modelData[0])
+                text: keyRow.modelData[0]
                 color: kon.ink
                 font.family: kon.menu.fontFamily
                 font.pixelSize: kon.menu.scaledFont(Style.font.bodySmall)
