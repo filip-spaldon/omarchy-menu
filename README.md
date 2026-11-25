@@ -43,8 +43,8 @@ Alt+Enter folder, Ctrl+C path), and the part of each label that matches the
 query is in the accent colour. Hold Alt to number the rows on screen;
 Alt+1…9 opens that row. While All searches, each section header says how many
 results it had and what the five-row cap left out ("+4 in Files ⇥"), and the
-tabs show what they found. The footer shows the current tab's keys, and `?` on
-an empty query lists every key (so a search can't start with "?").
+tabs show what they found. The footer shows the current tab's keys, and
+Ctrl+? (Ctrl+Shift+/) lists every key.
 
 | Tab | Contents |
 | --- | --- |

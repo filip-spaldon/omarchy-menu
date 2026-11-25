@@ -1413,7 +1413,11 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   assert(/activeTab === "clipboard" && root\.tabsActive && event\.modifiers === Qt\.ControlModifier\s*&& event\.key === Qt\.Key_F/
          .test(menuSource), "Ctrl+F cycles the clipboard filter")
   assert(/clipboardCtl\.filterIndex = 0/.test(menuSource), "the filter resets on open")
-  assert(/clipboardCtl\.setFilter\(id\)/.test(menuSource), "a chip picks the filter")
+  const fileBarSource = fs.readFileSync(path.join(root, "FileBar.qml"), "utf8")
+  assert(/bar\.clip\.setFilter\(id\)/.test(fileBarSource), "a chip picks the filter")
+  assert(/clipboardSearch: clipboardCtl/.test(menuSource), "every look's FileBar reaches the clipboard filter")
+  assert(/Key_Question/.test(menuSource) && !/event\.text === "\?" && !root\.filterText/.test(menuSource),
+         "the key sheet is on Ctrl+?, not a plain ?")
   // The full footer (the looks also have a short one, which says ^F).
   const fullFooter = menuSource.slice(menuSource.indexOf("function fullFooterHints"))
   assert(/Ctrl\+F type/.test(fullFooter.match(/activeTab === "clipboard"\)\s*return "[^"]*"/)[0]), "footer mentions Ctrl+F")

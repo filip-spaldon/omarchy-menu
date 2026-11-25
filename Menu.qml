@@ -797,13 +797,13 @@ Item {
     if (root.activeTab === "apps") {
       var app = root.selectedAppRow()
       var pinned = !!app && Pinned.isPinned(root.pinnedApps, app.appId)
-      return [["↵", "open"], ["shift ↵", "new window"], ["^P", pinned ? "unpin" : "pin"], ["^G", root.appsView === "grid" ? "list" : "grid"], ["?", "all keys"]]
+      return [["↵", "open"], ["shift ↵", "new window"], ["^P", pinned ? "unpin" : "pin"], ["^G", root.appsView === "grid" ? "list" : "grid"], ["^?", "all keys"]]
     }
-    if (root.activeTab === "clipboard") return [["↵", "paste"], ["^C", "copy"], ["^O", "open"], ["^F", "type"], ["?", "all keys"]]
-    if (root.activeTab === "windows") return [["↵", "go to"], ["⇥", "next tab"], ["?", "all keys"]]
-    if (root.activeTab === "files" || root.activeTab === "folders") return [["↵", "open"]].concat(root.fileKeys(), [["?", "all keys"]])
-    if (root.activeTab === "system" && root.systemTwoPane) return [["↑↓", "browse"], ["→", "open"], ["←", "back"], ["?", "all keys"]]
-    return [["↑↓", "move"], ["↵", "open"], ["⇥", "next tab"], ["ai", "ask"], ["?", "all keys"]]
+    if (root.activeTab === "clipboard") return [["↵", "paste"], ["^C", "copy"], ["^O", "open"], ["^F", "type"], ["^?", "all keys"]]
+    if (root.activeTab === "windows") return [["↵", "go to"], ["⇥", "next tab"], ["^?", "all keys"]]
+    if (root.activeTab === "files" || root.activeTab === "folders") return [["↵", "open"]].concat(root.fileKeys(), [["^?", "all keys"]])
+    if (root.activeTab === "system" && root.systemTwoPane) return [["↑↓", "browse"], ["→", "open"], ["←", "back"], ["^?", "all keys"]]
+    return [["↑↓", "move"], ["↵", "open"], ["⇥", "next tab"], ["ai", "ask"], ["^?", "all keys"]]
   }
 
   // What Files and Folders add to the footer, in every look: the type,
@@ -815,6 +815,9 @@ Item {
   // For the full-screen views, which draw the same controls in their own
   // style: the file search, the result count, and whether the Files bar shows.
   readonly property var fileSearch: fileCtl
+  readonly property var clipboardSearch: clipboardCtl
+  readonly property bool clipboardBarShown: root.tabsActive && !aiCtl.isAiMode && !root.commandMode
+    && root.activeTab === "clipboard"
   readonly property int resultCount: displayModel.count
   readonly property bool fileBarShown: root.tabsActive && !aiCtl.isAiMode && !root.commandMode
     && (root.activeTab === "files" || root.activeTab === "folders")
@@ -961,7 +964,6 @@ Item {
   readonly property int launcherChromeHeight: Math.ceil(cardInsets) + headerHeight
     + (tabBar.visible ? contentSpacing + tabBar.height : 0)
     + (fileBar.visible ? contentSpacing + fileBar.height : 0)
-    + (clipboardBar.visible ? contentSpacing + clipboardBar.height : 0)
     + (desiredRowsHeight > 0 ? contentSpacing : 0)
     + (footer.visible ? contentSpacing + Math.ceil(footer.implicitHeight) : 0)
   MenuGeometry {
@@ -3802,14 +3804,16 @@ Item {
             return
           }
 
-          // "?" on an empty query shows every key; any key closes it again.
+          // Ctrl+? shows every key; any key closes it again.
           if (root.cheatOpen) {
             if (!KeySheet.closesSheet(event.key)) return
             root.cheatOpen = false
             event.accepted = true
             return
           }
-          if (event.text === "?" && !root.filterText && root.tabsActive && !aiCtl.isAiMode) {
+          // Ctrl+? (Ctrl+Shift+/): plain "?" stays a character in the query.
+          if ((event.modifiers & Qt.ControlModifier) && root.tabsActive && !aiCtl.isAiMode
+              && (event.key === Qt.Key_Question || (event.key === Qt.Key_Slash && (event.modifiers & Qt.ShiftModifier)))) {
             root.cheatOpen = true
             event.accepted = true
             return
@@ -4276,31 +4280,12 @@ Item {
             width: parent.width
           }
 
-          // The Clipboard type filter (Ctrl+F), chips like the Files filter.
-          TabBar {
-            id: clipboardBar
-            visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && root.activeTab === "clipboard"
-            width: parent.width
-            height: visible ? implicitHeight : 0
-            tabs: Clipboard.FILTERS.map(function(f) { return { id: f.id, label: f.label, icon: "" } })
-            activeTab: clipboardCtl.filter.id
-            fontFamily: root.fontFamily
-            foreground: root.foreground
-            accent: Color.accent
-            fontSize: root.scaledFont(Style.font.caption)
-            anim: root.tabAnim
-            onTabClicked: function(id) {
-              clipboardCtl.setFilter(id)
-              Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-            }
-          }
-
           Item {
             width: parent.width
             height: root.visibleRowsHeight
             visible: height > 0 && !root.overlayActive
 
-            // "?" with nothing typed: every key, in groups. Loaded only while
+            // Ctrl+?: every key, in groups. Loaded only while
             // open, so the results area resizing never lays it out.
             Loader {
               active: root.cheatOpen

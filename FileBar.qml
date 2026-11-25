@@ -1,11 +1,13 @@
 import QtQuick
 import qs.Commons
 import "FileSearch.js" as FileSearch
+import "Clipboard.js" as Clipboard
 
 // Files and Folders: the type chips (Ctrl+F), where to look when there are
 // search roots (Ctrl+R) and the sort with its count (Ctrl+S, Ctrl+L). The
 // card draws it under the tabs; the full-screen looks draw it in their own
 // type and case, so every look shows which filter, scope and sort is on.
+// On the Clipboard tab it is the clipboard type filter (Ctrl+F) alone.
 Item {
   id: bar
   required property var menu
@@ -15,19 +17,23 @@ Item {
   property int fontSize: bar.menu.scaledFont(Style.font.caption)
   property bool quiet: bar.menu.quietMeta
   // The scope row keeps plain chips on the card; a view can match its chips.
-  property string scopeStyle: "chip"
-  property string scopeCase: "title"
+  // The scope row follows the type row, so it matches the look too.
+  property string scopeStyle: bar.chipStyle
+  property string scopeCase: bar.chipCase
   readonly property var files: bar.menu.fileSearch
+  readonly property var clip: bar.menu.clipboardSearch
+  readonly property bool clipboard: bar.menu.clipboardBarShown
 
-  visible: bar.menu.fileBarShown
+  visible: bar.menu.fileBarShown || bar.clipboard
   height: visible ? chips.implicitHeight + (scope.visible ? Style.space(6) + scope.implicitHeight : 0) : 0
 
   TabBar {
     id: chips
     anchors.left: parent.left
-    width: parent.width - sortLabel.implicitWidth - Style.space(12)
-    tabs: FileSearch.filtersFor(bar.menu.activeTab).map(function(f) { return { id: f.id, label: f.label, icon: "" } })
-    activeTab: bar.files.fileFilterFor(bar.menu.activeTab).id
+    width: parent.width - (sortLabel.visible ? sortLabel.implicitWidth + Style.space(12) : 0)
+    tabs: (bar.clipboard ? Clipboard.FILTERS : FileSearch.filtersFor(bar.menu.activeTab))
+      .map(function(f) { return { id: f.id, label: f.label, icon: "" } })
+    activeTab: bar.clipboard ? bar.clip.filter.id : bar.files.fileFilterFor(bar.menu.activeTab).id
     fontFamily: bar.menu.fontFamily
     foreground: bar.ink
     accent: Color.accent
@@ -37,7 +43,8 @@ Item {
     tabCase: bar.chipCase
     background: bar.menu.background
     onTabClicked: function(id) {
-      bar.files.setFileFilter(id)
+      if (bar.clipboard) bar.clip.setFilter(id)
+      else bar.files.setFileFilter(id)
       bar.menu.refocus()
     }
   }
@@ -46,7 +53,7 @@ Item {
   // Only there when a root is.
   TabBar {
     id: scope
-    visible: bar.files.hasRoots
+    visible: !bar.clipboard && bar.files.hasRoots
     anchors.left: parent.left
     anchors.top: chips.bottom
     anchors.topMargin: Style.space(6)
@@ -68,6 +75,7 @@ Item {
 
   Text {
     id: sortLabel
+    visible: !bar.clipboard
     textFormat: Text.PlainText
     anchors.right: parent.right
     anchors.top: parent.top
