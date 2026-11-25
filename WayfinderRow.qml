@@ -60,7 +60,7 @@ BorderSurface {
   // The row's place among those on screen, 1-9, shown in its map
   // reference; Alt+n opens the row.
   readonly property int ordinal: row.index - row.menu.firstVisibleRow + 1
-  readonly property bool numbered: row.kind !== "example" && row.ordinal >= 1 && row.ordinal <= 9
+  readonly property bool numbered: row.menu.numbersOnRows && row.kind !== "example" && row.ordinal >= 1 && row.ordinal <= 9
   // A letter for the row's kind and its number on screen ("file", 5 ->
   // "F5"): A apps, W windows, F files, D folders (apart from files), S
   // everything from the System menu.

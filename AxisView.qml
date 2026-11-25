@@ -421,6 +421,7 @@ Item {
       height: cats.rowH
       opacity: Math.max(0.2, 1 - Math.abs(cat.index - axis.menu.systemCategoryIndex) * 0.14) * (axis.leftPane || cat.picked ? 1 : 0.7)
 
+
       Row {
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
@@ -442,6 +443,19 @@ Item {
           font.pixelSize: axis.menu.scaledFont(cat.picked ? Style.font.title : Style.font.heading)
           font.weight: cat.picked ? Font.DemiBold : Font.Normal
           anchors.verticalCenter: parent.verticalCenter
+        }
+        // Alt held in the left pane: the category's Alt+n number.
+        Loader {
+          active: axis.menu.altHeld && axis.menu.categoryNumbers && cat.index < 9
+          anchors.verticalCenter: parent.verticalCenter
+          sourceComponent: NumberCap {
+            number: String(cat.index + 1)
+            fontSize: axis.menu.scaledFont(Style.font.body)
+            fontFamily: axis.menu.fontFamily
+            bare: axis.menu.numbersBare
+            ink: axis.menu.foreground
+            paper: axis.menu.background
+          }
         }
       }
 

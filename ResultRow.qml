@@ -66,7 +66,7 @@ BorderSurface {
   // The row's place among those on screen, 1-9: holding Alt shows it, and
   // Alt+n opens the row.
   readonly property int ordinal: row.index - row.menu.firstVisibleRow + 1
-  readonly property bool numbered: row.menu.altHeld && row.kind !== "example"
+  readonly property bool numbered: row.menu.altHeld && row.menu.numbersOnRows && row.kind !== "example"
     && row.ordinal >= 1 && row.ordinal <= 9
   // Where the label's middle sits, for the number and the actions.
   readonly property real labelCenterY: contentColumn.y + labelLine.y + labelText.y + labelText.height / 2

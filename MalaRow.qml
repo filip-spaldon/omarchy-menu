@@ -51,7 +51,7 @@ Item {
     : Windows.runningLabel(row.windowCount) || (row.tiled ? "" : row.menu.systemShortcutHint(row.itemId, row.kind, row.action))
   // The row's place among those on screen, 1-9; Alt+n opens it.
   readonly property int ordinal: row.index - row.menu.firstVisibleRow + 1
-  readonly property bool numbered: row.kind !== "example" && row.ordinal >= 1 && row.ordinal <= 9
+  readonly property bool numbered: row.menu.numbersOnRows && row.kind !== "example" && row.ordinal >= 1 && row.ordinal <= 9
   readonly property int gutter: Style.space(22)
   // Where the label's middle sits, for the number and the bead.
   readonly property real labelCenterY: contentColumn.y + labelText.y + labelText.height / 2

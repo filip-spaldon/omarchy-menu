@@ -824,6 +824,22 @@ Item {
       Behavior on opacity { NumberAnimation { duration: 140 } }
 
       Rectangle { anchors.centerIn: parent; width: parent.width; height: parent.height * 0.3; color: cat.fill }
+      // Alt held in the left pane: the category's Alt+n number.
+      Loader {
+        active: kon.menu.altHeld && kon.menu.categoryNumbers && cat.index < 9
+        z: 3
+        anchors.left: parent.left
+        anchors.top: parent.top
+        sourceComponent: NumberCap {
+          number: String(cat.index + 1)
+          fontSize: kon.menu.scaledFont(Style.font.body)
+          fontFamily: kon.menu.fontFamily
+          bare: kon.menu.numbersBare
+          ink: kon.menu.foreground
+          paper: kon.menu.background
+        }
+      }
+
       Rectangle { anchors.centerIn: parent; width: parent.width * 0.3; height: parent.height; color: cat.fill }
       Rectangle {
         visible: cat.picked

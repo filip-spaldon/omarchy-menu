@@ -45,6 +45,22 @@ BorderSurface {
     anchors.verticalCenter: parent.verticalCenter
   }
 
+  // Alt held in the left pane: the category's Alt+n number.
+  Loader {
+    active: category.menu.altHeld && category.menu.categoryNumbers && category.index < 9
+    z: 3
+    x: categoryIcon.x - Math.round(width * 0.3)
+    y: Math.round(categoryIcon.y - height * 0.3)
+    sourceComponent: NumberCap {
+      number: String(category.index + 1)
+      fontSize: category.menu.scaledFont(Style.font.body)
+      fontFamily: category.menu.fontFamily
+      bare: category.menu.numbersBare
+      ink: category.menu.foreground
+      paper: category.menu.background
+    }
+  }
+
   Text {
     id: categoryIcon
     textFormat: Text.PlainText

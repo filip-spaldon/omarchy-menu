@@ -801,10 +801,23 @@ Item {
     root.firstVisibleRow = Math.max(0, found)
   }
 
+  // Alt+1…9 numbers one level at a time: in System's two panes the
+  // categories first, Alt+n opens one and the numbers move to its items;
+  // a submenu opened that way is numbered in turn.
+  readonly property bool categoryNumbers: root.systemTwoPane && root.systemPane === "left"
+  readonly property bool numbersOnRows: !root.categoryNumbers
+
   // Alt+1…9 opens the row shown with that number.
   function jumpToNumber(event) {
     if (!root.tabsActive || !(event.modifiers & Qt.AltModifier)) return false
     if (event.key < Qt.Key_1 || event.key > Qt.Key_9 || root.gridActive || aiCtl.isAiMode) return false
+    if (root.categoryNumbers) {
+      var category = event.key - Qt.Key_1
+      if (category >= root.systemCategories.length) return true
+      root.selectSystemCategory(category)
+      root.activateSystemCategory()
+      return true
+    }
     var index = KeySheet.rowForNumber(root.firstVisibleRow, displayModel.count, event.key - Qt.Key_0)
     if (index < 0) return true
     root.cursorActive = true
