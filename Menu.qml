@@ -433,6 +433,7 @@ Item {
   property var deleteTarget: null
   onOpenedChanged: {
     root.altHeld = false
+    root.ctrlHeld = false
     root.cheatOpen = false
     if (opened) return
     root.perfRouteStart = 0
@@ -678,13 +679,19 @@ Item {
   property int headerIndent: root.rowReservedBorderLeft + Style.space(10)
   property bool categoryIcons: true       // System category icons
   property real categoryDim: 0.8          // System category labels when not picked
-  // A full-screen view drawn instead of the card, for the result lists and
-  // System's two panes (its file, made with menu and model). For what it has
-  // no design for (AI answers, the app grid, commands, the "?" key sheet) the
-  // card comes back.
+  // A full-screen view drawn instead of the card, for the result lists,
+  // System's two panes and the "?" key sheet (its file, made with menu and
+  // model). For what it has no design for (AI answers, commands) the card
+  // comes back.
   property string lookView: ""
   readonly property bool overlayActive: root.lookView !== "" && root.tabsActive && !aiCtl.isAiMode
-    && !root.commandMode && !root.cheatOpen
+    && !root.commandMode
+  // A System entry's keyboard shortcut, in the look's type: its case
+  // ("upper", "lower" or as written), letter spacing and whether it is in
+  // the accent colour. ResultRow draws it (also in the full-screen views).
+  property string shortcutCase: ""
+  property real shortcutSpacing: 0
+  property bool shortcutAccent: false
 
   // One State per look, all in this one group: switching from one look to
   // another then never leaves the first one's values behind.
@@ -739,19 +746,34 @@ Item {
       // Axis: no card, two hairlines across the screen (AxisView.qml).
       State {
         when: root.drawnLook === "axis"
-        PropertyChanges { root.lookView: "AxisView.qml"; root.tileBaseWidth: 132; root.tileBaseHeight: 112 }
+        PropertyChanges {
+          root.lookView: "AxisView.qml"
+          root.tileBaseWidth: 132
+          root.tileBaseHeight: 112
+          root.shortcutCase: "upper"     // spaced capitals, as its labels
+          root.shortcutSpacing: 2
+        }
       },
       // Konstrukt: every result also a Suprematist shape (KonstruktView.qml).
       State {
         when: root.drawnLook === "konstrukt"
-        PropertyChanges { root.lookView: "KonstruktView.qml"; root.tileBaseWidth: 156; root.tileBaseHeight: 46 }
+        PropertyChanges {
+          root.lookView: "KonstruktView.qml"
+          root.tileBaseWidth: 156
+          root.tileBaseHeight: 46
+          root.shortcutCase: "lower"     // its readouts: lowercase, spaced, accent
+          root.shortcutSpacing: 2
+          root.shortcutAccent: true
+        }
       },
     ]
   }
 
-  // Alt is down (the rows are numbered while it is), the "?" key sheet is
+  // Alt is down (the rows are numbered while it is), Ctrl alone is down
+  // (the tabs show their Ctrl+1…9 numbers while it is), the "?" key sheet is
   // open, and the All tab's per-section totals before the cap (tab counts).
   property bool altHeld: false
+  property bool ctrlHeld: false
   property bool cheatOpen: false
   property var allSectionTotals: ({})
 
@@ -787,29 +809,33 @@ Item {
     return true
   }
 
-  // The footer: [key, what it does] pairs, drawn as keycaps. Alt held shows
-  // what Alt does instead. Empty: fall back to the text footer.
+  // What the current tab can do (KeySheet.tabKeys), the one list every
+  // footer is cut from: the card's keycaps, the short text footer and the
+  // full-screen views' footers.
+  function tabKeys() {
+    var app = root.activeTab === "apps" ? root.selectedAppRow() : null
+    return KeySheet.tabKeys({
+      tab: root.activeTab,
+      cheatOpen: root.cheatOpen,
+      altHeld: root.altHeld,
+      twoPane: root.systemTwoPane,
+      matches: root.systemTwoPane && !!root.filterText.trim() && root.systemMatches.length > 1,
+      pinned: !!app && Pinned.isPinned(root.pinnedApps, app.appId),
+      canReorder: !!app && app.section === root.pinnedSection && root.pinnedCount > 1,
+      appsView: root.appsView,
+      allAppsView: root.allAppsView,
+      hasRoots: fileCtl.hasRoots
+    })
+  }
+
+  // The footer: [key, what it does] pairs, drawn as keycaps: the tab's core
+  // keys. Alt held shows what Alt does instead. Empty: fall back to the text
+  // footer.
   function footerKeys() {
     // Where the card went (Alt+arrows) shows as text for a moment instead.
     if (settingsStore.error || root.positionHint || answerEngine.killActive || root.commandMode || root.shortFooter
         || root.formEditing || root.answerForm) return []
-    if (root.altHeld) return [["alt 1–9", "open that row"], ["alt ←→↑↓", "move the card"], ["alt 0", "reset"]]
-    if (root.activeTab === "apps") {
-      var app = root.selectedAppRow()
-      var pinned = !!app && Pinned.isPinned(root.pinnedApps, app.appId)
-      return [["↵", "open"], ["shift ↵", "new window"], ["^P", pinned ? "unpin" : "pin"], ["^G", root.appsView === "grid" ? "list" : "grid"], ["^?", "all keys"]]
-    }
-    if (root.activeTab === "clipboard") return [["↵", "paste"], ["^C", "copy"], ["^O", "open"], ["^F", "type"], ["^?", "all keys"]]
-    if (root.activeTab === "windows") return [["↵", "go to"], ["⇥", "next tab"], ["^?", "all keys"]]
-    if (root.activeTab === "files" || root.activeTab === "folders") return [["↵", "open"]].concat(root.fileKeys(), [["^?", "all keys"]])
-    if (root.activeTab === "system" && root.systemTwoPane) return [["↑↓", "browse"], ["→", "open"], ["←", "back"], ["^?", "all keys"]]
-    return [["↑↓", "move"], ["↵", "open"], ["⇥", "next tab"], ["ai", "ask"], ["^?", "all keys"]]
-  }
-
-  // What Files and Folders add to the footer, in every look: the type,
-  // where to look (only with search roots), the sort and the limit.
-  function fileKeys() {
-    return [["^F", "type"]].concat(fileCtl.hasRoots ? [["^R", "where"]] : [], [["^S", "sort"], ["^L", "limit"]])
+    return KeySheet.coreKeys(root.tabKeys())
   }
 
   // For the full-screen views, which draw the same controls in their own
@@ -861,21 +887,17 @@ Item {
     return root.fullFooterHints()
   }
 
-  // A short footer: the three keys that matter most here. The tab's own
-  // shortcuts are in the full list.
+  // A short footer: the tab's core keys as text. The rest are in the
+  // full-screen views' footers and on the "?" sheet.
   function shortFooterHints() {
     if (answerEngine.killActive || root.commandMode || root.formEditing || root.answerForm) return root.fullFooterHints()
-    if (root.activeTab === "system" && root.systemTwoPane) return "↑↓ browse   → open   ← back   esc close"
-    var open = "↵ open" + (root.alwaysNumbered ? "   alt 1–9 jump" : "")
-    if (root.activeTab === "files" || root.activeTab === "folders")
-      return open + root.fileKeys().map(function(k) { return "   " + k[0] + " " + k[1] }).join("") + "   esc close"
-    if (root.activeTab === "apps") {
-      var app = root.selectedAppRow()
-      var pinned = !!app && Pinned.isPinned(root.pinnedApps, app.appId)
-      return open + "   ^P " + (pinned ? "unpin" : "pin") + "   ^G " + (root.appsView === "grid" ? "list" : "grid") + "   esc close"
-    }
-    if (root.activeTab === "clipboard") return "↵ paste   ^C copy   ^F type   esc close"
-    return open + "   ⇥ next tab   esc close"
+    return KeySheet.footerText(root.tabKeys(), false, root.alwaysNumbered)
+  }
+
+  // A full-screen view's footer: every key of the tab, as text.
+  function viewFooterHints() {
+    if (answerEngine.killActive || root.commandMode || root.formEditing || root.answerForm) return root.fullFooterHints()
+    return KeySheet.footerText(root.tabKeys(), true, false)
   }
 
   function fullFooterHints() {
@@ -895,13 +917,14 @@ Item {
     if (root.activeTab === "windows")
       return "Enter go to window · type to filter by title, app or workspace · Tab next tab · Esc close"
     if (root.activeTab === "clipboard")
-      return "Enter paste · Ctrl+C copy · Ctrl+O open · Ctrl+F type · Tab next tab · Esc close"
+      return "Enter paste · Ctrl+C copy · Ctrl+O open · Ctrl+F type · Tab next tab · Ctrl+? all keys · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
       return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · "
         + (fileCtl.hasRoots ? "Ctrl+R where · " : "") + "Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
     if (root.activeTab === "system")
       return root.systemTwoPane
-        ? "↑↓ browse · →/Enter open · ← back · type to search · Tab next tab · Esc close"
+        ? "↑↓ browse · →/Enter open · ← back · type to search" + (root.systemMatches.length > 1 && root.filterText.trim() ? " · Ctrl+↑↓ next match" : "")
+          + " · Tab next tab · Esc close"
         : "Enter open · ←/Backspace back · Tab next tab · Esc close"
     return (root.allTiles.length > 0 ? "↑↓←→ move" : "↑↓ move") + " · Enter open · Ctrl+G apps "
       + (root.allAppsView === "grid" ? "list" : "grid") + " · Tab next tab · ai <question> ask AI · Esc close"
@@ -3790,11 +3813,22 @@ Item {
         focus: true
 
         Keys.priority: Keys.BeforeItem
+        // Focus gone (a dialog, the window losing the keyboard): the releases
+        // never come, so nothing stays held.
+        onActiveFocusChanged: if (!activeFocus) { root.altHeld = false; root.ctrlHeld = false }
         Keys.onReleased: function(event) {
           if (event.key === Qt.Key_Alt || event.key === Qt.Key_AltGr) root.altHeld = false
+          if (event.key === Qt.Key_Control) root.ctrlHeld = false
         }
 
         Keys.onPressed: function(event) {
+          // Ctrl alone shows the tabs' Ctrl+1…9 numbers; any other key (the
+          // rest of a Ctrl chord too) hides them and goes on as usual.
+          if (KeySheet.ctrlAlone(event.key, event.modifiers)) {
+            root.ctrlHeld = root.tabsActive && !root.deleteConfirmOpen
+            return
+          }
+          root.ctrlHeld = false
           if (event.key === Qt.Key_Alt || event.key === Qt.Key_AltGr) {
             root.altHeld = root.tabsActive
             return
@@ -4258,6 +4292,7 @@ Item {
             // command does not search.
             visible: root.tabsActive && !root.commandMode
             height: visible ? implicitHeight : 0
+            numbered: root.ctrlHeld
             tabs: aiCtl.isAiMode ? aiCtl.aiAgentTabs : root.orderedTabs
             activeTab: aiCtl.isAiMode ? aiCtl.aiAgent : root.activeTab
             fontFamily: root.fontFamily
@@ -4287,76 +4322,14 @@ Item {
             height: root.visibleRowsHeight
             visible: height > 0 && !root.overlayActive
 
-            // Ctrl+?: every key, in groups. Loaded only while
-            // open, so the results area resizing never lays it out.
+            // Ctrl+?: every key, in groups, in the look's type
+            // (KeySheetPanel). Loaded only while open, so the results area
+            // resizing never lays it out.
             Loader {
-              active: root.cheatOpen
+              active: root.cheatOpen && !root.overlayActive
               z: 30
               anchors.fill: parent
-              sourceComponent: Rectangle {
-                color: Qt.rgba(root.background.r, root.background.g, root.background.b, 1)
-                radius: root.rowRadius
-
-                Flow {
-                  anchors.fill: parent
-                  anchors.margins: Style.space(12)
-                  spacing: Style.space(18)
-
-                  Repeater {
-                    model: KeySheet.CHEATSHEET
-                    Column {
-                      required property var modelData
-                      width: (parent.width - Style.space(18)) / 2
-                      spacing: Style.space(6)
-
-                      Text {
-                        textFormat: Text.PlainText
-                        text: modelData.title.toUpperCase()
-                        color: root.foreground
-                        opacity: 0.5
-                        font.family: root.fontFamily
-                        font.pixelSize: root.scaledFont(Style.font.caption)
-                        font.weight: Font.DemiBold
-                        font.letterSpacing: 1
-                      }
-
-                      Repeater {
-                        model: modelData.keys
-                        Row {
-                          required property var modelData
-                          spacing: Style.space(8)
-                          Rectangle {
-                            width: Math.max(sheetKey.implicitWidth + Style.space(8), Style.space(30))
-                            height: sheetKey.implicitHeight + Style.space(3)
-                            radius: Style.space(3)
-                            color: "transparent"
-                            border.width: 1
-                            border.color: Util.alpha(root.foreground, 0.35)
-                            Text {
-                              id: sheetKey
-                              anchors.centerIn: parent
-                              textFormat: Text.PlainText
-                              text: modelData[0]
-                              color: root.foreground
-                              font.family: root.fontFamily
-                              font.pixelSize: root.scaledFont(Style.font.caption)
-                            }
-                          }
-                          Text {
-                            textFormat: Text.PlainText
-                            text: modelData[1]
-                            color: root.foreground
-                            opacity: 0.75
-                            font.family: root.fontFamily
-                            font.pixelSize: root.scaledFont(Style.font.bodySmall)
-                            anchors.verticalCenter: parent.verticalCenter
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
+              sourceComponent: KeySheetPanel { menu: root }
             }
 
             AiPanel {

@@ -1661,6 +1661,70 @@ eq(KeySheet.closesSheet(0x01000053), false, "Super alone leaves the key sheet op
 eq(KeySheet.closesSheet(0x01000000), true, "Esc closes the key sheet")
 eq(KeySheet.closesSheet(0x41), true, "a letter closes the key sheet")
 assert(KeySheet.CHEATSHEET.every(g => g.title && g.keys.length > 0 && g.keys.every(k => k.length === 2)), "every key sheet group has keys and descriptions")
+{
+  // One sheet, every look: the card's panel and both views read CHEATSHEET.
+  const lines = KeySheet.sheetLines()
+  eq(lines.filter(l => l.title).length, KeySheet.CHEATSHEET.length, "a title line per group")
+  eq(lines.filter(l => l.key).length, KeySheet.CHEATSHEET.reduce((n, g) => n + g.keys.length, 0), "a line per key")
+  eq(lines[0], { title: KeySheet.CHEATSHEET[0].title }, "the sheet starts with the first group's title")
+  eq(lines[1], { key: KeySheet.CHEATSHEET[0].keys[0][0], does: KeySheet.CHEATSHEET[0].keys[0][1] }, "then its first key")
+  assert(KeySheet.CHEATSHEET.some(g => g.keys.some(k => k[0] === "^?")), "the sheet lists its own key")
+  const fs = require("fs")
+  for (const f of ["KeySheetPanel.qml", "AxisView.qml", "KonstruktView.qml"])
+    assert(/KeySheet\.(CHEATSHEET|sheetLines\(\))/.test(fs.readFileSync(path.join(root, f), "utf8")), f + " draws the sheet from KeySheet")
+  const menu = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  assert(!/overlayActive:[^\n]*\n[^\n]*cheatOpen/.test(menu), "the full-screen views stay up for the key sheet")
+  assert(/active: root\.cheatOpen && !root\.overlayActive/.test(menu), "the card's sheet only where no view draws one")
+  for (const f of ["AxisView.qml", "KonstruktView.qml"]) {
+    const v = fs.readFileSync(path.join(root, f), "utf8")
+    assert(/menu\.cheatOpen/.test(v), f + " draws the key sheet")
+    assert(/text: \w+\.menu\.viewFooterHints\(\)/.test(v) && !/esc let go|"↑↓ move   ↵ open/.test(v), f + " footer comes from the tab's keys")
+    assert(/numbered: \w+\.menu\.ctrlHeld/.test(v), f + " tabs show their Ctrl numbers")
+  }
+
+  // The footers, cut from one list per tab.
+  const base = { tab: "all", cheatOpen: false, altHeld: false, twoPane: false, matches: false, pinned: false,
+                 canReorder: false, appsView: "list", allAppsView: "list", hasRoots: false }
+  const keys = s => KeySheet.tabKeys(Object.assign({}, base, s))
+  const caps = s => KeySheet.coreKeys(keys(s)).map(k => k[0])
+  const tabs = ["all", "apps", "clipboard", "windows", "files", "folders", "system"]
+  for (const tab of tabs) {
+    assert(caps({ tab }).includes("^?"), tab + ": the keycaps offer every key")
+    assert(caps({ tab }).length <= 6, tab + ": the keycaps fit the card")
+    assert(/\^\? all keys   esc close$/.test(KeySheet.footerText(keys({ tab }), false, false)), tab + ": the short footer offers every key")
+  }
+  eq(caps({ tab: "clipboard" }), ["↵", "^C", "^O", "^F", "^?"], "clipboard: paste, copy, open, type")
+  assert(KeySheet.footerText(keys({ tab: "clipboard" }), false, false).includes("^O open"), "the short clipboard footer has ^O")
+  eq(caps({ tab: "apps", pinned: true, appsView: "grid" }), ["↵", "shift ↵", "^P", "^G", "^?"], "apps keycaps")
+  eq(keys({ tab: "apps", pinned: true, appsView: "grid" }).slice(2, 4).map(k => k[1]), ["unpin", "list"], "apps: what ^P and ^G do now")
+  const appsFull = KeySheet.footerText(keys({ tab: "apps", canReorder: true }), true, false)
+  assert(appsFull.includes("del uninstall") && appsFull.includes("^shift ←→ move the pin"), "the views' apps footer has Del and the pin move")
+  assert(!KeySheet.footerText(keys({ tab: "apps" }), true, false).includes("move the pin"), "no pin move off the pins")
+  eq(caps({ tab: "files" }), ["↵", "^F", "^S", "^L", "^?"], "files keycaps without roots")
+  eq(caps({ tab: "folders", hasRoots: true }), ["↵", "^F", "^R", "^S", "^L", "^?"], "^R only with search roots")
+  const filesFull = KeySheet.footerText(keys({ tab: "files" }), true, false)
+  for (const k of ["alt ↵ folder", "^C path", "^T terminal"]) assert(filesFull.includes(k), "the views' files footer has " + k)
+  eq(caps({ tab: "system", twoPane: true }), ["↑↓", "→", "←", "^?"], "System's two panes")
+  eq(caps({ tab: "system", twoPane: true, matches: true }), ["↑↓", "→", "←", "^↑↓", "^?"], "^↑↓ while a search has matches")
+  eq(caps({ tab: "windows" }), ["↵", "⇥", "^?"], "windows")
+  eq(caps({ cheatOpen: true }), ["any key"], "the sheet open: any key closes it")
+  eq(KeySheet.footerText(keys({ cheatOpen: true }), true, false), "any key close", "no esc hint beside any key")
+  eq(caps({ altHeld: true })[0], "alt 1–9", "Alt held: what Alt does")
+  assert(KeySheet.footerText(keys({}), false, true).startsWith("↑↓ move   ↵ open   alt 1–9 jump"), "numbered rows add Alt+1…9 after Enter")
+  assert(/function footerKeys\(\)[\s\S]*?KeySheet\.coreKeys\(root\.tabKeys\(\)\)/.test(menu), "the keycaps come from tabKeys")
+  assert(/function shortFooterHints\(\)[\s\S]*?KeySheet\.footerText\(root\.tabKeys\(\), false/.test(menu), "the short footer comes from tabKeys")
+
+  // Ctrl held: the tabs' numbers, as Ctrl+1…9 picks them.
+  eq([0, 1, 8, 9, -1].map(KeySheet.tabNumber), ["1", "2", "9", "", ""], "tab numbers 1-9 by place")
+  eq(KeySheet.ctrlAlone(0x01000021, 0x04000000), true, "Ctrl alone")
+  eq(KeySheet.ctrlAlone(0x01000021, 0x04000000 | 0x02000000), false, "Ctrl with Shift down is a chord")
+  eq(KeySheet.ctrlAlone(0x31, 0x04000000), false, "Ctrl+1 is a shortcut, not Ctrl held")
+  assert(/KeySheet\.ctrlAlone\(event\.key, event\.modifiers\)[\s\S]{0,200}return\n\s*\}\n\s*root\.ctrlHeld = false/.test(menu), "any other key clears Ctrl held")
+  assert(/event\.key === Qt\.Key_Control\) root\.ctrlHeld = false/.test(menu), "releasing Ctrl clears it")
+  assert(/onOpenedChanged: \{[\s\S]{0,80}root\.ctrlHeld = false/.test(menu), "closing clears it")
+  assert(/numbered: root\.ctrlHeld/.test(menu), "the card's tabs show their numbers")
+  assert(/KeySheet\.tabNumber\(chip\.index\)/.test(fs.readFileSync(path.join(root, "TabBar.qml"), "utf8")), "TabBar numbers its chips")
+}
 
 // Looks: the switch
 eq(Looks.styleLook({}), "classic", "no look is classic")

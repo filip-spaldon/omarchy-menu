@@ -268,11 +268,15 @@ BorderSurface {
         width: implicitWidth
         anchors.right: parent.right
         anchors.baseline: labelText.baseline
-        text: row.shortcutHint
-        color: row.hasCursor ? row.menu.selectionText : row.menu.foreground
-        opacity: 0.4
+        // In the look's type (Menu.shortcutCase / Spacing / Accent): Axis's
+        // spaced capitals, Konstrukt's spaced lowercase readout.
+        text: row.menu.shortcutCase === "upper" ? row.shortcutHint.toUpperCase()
+          : row.menu.shortcutCase === "lower" ? row.shortcutHint.toLowerCase() : row.shortcutHint
+        color: row.hasCursor ? row.menu.selectionText : (row.menu.shortcutAccent ? Color.accent : row.menu.foreground)
+        opacity: row.menu.shortcutAccent ? 0.8 : 0.4
         font.family: row.menu.fontFamily
         font.pixelSize: row.menu.scaledFont(Style.font.caption)
+        font.letterSpacing: row.menu.shortcutSpacing
       }
     }
 

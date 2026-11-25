@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 import "Tabs.js" as Tabs
+import "KeySheet.js" as KeySheet
 
 // The Axis look: no card. Two hairlines cross the screen: the horizontal one
 // carries what you typed, the vertical one what exists, and the row at the
@@ -35,6 +36,9 @@ Item {
   readonly property bool sys: axis.menu.systemTwoPane
   readonly property bool leftPane: axis.sys && axis.menu.systemPane === "left"
   readonly property int hair: Math.max(1, Style.spacing.hairline)
+  // The "?" key sheet (Ctrl+?): "Every key" stands on the line in the
+  // query's place, the keys hang off the vertical line as the results do.
+  readonly property bool sheet: axis.menu.cheatOpen
 
   // The lines, drawn in from the edges each time the view appears.
   property real reach: 0
@@ -77,13 +81,13 @@ Item {
   // The query, standing on the line; its faint reflection below it.
   Text {
     id: queryText
-    visible: !axis.sys
-    readonly property bool empty: !axis.menu.filterText
+    visible: !axis.sys || axis.sheet
+    readonly property bool empty: !axis.menu.filterText && !axis.sheet
     x: Math.round(axis.crossX * 0.14)
     width: axis.crossX - x - Style.space(40)
     y: axis.crossY - height + Math.round(font.pixelSize * 0.22)
     textFormat: Text.PlainText
-    text: empty ? axis.menu.promptText() : axis.menu.filterText
+    text: axis.sheet ? "Every key" : (empty ? axis.menu.promptText() : axis.menu.filterText)
     color: axis.ink
     opacity: empty ? 0.35 : 1
     elide: Text.ElideLeft
@@ -93,7 +97,7 @@ Item {
   }
 
   Rectangle {
-    visible: !axis.sys && !queryText.empty && axis.menu.opened
+    visible: !axis.sys && !axis.sheet && !queryText.empty && axis.menu.opened
     x: queryText.x + Math.min(queryText.contentWidth, queryText.width) + Style.space(6)
     width: Math.max(2, Math.round(queryText.font.pixelSize / 28))
     height: Math.round(queryText.font.pixelSize * 0.8)
@@ -102,7 +106,7 @@ Item {
   }
 
   Text {
-    visible: !axis.sys && !queryText.empty
+    visible: queryText.visible && !queryText.empty
     x: queryText.x
     width: queryText.width
     y: axis.crossY + Style.space(2)
@@ -119,8 +123,8 @@ Item {
     x: queryText.x
     y: axis.crossY - queryText.height - Style.space(28)
     textFormat: Text.PlainText
-    visible: !axis.sys
-    text: axis.menu.positionHint || "QUERY"
+    visible: !axis.sys || axis.sheet
+    text: axis.menu.positionHint || (axis.sheet ? "KEYS" : "QUERY")
     color: axis.ink
     opacity: 0.4
     font.family: axis.menu.fontFamily
@@ -133,7 +137,7 @@ Item {
   // crossing, where the chosen category sits on the same line.
   Text {
     id: sysCrumb
-    visible: axis.sys
+    visible: axis.sys && !axis.sheet
     x: queryText.x
     width: Math.max(0, axis.crossX - x - Style.space(200))
     y: axis.crossY - height + Math.round(font.pixelSize * 0.22)
@@ -156,6 +160,7 @@ Item {
     // Over System's category rows, which span the left side for their clicks.
     z: 1
     tabs: axis.menu.orderedTabs
+    numbered: axis.menu.ctrlHeld
     activeTab: axis.menu.activeTab
     fontFamily: axis.menu.fontFamily
     foreground: axis.ink
@@ -170,6 +175,7 @@ Item {
 
   // Files and Folders: the type, where to look and the sort, in the tabs' type.
   FileBar {
+    visible: !axis.sheet && (axis.menu.fileBarShown || axis.menu.clipboardBarShown)
     menu: axis.menu
     x: queryText.x
     width: queryText.width
@@ -183,7 +189,7 @@ Item {
 
   // Nothing found: said on the line, where the first result would cross.
   Text {
-    visible: !axis.sys && list.count === 0 && text !== ""
+    visible: !axis.sys && !axis.sheet && list.count === 0 && text !== ""
     x: list.x + Style.space(12)
     width: list.width - Style.space(12)
     y: axis.crossY - height - Style.space(6)
@@ -204,7 +210,7 @@ Item {
   // setPreferredHighlightBegin), so the pinning is done here, only while shown.
   ListView {
     id: list
-    visible: !axis.gridShown
+    visible: !axis.gridShown && !axis.sheet
     opacity: axis.leftPane ? 0.55 : 1
     x: axis.crossX + Style.space(20)
     width: Math.min(Style.space(760), axis.width - x - Style.space(48))
@@ -295,7 +301,7 @@ Item {
   // grid moves, the crossing stays.
   GridView {
     id: grid
-    visible: axis.gridShown
+    visible: axis.gridShown && !axis.sheet
     readonly property int columns: Math.max(1, Math.floor(width / cellWidth))
     x: list.x
     width: Math.max(cellWidth, Math.floor(list.width / cellWidth) * cellWidth)
@@ -368,7 +374,7 @@ Item {
   // held on the horizontal line like the selected item across from it.
   ListView {
     id: cats
-    visible: axis.sys
+    visible: axis.sys && !axis.sheet
     readonly property int rowH: axis.menu.baseRowHeight
     x: Style.space(48)
     width: axis.crossX - x - Style.space(24)
@@ -447,6 +453,89 @@ Item {
     }
   }
 
+  // The key sheet: one column off the vertical line, every group's title in
+  // the labels' spaced capitals with a tick on the line, each key in spaced
+  // capitals and what it does in the query's serif. Centred on the crossing,
+  // kept on screen; the lines tighten when the screen is short.
+  Loader {
+    id: sheetLoader
+    active: axis.sheet
+    x: axis.crossX + Style.space(20)
+    y: sheetLoader.item ? Math.round(Math.max(axis.height * 0.07, Math.min(axis.crossY - sheetLoader.item.height / 2,
+                                                                         axis.height * 0.93 - sheetLoader.item.height))) : 0
+    width: Math.max(0, axis.width - x - Style.space(48))
+    sourceComponent: Item {
+      id: keys
+      readonly property var lines: KeySheet.sheetLines()
+      readonly property int lineH: Math.max(Style.space(14), Math.min(Math.round(axis.menu.scaledFont(Style.font.body) * 1.75),
+                                                                    Math.floor(axis.height * 0.86 / Math.max(1, keys.lines.length))))
+      readonly property int keyW: Style.space(190)
+      width: parent ? parent.width : 0
+      height: keys.lines.length * keys.lineH
+
+      Column {
+        Repeater {
+          model: keys.lines
+          Item {
+            id: line
+            required property var modelData
+            readonly property bool title: line.modelData.title !== undefined
+            width: keys.width
+            height: keys.lineH
+
+            Rectangle {
+              visible: line.title
+              x: -Style.space(26)
+              width: Style.space(12)
+              height: axis.hair
+              anchors.verticalCenter: parent.verticalCenter
+              color: Util.alpha(axis.ink, 0.5)
+            }
+            Text {
+              visible: line.title
+              anchors.bottom: parent.bottom
+              anchors.bottomMargin: Math.round(keys.lineH * 0.2)
+              textFormat: Text.PlainText
+              text: line.title ? line.modelData.title.toUpperCase() : ""
+              color: axis.ink
+              opacity: 0.42
+              font.family: axis.menu.fontFamily
+              font.pixelSize: axis.menu.scaledFont(Style.font.caption)
+              font.letterSpacing: 2
+            }
+            Text {
+              visible: !line.title
+              width: keys.keyW
+              anchors.baseline: does.baseline
+              textFormat: Text.PlainText
+              text: line.title ? "" : line.modelData.key.toUpperCase()
+              elide: Text.ElideRight
+              color: axis.ink
+              opacity: 0.7
+              font.family: axis.menu.fontFamily
+              font.pixelSize: axis.menu.scaledFont(Style.font.caption)
+              font.letterSpacing: 2
+            }
+            Text {
+              id: does
+              visible: !line.title
+              x: keys.keyW + Style.space(12)
+              width: Math.max(0, keys.width - x)
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+              text: line.title ? "" : line.modelData.does
+              elide: Text.ElideRight
+              color: axis.ink
+              font.family: "Noto Serif"
+              font.weight: Font.Light
+              font.pixelSize: Math.min(axis.menu.scaledFont(Style.font.body), Math.round(keys.lineH * 0.62))
+            }
+          }
+        }
+      }
+    }
+  }
+
   // The crossing: an ember where the selected row meets the line.
   Rectangle {
     visible: !axis.hasBackdrop
@@ -470,11 +559,13 @@ Item {
 
   Text {
     x: queryText.x
-    y: axis.height - Style.space(48)
+    // Wraps short of the vertical line, its last line where one line stood.
+    width: Math.max(Style.space(200), axis.crossX - x - Style.space(24))
+    y: axis.height - Style.space(32) - height
+    wrapMode: Text.Wrap
     textFormat: Text.PlainText
-    // The tab's own keys where it has some (Files, Folders, Apps).
-    readonly property bool tabKeys: ["files", "folders", "apps", "clipboard"].indexOf(axis.menu.activeTab) >= 0
-    text: tabKeys ? axis.menu.shortFooterHints() : "↑↓ the list moves, the cross stays   ⇥ scope   ↵ open   esc let go"
+    // Every key of the tab (Menu.tabKeys), as in every look.
+    text: axis.menu.viewFooterHints()
     color: axis.ink
     opacity: 0.45
     font.family: axis.menu.fontFamily

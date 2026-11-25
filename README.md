@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/51d2cada-dd4d-4596-9a6c-2e71191caf62
 
 `Super+Space` opens the compact search prompt. Start typing, click a tab, use
 Tab / Shift+Tab (or Ctrl+Tab) to cycle, or Ctrl+1…7 to select a visible tab by
-position. Tab switches tabs only when no [answer form](#instant-answers) is on
+position (hold Ctrl alone and each tab shows its number). Tab switches tabs only when no [answer form](#instant-answers) is on
 the line.
 Switching tabs preserves the query. Arrow keys select a result; Enter activates
 it. Esc clears the query, then closes the menu; Left or Backspace on an empty
@@ -44,7 +44,7 @@ query is in the accent colour. Hold Alt to number the rows on screen;
 Alt+1…9 opens that row. While All searches, each section header says how many
 results it had and what the five-row cap left out ("+4 in Files ⇥"), and the
 tabs show what they found. The footer shows the current tab's keys, and
-Ctrl+? (Ctrl+Shift+/) lists every key.
+Ctrl+? (Ctrl+Shift+/) lists every key, drawn in the current look's style.
 
 | Tab | Contents |
 | --- | --- |
@@ -619,7 +619,7 @@ automatically; after adding or renaming a file run `omarchy restart shell`.
 | `ClipboardController.qml` | Clipboard tab: reads Omarchy's clipboard history once per open and pastes, copies or opens the selected snapshot entry |
 | `SettingsStore.qml` | Loads, validates and saves `state.json` and `style.json` |
 | `BarWidget.qml` | Bar button: left click shows the settings popup and System actions, right click opens the launcher |
-| `AiPanel.qml`, `ResultRow.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
+| `AiPanel.qml`, `ResultRow.qml`, `KeySheetPanel.qml`, `SystemCategoryItem.qml`, `AppGrid.qml`, `TabBar.qml`, `RunningBadge.qml` | Visual pieces of the card |
 | `MenuModel.js`, `Tabs.js`, `AllTiles.js`, `Pinned.js`, `FileSearch.js`, `Roots.js`, `Settings.js`, `Windows.js`, `Clipboard.js`, `KeySheet.js`, `Looks.js`, `Konstrukt.js`, `ai/*.js` | Pure logic, tested with Node |
 
 The controllers own no UI and reach the menu only through their `menu`

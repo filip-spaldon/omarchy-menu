@@ -3,6 +3,7 @@ import QtQuick.Shapes
 import qs.Commons
 import "Konstrukt.js" as Konstrukt
 import "Tabs.js" as Tabs
+import "KeySheet.js" as KeySheet
 
 // The Konstrukt look: every result appears twice, as a row in the list on the
 // left and as a flat Suprematist shape in the field on the right. It looks
@@ -80,6 +81,11 @@ Item {
   // on a ring around it, and the list on the left shows them.
   readonly property bool sys: kon.menu.systemTwoPane
   readonly property bool leftPane: kon.sys && kon.menu.systemPane === "left"
+  // The "?" key sheet (Ctrl+?): across the list and the field, each group
+  // under a shape of its own, the list and the shapes stepped aside.
+  readonly property bool sheet: kon.menu.cheatOpen
+  // A key group's shape and colour, as a kind's: the groups in turn.
+  readonly property var sheetKinds: ["app", "file", "folder", "menu", "window", "clipboard"]
 
   function rebuild() {
     var n = Math.min(kon.model.count, kon.maxShapes)
@@ -255,9 +261,9 @@ Item {
     y: Math.round(kon.height * 0.08)
     width: kon.listW
     textFormat: Text.PlainText
-    readonly property bool empty: !kon.menu.filterText && !kon.sys
+    readonly property bool empty: !kon.menu.filterText && !kon.sys && !kon.sheet
     readonly property string crumb: kon.menu.activeMenu === "root" ? "System" : "System › " + kon.menu.pathFor(kon.menu.activeMenu)
-    text: kon.sys ? crumb + (kon.menu.filterText ? " · " + kon.menu.filterText : "")
+    text: kon.sheet ? "Every key" : kon.sys ? crumb + (kon.menu.filterText ? " · " + kon.menu.filterText : "")
       : (empty ? kon.menu.promptText() : kon.menu.filterText)
     color: kon.ink
     opacity: empty ? 0.4 : 1
@@ -267,7 +273,7 @@ Item {
   }
 
   Rectangle {
-    visible: !query.empty && kon.menu.opened
+    visible: !query.empty && !kon.sheet && kon.menu.opened
     x: query.x + Math.min(query.contentWidth, query.width) + Style.space(4)
     y: query.y + Style.space(4)
     width: Math.max(2, Style.space(3))
@@ -279,7 +285,8 @@ Item {
     x: kon.area.x
     y: query.y + Style.space(8)
     textFormat: Text.PlainText
-    text: kon.menu.positionHint || (kon.sys ? kon.menu.systemCategories.length + " categories" : kon.shownCount + " shapes")
+    text: kon.menu.positionHint || (kon.sheet ? KeySheet.CHEATSHEET.length + " groups"
+      : kon.sys ? kon.menu.systemCategories.length + " categories" : kon.shownCount + " shapes")
     color: Color.accent
     opacity: 0.8
     font.family: kon.menu.fontFamily
@@ -293,6 +300,7 @@ Item {
     width: kon.listW
     y: query.y + query.height + Style.space(14)
     tabs: kon.menu.orderedTabs
+    numbered: kon.menu.ctrlHeld
     activeTab: kon.menu.activeTab
     fontFamily: kon.menu.fontFamily
     foreground: kon.ink
@@ -308,6 +316,7 @@ Item {
   // Files and Folders: the type, where to look and the sort, under the tabs.
   FileBar {
     id: fileBar
+    visible: !kon.sheet && (kon.menu.fileBarShown || kon.menu.clipboardBarShown)
     menu: kon.menu
     x: kon.listX
     width: kon.listW
@@ -321,7 +330,7 @@ Item {
 
   // Nothing found: said where the list would start, and the field stays bare.
   Text {
-    visible: !kon.sys && list.count === 0 && text !== ""
+    visible: !kon.sys && !kon.sheet && list.count === 0 && text !== ""
     x: kon.listX + Style.space(10)
     width: kon.listW - Style.space(10)
     y: list.y + Style.space(8)
@@ -337,7 +346,7 @@ Item {
   // The Apps grid, in the list's place: every app's shape and name.
   GridView {
     id: tileGrid
-    visible: kon.gridShown
+    visible: kon.gridShown && !kon.sheet
     readonly property int columns: Math.max(1, Math.floor(width / cellWidth))
     x: list.x
     y: list.y
@@ -386,7 +395,7 @@ Item {
 
   ListView {
     id: list
-    visible: !kon.gridShown
+    visible: !kon.gridShown && !kon.sheet
     x: kon.listX
     y: tabs.y + tabs.height + Style.space(16) + (fileBar.visible ? fileBar.height + Style.space(12) : 0)
     width: kon.listW
@@ -535,7 +544,7 @@ Item {
       readonly property bool glide: kon.settled && !slot.jump
 
       anchors.fill: parent
-      visible: slot.used && !kon.sys
+      visible: slot.used && !kon.sys && !kon.sheet
       // The selected shape and its label stay above the others.
       z: slot.selected ? 2 : (slot.lit ? 1 : 0)
 
@@ -661,9 +670,144 @@ Item {
     }
   }
 
+  // A flat shape (Konstrukt.shapeFor's forms), for the key sheet's groups.
+  component SheetShape: Item {
+    id: shape
+    required property string form
+    required property color fill
+    height: shape.form === "bar" ? width * 0.3 : width
+    Rectangle {
+      visible: shape.form === "circle" || shape.form === "square" || shape.form === "bar"
+      anchors.fill: parent
+      radius: shape.form === "circle" ? width / 2 : 0
+      color: shape.fill
+      antialiasing: true
+    }
+    Rectangle {
+      visible: shape.form === "ring"
+      anchors.fill: parent
+      radius: width / 2
+      color: "transparent"
+      border.width: Math.max(3, width * 0.18)
+      border.color: shape.fill
+      antialiasing: true
+    }
+    Shape {
+      visible: shape.form === "triangle"
+      anchors.fill: parent
+      preferredRendererType: Shape.CurveRenderer
+      ShapePath {
+        strokeWidth: 0
+        strokeColor: "transparent"
+        fillColor: shape.fill
+        startX: shape.width / 2; startY: 0
+        PathLine { x: shape.width; y: shape.height }
+        PathLine { x: 0; y: shape.height }
+        PathLine { x: shape.width / 2; y: 0 }
+      }
+    }
+    Rectangle { visible: shape.form === "cross"; anchors.centerIn: parent; width: parent.width; height: parent.height * 0.3; color: shape.fill }
+    Rectangle { visible: shape.form === "cross"; anchors.centerIn: parent; width: parent.width * 0.3; height: parent.height; color: shape.fill }
+  }
+
+  // The key sheet: the groups in three columns across the list and the field,
+  // each under its shape, tilted a little, its title in the section headers'
+  // spaced lowercase and its count as an accent readout; the keys in full ink,
+  // what they do dimmed.
+  Loader {
+    active: kon.sheet
+    readonly property real left: Math.min(kon.listX, kon.area.x)
+    x: left
+    y: list.y
+    width: Math.max(kon.listX + kon.listW, kon.area.x + kon.area.width) - left
+    height: Math.max(0, kon.height * 0.88 - y)
+    sourceComponent: Flow {
+      id: groups
+      spacing: Style.space(28)
+      clip: true
+
+      Repeater {
+        model: KeySheet.CHEATSHEET
+        Column {
+          id: group
+          required property var modelData
+          required property int index
+          readonly property string kind: kon.sheetKinds[group.index % kon.sheetKinds.length]
+          width: Math.floor((groups.width - groups.spacing * 2) / 3)
+          spacing: Style.space(6)
+
+          Row {
+            spacing: Style.space(12)
+            SheetShape {
+              form: Konstrukt.shapeFor(group.kind)
+              fill: kon.kindColor(group.kind)
+              width: Math.round(kon.menu.scaledFont(Style.font.body) * 1.6)
+              rotation: [-8, 5, 12, -4, 8, -11][group.index % 6]
+              anchors.verticalCenter: parent.verticalCenter
+            }
+            Column {
+              anchors.verticalCenter: parent.verticalCenter
+              Text {
+                textFormat: Text.PlainText
+                text: group.modelData.title.toLowerCase()
+                color: kon.ink
+                opacity: 0.45
+                font.family: kon.menu.fontFamily
+                font.pixelSize: kon.menu.scaledFont(Style.font.caption)
+                font.letterSpacing: 2
+              }
+              Text {
+                textFormat: Text.PlainText
+                text: "#" + String(group.index + 1).padStart(2, "0") + " · " + group.modelData.keys.length + " keys"
+                color: Color.accent
+                opacity: 0.8
+                font.family: kon.menu.fontFamily
+                font.pixelSize: kon.menu.scaledFont(Style.font.caption)
+                font.letterSpacing: 1
+              }
+            }
+          }
+
+          Repeater {
+            model: group.modelData.keys
+            Row {
+              id: keyRow
+              required property var modelData
+              spacing: Style.space(10)
+              Rectangle {
+                width: Style.space(4)
+                height: width
+                color: Util.alpha(kon.ink, 0.3)
+                anchors.verticalCenter: parent.verticalCenter
+              }
+              Text {
+                textFormat: Text.PlainText
+                text: keyRow.modelData[0]
+                color: kon.ink
+                font.family: kon.menu.fontFamily
+                font.pixelSize: kon.menu.scaledFont(Style.font.bodySmall)
+                font.weight: Font.DemiBold
+                anchors.verticalCenter: parent.verticalCenter
+              }
+              Text {
+                textFormat: Text.PlainText
+                text: keyRow.modelData[1]
+                color: kon.ink
+                opacity: 0.6
+                font.family: kon.menu.fontFamily
+                font.pixelSize: kon.menu.scaledFont(Style.font.bodySmall)
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   // System's grid of categories.
   Repeater {
-    model: kon.sys ? kon.menu.systemCategories : []
+    model: kon.sys && !kon.sheet ? kon.menu.systemCategories : []
     Item {
       id: cat
       required property var modelData
@@ -712,7 +856,7 @@ Item {
 
   // The open category's entries on a ring around its cross.
   Repeater {
-    model: kon.sys ? Math.min(kon.model.count, 24) : 0
+    model: kon.sys && !kon.sheet ? Math.min(kon.model.count, 24) : 0
     Rectangle {
       id: entry
       required property int index
@@ -740,7 +884,8 @@ Item {
     x: kon.area.x
     y: kon.height - Style.space(48)
     textFormat: Text.PlainText
-    text: kon.sys ? "System has no chaos: categories on a grid, sized by their entries; the open one's entries on a ring"
+    text: kon.sheet ? "every group a shape · any key closes"
+      : kon.sys ? "System has no chaos: categories on a grid, sized by their entries; the open one's entries on a ring"
       : "● app   ■ file   ▲ folder   ✚ system   ▬ window   ○ clipboard     size = match · tilt = age · spiral = rank"
     color: kon.ink
     opacity: 0.45
@@ -750,11 +895,13 @@ Item {
 
   Text {
     x: kon.listX
-    y: kon.height - Style.space(48)
+    // Wraps in the list's column, its last line where one line stood.
+    width: kon.listW
+    y: kon.height - Style.space(32) - height
+    wrapMode: Text.Wrap
     textFormat: Text.PlainText
-    // The tab's own keys where it has some (Files, Folders, Apps).
-    readonly property bool tabKeys: ["files", "folders", "apps", "clipboard"].indexOf(kon.menu.activeTab) >= 0
-    text: tabKeys ? kon.menu.shortFooterHints() : "↑↓ move   ↵ open   ⇥ tab   ai ask   esc close"
+    // Every key of the tab (Menu.tabKeys), as in every look.
+    text: kon.menu.viewFooterHints()
     color: kon.ink
     opacity: 0.45
     font.family: kon.menu.fontFamily

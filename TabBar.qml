@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import "KeySheet.js" as KeySheet
 
 // The row of tab chips under the search field. Purely presentational: the
 // menu owns which tab is active and what switching means; this only draws
@@ -36,6 +37,9 @@ Item {
   // The accent colour travels with the highlight (the lit copy of a label,
   // clipped to it) rather than switching tab by tab.
   property bool sweepLabels: true
+  // While Ctrl alone is held (Menu.ctrlHeld): each tab shows its Ctrl+1…9
+  // number over its top left corner, so the chips keep their size and place.
+  property bool numbered: false
 
   // One State per tab style, in one group (see Menu.qml lookStates).
   StateGroup {
@@ -282,6 +286,7 @@ Item {
         id: chip
 
         required property var modelData
+        required property int index
         readonly property bool active: chip.modelData.id === bar.activeTab
 
         // Counts widen the chips; tighter padding keeps six on one line.
@@ -331,6 +336,47 @@ Item {
           chipData: chip.modelData
             bold: chip.active
             lit: true
+          }
+        }
+
+        // The Ctrl+n number: a filled keycap on chips and stations, as the
+        // rows' Alt numbers; a small accent figure over bare words.
+        Loader {
+          readonly property string number: KeySheet.tabNumber(chip.index)
+          active: bar.numbered && number !== ""
+          z: 3
+          x: bar.tabStyle === "word" ? 0 : -Math.round(width * 0.25)
+          y: -Math.round(height * (bar.tabStyle === "word" ? 0.55 : 0.4))
+          sourceComponent: bar.tabStyle === "word" ? wordNumber : capNumber
+          Component {
+            id: capNumber
+            Rectangle {
+              width: Math.max(height, capText.implicitWidth + Style.space(6))
+              height: Math.round(bar.fontSize * 1.05)
+              radius: Style.space(4)
+              color: bar.foreground
+              Text {
+                id: capText
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: KeySheet.tabNumber(chip.index)
+                color: bar.background
+                font.family: bar.fontFamily
+                font.pixelSize: Math.round(bar.fontSize * 0.8)
+                font.weight: Font.Bold
+              }
+            }
+          }
+          Component {
+            id: wordNumber
+            Text {
+              textFormat: Text.PlainText
+              text: KeySheet.tabNumber(chip.index)
+              color: Color.accent
+              font.family: bar.fontFamily
+              font.pixelSize: Math.round(bar.fontSize * 0.75)
+              font.weight: Font.DemiBold
+            }
           }
         }
 
