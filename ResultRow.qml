@@ -264,7 +264,7 @@ BorderSurface {
       Text {
         id: hintText
         textFormat: Text.PlainText
-        visible: text.length > 0 && implicitWidth + labelLine.gap <= parent.width * 0.45
+        visible: text.length > 0 && implicitWidth + labelLine.gap <= parent.width * 0.6
         width: implicitWidth
         anchors.right: parent.right
         anchors.baseline: labelText.baseline

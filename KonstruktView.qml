@@ -716,10 +716,10 @@ Item {
   // what they do dimmed.
   Loader {
     active: kon.sheet
-    readonly property real left: Math.min(kon.listX, kon.area.x)
-    x: left
+    readonly property real sheetLeft: Math.min(kon.listX, kon.area.x)
+    x: sheetLeft
     y: list.y
-    width: Math.max(kon.listX + kon.listW, kon.area.x + kon.area.width) - left
+    width: Math.max(kon.listX + kon.listW, kon.area.x + kon.area.width) - sheetLeft
     height: Math.max(0, kon.height * 0.88 - y)
     sourceComponent: Flow {
       id: groups
