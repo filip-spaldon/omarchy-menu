@@ -110,18 +110,16 @@ BorderSurface {
       border.color: row.hasCursor || (row.menu.cursorActive && row.index < row.menu.selectedIndex)
         ? Color.accent : Util.alpha(row.menu.foreground, 0.45)
 
-      // A little under the ring's size, up past it and settling. Never below
-      // a plain stop or the train's width (from 0.45 the new ring was a dot
-      // inside the train's end for frames). Leaving is instant.
+      // A little under the ring's size, growing into it in step with the
+      // train (no overshoot: it read as a second motion). Leaving is instant.
       NumberAnimation {
         id: ringPop
         target: stopRing
         property: "scale"
-        from: 0.8
+        from: 0.85
         to: 1
-        duration: 260
-        easing.type: Easing.OutBack
-        easing.overshoot: 3
+        duration: Style.duration(row.menu.wayfinderMoveMs)
+        easing.type: Easing.OutCubic
       }
       readonly property bool selected: row.hasCursor
       onSelectedChanged: {

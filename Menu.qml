@@ -816,6 +816,8 @@ Item {
   // style: the file search, the result count, and whether the Files bar shows.
   readonly property var fileSearch: fileCtl
   readonly property var clipboardSearch: clipboardCtl
+  // Wayfinder's selection marker, train and stop ring share one duration.
+  readonly property int wayfinderMoveMs: 140
   readonly property bool clipboardBarShown: root.tabsActive && !aiCtl.isAiMode && !root.commandMode
     && root.activeTab === "clipboard"
   readonly property int resultCount: displayModel.count
@@ -4482,8 +4484,8 @@ Item {
                 width: resultList.width
                 y: stop ? stop.y : 0
                 height: stop ? stop.height : 0
-                Behavior on y { enabled: selMarker.glide; NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
-                Behavior on height { enabled: selMarker.glide; NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+                Behavior on y { enabled: selMarker.glide; NumberAnimation { duration: Style.duration(root.wayfinderMoveMs); easing.type: Easing.OutCubic } }
+                Behavior on height { enabled: selMarker.glide; NumberAnimation { duration: Style.duration(root.wayfinderMoveMs); easing.type: Easing.OutCubic } }
 
                 Connections {
                   target: root
@@ -4609,8 +4611,10 @@ Item {
                     if (to > route.tail) route.tail = Math.max(route.tail, to - row)
                     else route.tail = Math.min(route.tail, to + row)
                   }
-                  tailAnim.duration = rapid ? 160 : 240 + Math.min(120, Math.abs(to - route.tail) / 4)
-                  tailAnim.easing.type = rapid ? Easing.OutCubic : Easing.InOutCubic
+                  // One timing for the marker, the train and the ring, so the
+                  // three land together instead of in turns.
+                  tailAnim.duration = Style.duration(root.wayfinderMoveMs)
+                  tailAnim.easing.type = Easing.OutCubic
                   tailAnim.to = to
                   tailAnim.start()
                 }
