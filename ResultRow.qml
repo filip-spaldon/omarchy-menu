@@ -4,6 +4,7 @@ import qs.Commons
 import qs.Ui
 import "Windows.js" as Windows
 import "Clipboard.js" as Clipboard
+import "SystemShortcuts.js" as SystemShortcuts
 import "AllTiles.js" as AllTiles
 
 // One row of the result list: icon or app icon, label, detail line,
@@ -242,11 +243,15 @@ BorderSurface {
       width: parent.width
       implicitHeight: Math.max(labelText.implicitHeight, hintText.visible ? hintText.implicitHeight : 0)
       readonly property real gap: Style.space(8)
+      // Classic shows the hint as footer keycaps (KeyCap); the other looks
+      // as text in their own type.
+      readonly property bool caps: row.menu.shortcutCaps && row.shortcutHint.length > 0
+      readonly property real hintWidth: labelLine.caps ? hintCap.width : hintText.width
 
       Text {
         id: labelText
         textFormat: row.marked ? Text.StyledText : Text.PlainText
-        width: hintText.visible ? Math.max(0, parent.width - hintText.width - labelLine.gap) : parent.width
+        width: hintText.visible ? Math.max(0, parent.width - labelLine.hintWidth - labelLine.gap) : parent.width
         anchors.verticalCenter: parent.verticalCenter
         text: row.marked || row.label
         color: row.hasCursor ? row.menu.selectionText : row.menu.foreground
@@ -259,7 +264,8 @@ BorderSurface {
       Text {
         id: hintText
         textFormat: Text.PlainText
-        visible: text.length > 0 && implicitWidth + labelLine.gap <= parent.width * 0.6
+        visible: text.length > 0 && labelLine.hintWidth + labelLine.gap <= parent.width * 0.6
+        opacity: labelLine.caps ? 0 : (row.menu.shortcutAccent ? 0.8 : 0.4)
         width: implicitWidth
         anchors.right: parent.right
         // Axis draws its line through the label's middle: the hint sits
@@ -272,10 +278,20 @@ BorderSurface {
         text: row.menu.shortcutCase === "upper" ? row.shortcutHint.toUpperCase()
           : row.menu.shortcutCase === "lower" ? row.shortcutHint.toLowerCase() : row.shortcutHint
         color: row.hasCursor ? row.menu.selectionText : (row.menu.shortcutAccent ? Color.accent : row.menu.foreground)
-        opacity: row.menu.shortcutAccent ? 0.8 : 0.4
         font.family: row.menu.fontFamily
         font.pixelSize: row.menu.scaledFont(Style.font.caption)
         font.letterSpacing: row.menu.shortcutSpacing
+      }
+
+      KeyCap {
+        id: hintCap
+        visible: labelLine.caps && hintText.visible
+        anchors.right: parent.right
+        anchors.verticalCenter: labelText.verticalCenter
+        text: SystemShortcuts.capLabel(row.shortcutHint)
+        fontSize: row.menu.scaledFont(Style.font.caption)
+        fontFamily: row.menu.fontFamily
+        ink: row.hasCursor ? row.menu.selectionText : row.menu.foreground
       }
     }
 

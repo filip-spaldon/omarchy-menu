@@ -73,4 +73,17 @@ function hintFor(bindings, itemId, kind, action) {
   return stock[2].find(chord => bindings.lua[chord] === stock[1]) || ""
 }
 
-if (typeof module !== "undefined") module.exports = { bindingChord, parseBindings, hintFor }
+// A chord in the footer's notation, for a keycap: "Super+Ctrl+L" is
+// "super ^L", "Print" is "print". Ctrl goes on the key as "^", the other
+// modifiers are lowercase words; a one-character key keeps its case.
+function capLabel(chord) {
+  const parts = String(chord || "").split("+").filter(part => part !== "")
+  if (parts.length === 0) return ""
+  const key = parts.pop()
+  const ctrl = parts.indexOf("Ctrl") >= 0
+  const words = parts.filter(part => part !== "Ctrl").map(part => part.toLowerCase())
+  const name = key.length === 1 ? key : key.toLowerCase()
+  return words.concat((ctrl ? "^" : "") + name).join(" ")
+}
+
+if (typeof module !== "undefined") module.exports = { bindingChord, parseBindings, hintFor, capLabel }

@@ -693,6 +693,8 @@ Item {
   property real shortcutSpacing: 0
   // Tab and row numbers as bare accent figures where the tabs are bare words.
   readonly property bool numbersBare: root.tabStyle === "word" || root.lookView !== ""
+  // System hints as the footer's keycaps: the card's own look (classic).
+  readonly property bool shortcutCaps: root.shortcutCase === "" && root.lookView === ""
   property bool shortcutAbove: false    // the hint above the label's middle (Axis's line)
   property bool shortcutAccent: false
 
@@ -4820,24 +4822,12 @@ Item {
                 Row {
                   required property var modelData
                   spacing: Style.space(5)
-                  Rectangle {
-                    width: footKey.implicitWidth + Style.space(8)
-                    height: footKey.implicitHeight + Style.space(2)
-                    radius: Style.space(3)
-                    color: "transparent"
-                    border.width: 1
-                    border.color: Util.alpha(root.foreground, 0.32)
+                  KeyCap {
+                    text: modelData[0]
+                    fontSize: root.scaledFont(Style.font.caption)
+                    fontFamily: root.fontFamily
+                    ink: root.foreground
                     anchors.verticalCenter: parent.verticalCenter
-                    Text {
-                      id: footKey
-                      anchors.centerIn: parent
-                      textFormat: Text.PlainText
-                      text: modelData[0]
-                      color: root.foreground
-                      opacity: 0.8
-                      font.family: root.fontFamily
-                      font.pixelSize: root.scaledFont(Style.font.caption)
-                    }
                   }
                   Text {
                     textFormat: Text.PlainText

@@ -1454,6 +1454,10 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(SystemShortcuts.hintFor(hints([lock]), "system.lock", "action", "custom-lock"), "", "replaced actions do not inherit hints")
   eq(SystemShortcuts.hintFor(hints([lock]), "constructor", "action", "omarchy-system-lock"), "", "lookups use own stock entries only")
   eq(SystemShortcuts.bindingChord({ modmask: 0, key: "<img>" }), "", "untrusted markup is not a key")
+  eq(SystemShortcuts.capLabel("Super+Ctrl+L"), "super ^L", "a hint in the footer's key notation")
+  eq(SystemShortcuts.capLabel("Super+Ctrl+Shift+Space"), "super shift ^space", "ctrl goes on the key")
+  eq(SystemShortcuts.capLabel("Print"), "print", "a named key is lowercase")
+  eq(SystemShortcuts.capLabel(""), "", "no chord, no cap")
 }
 
 // ---------------------------------------------------- percent and work time --
