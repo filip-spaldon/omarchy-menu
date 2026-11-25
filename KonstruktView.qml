@@ -861,6 +861,20 @@ Item {
         font.pixelSize: kon.menu.scaledFont(Style.font.caption)
         font.letterSpacing: 1
       }
+      // The category's shortcut (Super+Esc on System): an accent readout.
+      Text {
+        readonly property string hint: kon.menu.systemShortcutHint(cat.modelData.itemId, cat.modelData.kind, cat.modelData.action || "")
+        visible: hint.length > 0
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: parent.height + Style.space(14) + kon.menu.scaledFont(Style.font.caption) * 1.6
+        textFormat: Text.PlainText
+        text: hint.toLowerCase()
+        color: Color.accent
+        opacity: 0.8
+        font.family: kon.menu.fontFamily
+        font.pixelSize: kon.menu.scaledFont(Style.font.caption)
+        font.letterSpacing: kon.menu.shortcutSpacing
+      }
       MouseArea {
         anchors.fill: parent
         anchors.margins: -Style.space(10)

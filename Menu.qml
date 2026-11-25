@@ -694,7 +694,7 @@ Item {
   // Tab and row numbers as bare accent figures where the tabs are bare words.
   readonly property bool numbersBare: root.tabStyle === "word" || root.lookView !== ""
   // System hints as the footer's keycaps: the card's own look (classic).
-  readonly property bool shortcutCaps: root.shortcutCase === "" && root.lookView === ""
+  readonly property bool shortcutCaps: root.drawnLook === "classic"
   property bool shortcutAbove: false    // the hint above the label's middle (Axis's line)
   property bool shortcutAccent: false
 

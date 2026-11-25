@@ -1454,8 +1454,8 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(SystemShortcuts.hintFor(hints([lock]), "system.lock", "action", "custom-lock"), "", "replaced actions do not inherit hints")
   eq(SystemShortcuts.hintFor(hints([lock]), "constructor", "action", "omarchy-system-lock"), "", "lookups use own stock entries only")
   eq(SystemShortcuts.bindingChord({ modmask: 0, key: "<img>" }), "", "untrusted markup is not a key")
-  eq(SystemShortcuts.capLabel("Super+Ctrl+L"), "SUPER+CTRL+L", "a hint reads as its chord, in capitals")
-  eq(SystemShortcuts.capLabel("Print"), "PRINT", "a named key too")
+  eq(SystemShortcuts.capLabel("Super+Ctrl+L"), "super+ctrl+l", "a hint reads as its chord, in lowercase")
+  eq(SystemShortcuts.capLabel("Print"), "print", "a named key too")
   eq(SystemShortcuts.capLabel(""), "", "no chord, no cap")
   eq(SystemShortcuts.hintFor(SystemShortcuts.parseBindings(JSON.stringify([
     { modmask: 64, key: "ESCAPE", description: "System (Omni menu)", dispatcher: "__lua", locked: false },

@@ -444,6 +444,19 @@ Item {
           font.weight: cat.picked ? Font.DemiBold : Font.Normal
           anchors.verticalCenter: parent.verticalCenter
         }
+        // The category's shortcut (Super+Esc on System), as the rows' hints.
+        Text {
+          readonly property string hint: axis.menu.systemShortcutHint(cat.modelData.itemId, cat.modelData.kind, cat.modelData.action || "")
+          visible: hint.length > 0
+          textFormat: Text.PlainText
+          text: hint.toUpperCase()
+          color: axis.ink
+          opacity: 0.4
+          font.family: axis.menu.fontFamily
+          font.pixelSize: axis.menu.scaledFont(Style.font.caption)
+          font.letterSpacing: axis.menu.shortcutSpacing
+          anchors.verticalCenter: parent.verticalCenter
+        }
         // Alt held in the left pane: the category's Alt+n number.
         Loader {
           active: axis.menu.altHeld && axis.menu.categoryNumbers && cat.index < 9

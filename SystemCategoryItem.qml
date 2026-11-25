@@ -131,7 +131,7 @@ BorderSurface {
       Text {
         textFormat: Text.PlainText
         text: category.menu.shortcutCase === "upper" ? category.hint.toUpperCase()
-          : category.menu.shortcutCase === "lower" ? category.hint.toLowerCase() : category.hint
+          : category.hint.toLowerCase()
         color: category.menu.shortcutAccent ? Color.accent : category.menu.foreground
         opacity: category.menu.shortcutAccent ? 0.8 : 0.4
         font.family: category.menu.fontFamily

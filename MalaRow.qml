@@ -48,7 +48,7 @@ Item {
   // A System entry's keyboard shortcut (Menu.systemShortcutHint) stands where
   // the trail text would, when the row has none.
   readonly property string trailShown: row.trailText.length > 0 ? row.trailText
-    : Windows.runningLabel(row.windowCount) || (row.tiled ? "" : row.menu.systemShortcutHint(row.itemId, row.kind, row.action))
+    : Windows.runningLabel(row.windowCount) || (row.tiled ? "" : row.menu.systemShortcutHint(row.itemId, row.kind, row.action).toLowerCase())
   // The row's place among those on screen, 1-9; Alt+n opens it.
   readonly property int ordinal: row.index - row.menu.firstVisibleRow + 1
   readonly property bool numbered: row.menu.numbersOnRows && row.kind !== "example" && row.ordinal >= 1 && row.ordinal <= 9

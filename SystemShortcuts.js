@@ -81,9 +81,9 @@ function hintFor(bindings, itemId, kind, action) {
   return stock[2].find(chord => names.indexOf(bindings.lua[chord]) >= 0) || ""
 }
 
-// A chord as a keycap reads it: "Super+Ctrl+L" is "SUPER+CTRL+L".
+// A chord as a keycap reads it: "Super+Ctrl+L" is "super+ctrl+l".
 function capLabel(chord) {
-  return String(chord || "").toUpperCase()
+  return String(chord || "").toLowerCase()
 }
 
 if (typeof module !== "undefined") module.exports = { bindingChord, parseBindings, hintFor, capLabel }
