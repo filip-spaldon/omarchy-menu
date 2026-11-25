@@ -522,7 +522,7 @@ Item {
               width: keys.keyW
               anchors.baseline: does.baseline
               textFormat: Text.PlainText
-              text: line.title ? "" : line.modelData.key.toUpperCase()
+              text: line.title ? "" : KeySheet.keyGlyphs(line.modelData.key).toUpperCase()
               elide: Text.ElideRight
               color: axis.ink
               opacity: 0.7

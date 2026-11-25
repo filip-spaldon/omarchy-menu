@@ -3847,7 +3847,9 @@ Item {
             root.ctrlHeld = root.tabsActive && !root.deleteConfirmOpen
             return
           }
-          root.ctrlHeld = false
+          // A Ctrl chord (Ctrl+3) keeps the numbers while Ctrl stays down;
+          // anything with another modifier, or without Ctrl, hides them.
+          root.ctrlHeld = root.ctrlHeld && event.modifiers === Qt.ControlModifier
           if (event.key === Qt.Key_Alt || event.key === Qt.Key_AltGr) {
             root.altHeld = root.tabsActive
             return

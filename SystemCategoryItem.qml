@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "SystemShortcuts.js" as SystemShortcuts
 
 // One category in the System tab's left pane. Highlighted when it is the
 // category being browsed, filled when the keyboard is in the left pane.
@@ -87,7 +88,8 @@ BorderSurface {
     elide: Text.ElideRight
     anchors.left: categoryIcon.right
     anchors.leftMargin: Style.space(6)
-    anchors.right: categoryChevron.left
+    anchors.right: categoryHint.visible ? categoryHint.left : categoryChevron.left
+    anchors.rightMargin: categoryHint.visible ? Style.space(6) : 0
     anchors.verticalCenter: parent.verticalCenter
   }
 
@@ -102,6 +104,41 @@ BorderSurface {
     anchors.right: parent.right
     anchors.rightMargin: Style.space(10)
     anchors.verticalCenter: parent.verticalCenter
+  }
+
+  // The category's own shortcut (Super+Esc on System), like the rows'.
+  readonly property string hint: category.menu.systemShortcutHint(category.modelData.itemId,
+    category.modelData.kind, category.modelData.action || "")
+  Loader {
+    id: categoryHint
+    visible: category.hint.length > 0
+    active: visible
+    anchors.right: categoryChevron.left
+    anchors.rightMargin: Style.space(6)
+    anchors.verticalCenter: parent.verticalCenter
+    sourceComponent: category.menu.shortcutCaps ? capHint : textHint
+    Component {
+      id: capHint
+      KeyCap {
+        text: SystemShortcuts.capLabel(category.hint)
+        fontSize: category.menu.scaledFont(Style.font.caption)
+        fontFamily: category.menu.fontFamily
+        ink: category.menu.foreground
+      }
+    }
+    Component {
+      id: textHint
+      Text {
+        textFormat: Text.PlainText
+        text: category.menu.shortcutCase === "upper" ? category.hint.toUpperCase()
+          : category.menu.shortcutCase === "lower" ? category.hint.toLowerCase() : category.hint
+        color: category.menu.shortcutAccent ? Color.accent : category.menu.foreground
+        opacity: category.menu.shortcutAccent ? 0.8 : 0.4
+        font.family: category.menu.fontFamily
+        font.pixelSize: category.menu.scaledFont(Style.font.caption)
+        font.letterSpacing: category.menu.shortcutSpacing
+      }
+    }
   }
 
   MouseArea {

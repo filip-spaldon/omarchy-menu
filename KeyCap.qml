@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import "KeySheet.js" as KeySheet
 
 // A key as the footer draws it: the key's name in an outlined box.
 // The footer and the System tab's shortcut hints share it.
@@ -24,7 +25,7 @@ Rectangle {
     id: label
     anchors.centerIn: parent
     textFormat: Text.PlainText
-    text: cap.text
+    text: KeySheet.keyGlyphs(cap.text)
     color: cap.ink
     opacity: 0.8
     font.family: cap.fontFamily

@@ -1458,6 +1458,10 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(SystemShortcuts.capLabel("Super+Ctrl+Shift+Space"), "super shift ^space", "ctrl goes on the key")
   eq(SystemShortcuts.capLabel("Print"), "print", "a named key is lowercase")
   eq(SystemShortcuts.capLabel(""), "", "no chord, no cap")
+  eq(SystemShortcuts.hintFor(SystemShortcuts.parseBindings(JSON.stringify([
+    { modmask: 64, key: "ESCAPE", description: "System (Omni menu)", dispatcher: "__lua", locked: false },
+    { modmask: 64, key: "ESCAPE", description: "Display off when locked", dispatcher: "__lua", locked: true }])),
+    "system", "menu", ""), "Super+Esc", "a lock-screen bind does not hide the desktop's")
 }
 
 // ---------------------------------------------------- percent and work time --
@@ -1707,14 +1711,14 @@ assert(KeySheet.CHEATSHEET.every(g => g.title && g.keys.length > 0 && g.keys.eve
   eq(caps({ tab: "files" }), ["↵", "^F", "^S", "^L", "^?"], "files keycaps without roots")
   eq(caps({ tab: "folders", hasRoots: true }), ["↵", "^F", "^R", "^S", "^L", "^?"], "^R only with search roots")
   const filesFull = KeySheet.footerText(keys({ tab: "files" }), true, false)
-  for (const k of ["alt ↵ folder", "^C path", "^T terminal"]) assert(filesFull.includes(k), "the views' files footer has " + k)
+  for (const k of ["⎇ ↵ folder", "^C path", "^T terminal"]) assert(filesFull.includes(k), "the views' files footer has " + k)
   eq(caps({ tab: "system", twoPane: true }), ["↑↓", "→", "←", "^?"], "System's two panes")
   eq(caps({ tab: "system", twoPane: true, matches: true }), ["↑↓", "→", "←", "^↑↓", "^?"], "^↑↓ while a search has matches")
   eq(caps({ tab: "windows" }), ["↵", "⇥", "^?"], "windows")
   eq(caps({ cheatOpen: true }), ["any key"], "the sheet open: any key closes it")
   eq(KeySheet.footerText(keys({ cheatOpen: true }), true, false), "any key close", "no esc hint beside any key")
   eq(caps({ altHeld: true })[0], "alt 1–9", "Alt held: what Alt does")
-  assert(KeySheet.footerText(keys({}), false, true).startsWith("↑↓ move   ↵ open   alt 1–9 jump"), "numbered rows add Alt+1…9 after Enter")
+  assert(KeySheet.footerText(keys({}), false, true).startsWith("↑↓ move   ↵ open   ⎇ 1–9 jump"), "numbered rows add Alt+1…9 after Enter")
   assert(/function footerKeys\(\)[\s\S]*?KeySheet\.coreKeys\(root\.tabKeys\(\)\)/.test(menu), "the keycaps come from tabKeys")
   assert(/function shortFooterHints\(\)[\s\S]*?KeySheet\.footerText\(root\.tabKeys\(\), false/.test(menu), "the short footer comes from tabKeys")
 
@@ -1723,7 +1727,11 @@ assert(KeySheet.CHEATSHEET.every(g => g.title && g.keys.length > 0 && g.keys.eve
   eq(KeySheet.ctrlAlone(0x01000021, 0x04000000), true, "Ctrl alone")
   eq(KeySheet.ctrlAlone(0x01000021, 0x04000000 | 0x02000000), false, "Ctrl with Shift down is a chord")
   eq(KeySheet.ctrlAlone(0x31, 0x04000000), false, "Ctrl+1 is a shortcut, not Ctrl held")
-  assert(/KeySheet\.ctrlAlone\(event\.key, event\.modifiers\)[\s\S]{0,200}return\n\s*\}\n\s*root\.ctrlHeld = false/.test(menu), "any other key clears Ctrl held")
+  assert(/root\.ctrlHeld = root\.ctrlHeld && event\.modifiers === Qt\.ControlModifier/.test(menu),
+         "a Ctrl chord keeps the numbers, any other key clears them")
+  eq(KeySheet.keyGlyphs("super alt ^C"), "❖ ⎇ ^C", "modifier glyphs")
+  eq(KeySheet.keyGlyphs("shift ↵"), "⇧ ↵", "shift glyph")
+  eq(KeySheet.keyGlyphs("ai"), "ai", "only whole modifier words")
   assert(/event\.key === Qt\.Key_Control\) root\.ctrlHeld = false/.test(menu), "releasing Ctrl clears it")
   assert(/onOpenedChanged: \{[\s\S]{0,80}root\.ctrlHeld = false/.test(menu), "closing clears it")
   assert(/numbered: root\.ctrlHeld/.test(menu), "the card's tabs show their numbers")

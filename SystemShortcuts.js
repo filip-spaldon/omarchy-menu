@@ -16,7 +16,9 @@ const STOCK = {
   "trigger.capture.screenshot": ["omarchy-capture-screenshot", "Screenshot", ["Print", "Super+Ctrl+Alt+C"]],
   "trigger.capture.text": ["omarchy-capture-text", "Extract text (OCR) from screenshot", ["Super+Ctrl+Print"]],
   "trigger.capture.color": ["pkill hyprpicker || hyprpicker -a", "Color picker", ["Super+Print"]],
-  "trigger.share": ["", "Share", ["Super+Ctrl+S"]]
+  "trigger.share": ["", "Share", ["Super+Ctrl+S"]],
+  // Omni's own binding (README) or Omarchy's: either description counts.
+  "system": ["", ["System menu", "System (Omni menu)", "System (Omni)"], ["Super+Esc"]]
 }
 
 const MODIFIERS = [[64, "Super"], [4, "Ctrl"], [8, "Alt"], [1, "Shift"], [2, "CapsLock"],
@@ -47,8 +49,13 @@ function parseBindings(text) {
   binds.forEach(bind => {
     const chord = bindingChord(bind)
     if (!chord) return
-    if (chord in chords) chords[chord] = null // Ambiguous global chord.
-    else chords[chord] = bind
+    const held = chords[chord]
+    if (held === undefined) chords[chord] = bind
+    // A lock-screen bind on the same chord (`locked`, which only acts behind
+    // the lock) does not make the desktop's bind ambiguous.
+    else if (held && held.locked && !bind.locked) chords[chord] = bind
+    else if (held && !held.locked && bind.locked) return
+    else chords[chord] = null // Ambiguous global chord.
   })
   Object.keys(chords).forEach(chord => {
     const bind = chords[chord]
@@ -70,7 +77,8 @@ function hintFor(bindings, itemId, kind, action) {
   if (kind === "action" && action && bindings.exec[action]) return bindings.exec[action]
   const stock = Object.prototype.hasOwnProperty.call(STOCK, itemId) ? STOCK[itemId] : null
   if (!stock || action !== stock[0] || kind !== (stock[0] ? "action" : "menu")) return ""
-  return stock[2].find(chord => bindings.lua[chord] === stock[1]) || ""
+  const names = Array.isArray(stock[1]) ? stock[1] : [stock[1]]
+  return stock[2].find(chord => names.indexOf(bindings.lua[chord]) >= 0) || ""
 }
 
 // A chord in the footer's notation, for a keycap: "Super+Ctrl+L" is
