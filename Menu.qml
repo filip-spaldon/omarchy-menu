@@ -691,6 +691,9 @@ Item {
   // the accent colour. ResultRow draws it (also in the full-screen views).
   property string shortcutCase: ""
   property real shortcutSpacing: 0
+  // Tab and row numbers as bare accent figures where the tabs are bare words.
+  readonly property bool numbersBare: root.tabStyle === "word" || root.lookView !== ""
+  property bool shortcutAbove: false    // the hint above the label's middle (Axis's line)
   property bool shortcutAccent: false
 
   // One State per look, all in this one group: switching from one look to
@@ -752,6 +755,7 @@ Item {
           root.tileBaseHeight: 112
           root.shortcutCase: "upper"     // spaced capitals, as its labels
           root.shortcutSpacing: 2
+          root.shortcutAbove: true
         }
       },
       // Konstrukt: every result also a Suprematist shape (KonstruktView.qml).

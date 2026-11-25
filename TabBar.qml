@@ -345,38 +345,17 @@ Item {
           readonly property string number: KeySheet.tabNumber(chip.index)
           active: bar.numbered && number !== ""
           z: 3
-          x: bar.tabStyle === "word" ? 0 : -Math.round(width * 0.25)
+          // Inside the bar on the first tab, where the bar's edge would
+          // otherwise cut the number off.
+          x: bar.tabStyle === "word" || chip.index === 0 ? 0 : -Math.round(width * 0.25)
           y: -Math.round(height * (bar.tabStyle === "word" ? 0.55 : 0.4))
-          sourceComponent: bar.tabStyle === "word" ? wordNumber : capNumber
-          Component {
-            id: capNumber
-            Rectangle {
-              width: Math.max(height, capText.implicitWidth + Style.space(6))
-              height: Math.round(bar.fontSize * 1.05)
-              radius: Style.space(4)
-              color: bar.foreground
-              Text {
-                id: capText
-                anchors.centerIn: parent
-                textFormat: Text.PlainText
-                text: KeySheet.tabNumber(chip.index)
-                color: bar.background
-                font.family: bar.fontFamily
-                font.pixelSize: Math.round(bar.fontSize * 0.8)
-                font.weight: Font.Bold
-              }
-            }
-          }
-          Component {
-            id: wordNumber
-            Text {
-              textFormat: Text.PlainText
-              text: KeySheet.tabNumber(chip.index)
-              color: Color.accent
-              font.family: bar.fontFamily
-              font.pixelSize: Math.round(bar.fontSize * 0.75)
-              font.weight: Font.DemiBold
-            }
+          sourceComponent: NumberCap {
+            number: KeySheet.tabNumber(chip.index)
+            fontSize: bar.fontSize
+            fontFamily: bar.fontFamily
+            bare: bar.tabStyle === "word"
+            ink: bar.foreground
+            paper: bar.background
           }
         }
 

@@ -110,23 +110,18 @@ BorderSurface {
   Loader {
     active: row.numbered
     z: 2
-    x: row.menu.rowReservedBorderLeft + Style.space(8) + (row.menu.iconSlotWidth - width) / 2
-    y: Math.round(row.labelCenterY - height / 2)
-    sourceComponent: Rectangle {
-      width: Math.round(row.menu.scaledFont(Style.font.iconLarge) * 0.95)
-      height: width
-      radius: Style.space(4)
-      color: row.menu.foreground
-
-      Text {
-        anchors.centerIn: parent
-        textFormat: Text.PlainText
-        text: String(row.ordinal)
-        color: row.menu.background
-        font.family: row.menu.fontFamily
-        font.pixelSize: row.menu.scaledFont(Style.font.body)
-        font.weight: Font.Bold
-      }
+    // The same number as the tabs' Ctrl+1…9 (NumberCap), on the icon's
+    // top left corner.
+    x: row.menu.rowReservedBorderLeft + Style.space(8) + (row.menu.iconSlotWidth - row.menu.scaledFont(Style.font.iconLarge)) / 2
+      - Math.round(width * 0.3)
+    y: Math.round(row.labelCenterY - row.menu.scaledFont(Style.font.iconLarge) / 2 - height * 0.4)
+    sourceComponent: NumberCap {
+      number: String(row.ordinal)
+      fontSize: row.menu.scaledFont(Style.font.body)
+      fontFamily: row.menu.fontFamily
+      bare: row.menu.numbersBare
+      ink: row.menu.foreground
+      paper: row.menu.background
     }
   }
 
@@ -267,7 +262,11 @@ BorderSurface {
         visible: text.length > 0 && implicitWidth + labelLine.gap <= parent.width * 0.6
         width: implicitWidth
         anchors.right: parent.right
-        anchors.baseline: labelText.baseline
+        // Axis draws its line through the label's middle: the hint sits
+        // above it there instead of across it.
+        anchors.baseline: row.menu.shortcutAbove ? undefined : labelText.baseline
+        anchors.bottom: row.menu.shortcutAbove ? labelText.verticalCenter : undefined
+        anchors.bottomMargin: row.menu.shortcutAbove ? Style.space(3) : 0
         // In the look's type (Menu.shortcutCase / Spacing / Accent): Axis's
         // spaced capitals, Konstrukt's spaced lowercase readout.
         text: row.menu.shortcutCase === "upper" ? row.shortcutHint.toUpperCase()
