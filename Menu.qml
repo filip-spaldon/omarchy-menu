@@ -8,6 +8,8 @@ import qs.Commons as Commons
 import qs.Ui
 import "Settings.js" as Settings
 import "MenuModel.js" as MenuModel
+import "KeySheet.js" as KeySheet
+import "Looks.js" as Looks
 import "Tabs.js" as Tabs
 import "AllTiles.js" as AllTiles
 import "Pinned.js" as Pinned
@@ -178,7 +180,7 @@ Item {
   property bool zoxideAdd: true
   // All with nothing typed is just the search field and the tab chips: the
   // card is a prompt, and picking a tab or typing is what opens it up.
-  readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim()
+  readonly property bool compact: root.tabsActive && root.activeTab === "all" && !root.filterText.trim() && !root.cheatOpen
 
   // System as two panes, like a settings app: the top-level categories on the
   // left, the highlighted category's items on the right, updating as the
@@ -244,9 +246,24 @@ Item {
   // of the rows on show ([] when none is a tile), set by rebuildDisplay.
   property string allAppsView: "list"
   property var allTiles: []
+  readonly property bool allTilesShown: root.allTiles.length > 0
+  // An app tile's size, per look (lookStates): the Apps grid's cells and
+  // All's strips both use it.
+  property int tileBaseWidth: 112
+  property int tileBaseHeight: 104
+  readonly property int tileWidth: Math.round(Style.space(root.tileBaseWidth) * root.menuFontScale)
+  readonly property int tileHeight: Math.round(Style.space(root.tileBaseHeight) * root.menuFontScale)
+  // A full-screen view lays the tiles out in its own column (its
+  // tileAreaWidth) and says how many fit across its grid (gridColumns).
+  readonly property real tileAreaWidth: root.overlayActive && lookViewLoader.item && lookViewLoader.item.tileAreaWidth > 0
+    ? lookViewLoader.item.tileAreaWidth : resultList.width
+  readonly property int gridColumns: root.overlayActive && lookViewLoader.item && lookViewLoader.item.gridColumns > 0
+    ? lookViewLoader.item.gridColumns : appGrid.columns
+  // The pinned strip's rows end padded to whole rows of the grid on show.
+  onGridColumnsChanged: if (root.gridActive && root.pinnedCount > 0) root.rebuildDisplay(true)
   // Tiles as wide as the Apps grid's at least, stretched to fill the row.
-  readonly property int allTileColumns: Math.max(1, Math.floor(resultList.width / Math.max(1, Math.round(Style.space(112) * root.menuFontScale))))
-  readonly property int allTileHeight: Math.round(Style.space(104) * root.menuFontScale)
+  readonly property int allTileColumns: Math.max(1, Math.floor(root.tileAreaWidth / Math.max(1, root.tileWidth)))
+  readonly property int allTileHeight: root.tileHeight
   // The strips and the Apps section's size follow the column count. (A new
   // allAppsView arrives with a state.json read, which rebuilds anyway.)
   onAllTileColumnsChanged: if (root.allTiles.length > 0 && !root.dmenuActive) root.rebuildDisplay(true)
@@ -415,6 +432,9 @@ Item {
   property bool deleteConfirmOpen: false
   property var deleteTarget: null
   onOpenedChanged: {
+    root.altHeld = false
+    root.ctrlHeld = false
+    root.cheatOpen = false
     if (opened) return
     root.perfRouteStart = 0
     root.rootShortcutReturnTab = ""
@@ -425,6 +445,10 @@ Item {
     // Otherwise the next open would show where the card went last time.
     positionHintEnd.stop()
     root.positionHint = ""
+    if (root.lookSwitched) {
+      root.lookSwitched = false
+      settingsStore.saveStyle("look", root.look)
+    }
     deleteConfirmOpen = false
     deleteTarget = null
     answerEngine.utilityAnswers = ({})
@@ -451,6 +475,22 @@ Item {
   property color selectedText: Color.menu.selectedText
   property color selectedBorder: Color.menu.selectedBorder
   property var selectedBorderSpec: Border.surfaceSpec("menu", "selected-border", selectedBorder, 0)
+  // The selection mark (result rows, System categories): a theme's own
+  // [menu] selected-* colours when it sets them, else an accent tint and edge.
+  // Every theme's shell.toml carries these keys from Omarchy's template, so
+  // "sets" means differs from the template's value (foreground at 0.08,
+  // accent, the active border at 0.25).
+  function themeSets(key, templateValue, templateAlpha) {
+    var v = Color.shellValues["menu." + key]
+    if (typeof v !== "string" || v.length === 0) return false
+    var a = Color.shellValues["menu." + key + "-alpha"]
+    var sameAlpha = a === undefined || Number(a) === templateAlpha
+    var sameValue = typeof templateValue === "string" ? v === templateValue : Qt.colorEqual(v, templateValue)
+    return !(sameValue && sameAlpha)
+  }
+  readonly property color selectionFill: root.themeSets("selected-background", Color.foreground, 0.08) ? root.selectedBackground : Util.alpha(Color.accent, 0.13)
+  readonly property color selectionEdge: root.themeSets("selected-border", "hyprland.active-border-foreground", 0.25) ? root.selectedBorder : Color.accent
+  readonly property color selectionText: root.themeSets("selected-text", Color.accent, undefined) ? root.selectedText : root.foreground
   // --- Look ------------------------------------------------------------------
   // The dials this fork adds on top of the stock geometry. Everything below
   // derives from them, so a redesign is an edit here rather than a hunt
@@ -575,8 +615,311 @@ Item {
 
   readonly property int sectionHeaderHeight: root.scaledFont(Style.font.caption) + Style.space(14)
 
+  // A row's label with the query's match in the accent colour (or as the
+  // look marks it: full ink, underlined), or "" when
+  // nothing matches. Everything else in the label is escaped
+  // (MenuModel.highlight). Worked out once per row as the row goes into
+  // displayModel (its "marked" role), not by a binding in ResultRow: such a
+  // binding follows filterText, so on every keystroke the rows about to be
+  // cleared worked out and laid out their labels again before the new rows
+  // did the same -- the match paid for twice. And a delegate that imports a
+  // .js file evaluates the whole file again for every row.
+  readonly property string matchOpen: (root.matchUnderline ? "<u>" : "") + "<font color=\"" + (root.matchInk ? root.foreground : Color.accent) + "\">"
+  readonly property string matchClose: "</font>" + (root.matchUnderline ? "</u>" : "")
+  function markRow(row) {
+    row.marked = !root.filterText || row.kind === "example" ? ""
+      : MenuModel.highlight(row.label, root.filterText, root.matchOpen, root.matchClose)
+    return row
+  }
+
+  // A look switch while open (Alt+L) can change how the match is marked:
+  // mark the rows on show again.
+  function remarkRows() {
+    for (var i = 0; i < displayModel.count; i++) {
+      var row = displayModel.get(i)
+      displayModel.setProperty(i, "marked", root.markRow({ label: row.label, kind: row.kind }).marked)
+    }
+  }
+
+  // style.json "look" (Looks.js): which design the launcher draws. dmenu
+  // pickers always draw classic. Alt+L / Alt+Shift+L switch it live; the
+  // switch is saved when the menu closes.
+  property string look: Looks.DEFAULT_LOOK
+  property bool lookSwitched: false
+  readonly property string drawnLook: root.dmenuActive ? Looks.DEFAULT_LOOK : root.look
+  function switchLook(event) {
+    if (!root.tabsActive || !(event.modifiers & Qt.AltModifier) || event.key !== Qt.Key_L) return false
+    root.look = Looks.cycleLook(root.look, (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
+    root.lookSwitched = true
+    root.remarkRows()
+    return true
+  }
+
+  // What a look can change. Classic is these defaults; each other look sets
+  // what it changes in its State in lookStates below, and draws whatever
+  // only it has next to the classic piece it changes.
+  property string lookRows: ""            // a row file of its own (classic rows then carry nothing of it)
+  property bool alwaysNumbered: false     // rows always numbered; its rows show the numbers
+  property bool selectionTint: true       // the gliding tint and edge on the selection
+  property bool shortFooter: false        // three hints as text instead of keycaps
+  property bool hairlineFrame: false      // a hairline instead of the theme's border
+  property bool matchInk: false           // the match in full ink instead of the accent
+  property bool matchUnderline: false     // the match underlined
+  property bool searchGlyph: true         // the magnifier before the query
+  property real queryScale: 1             // the query's size against the heading font
+  property bool counts: true              // totals in section headers and on the tabs
+  property bool quietMeta: false          // no match or result counters
+  property string tabStyle: "chip"        // TabBar.qml
+  property string tabCase: "title"
+  property string filterTabStyle: root.tabStyle  // the Files / Folders filter row
+  property bool headerLower: false        // section headers in lowercase
+  property real headerOpacity: 0.45
+  property int headerWeight: Font.DemiBold
+  property real headerSpacing: 1
+  property int headerIndent: root.rowReservedBorderLeft + Style.space(10)
+  property bool categoryIcons: true       // System category icons
+  property real categoryDim: 0.8          // System category labels when not picked
+  // A full-screen view drawn instead of the card, for the result lists,
+  // System's two panes and the "?" key sheet (its file, made with menu and
+  // model). For what it has no design for (AI answers, commands) the card
+  // comes back.
+  property string lookView: ""
+  readonly property bool overlayActive: root.lookView !== "" && root.tabsActive && !aiCtl.isAiMode
+    && !root.commandMode
+  // A System entry's keyboard shortcut, in the look's type: its case
+  // ("upper", "lower" or as written), letter spacing and whether it is in
+  // the accent colour. ResultRow draws it (also in the full-screen views).
+  property string shortcutCase: ""
+  property real shortcutSpacing: 0
+  // Tab and row numbers as bare accent figures where the tabs are bare words.
+  readonly property bool numbersBare: root.tabStyle === "word" || root.lookView !== ""
+  // System hints as the footer's keycaps: the card's own look (classic).
+  readonly property bool shortcutCaps: root.drawnLook === "classic"
+  property bool shortcutAbove: false    // the hint above the label's middle (Axis's line)
+  property bool shortcutAccent: false
+
+  // One State per look, all in this one group: switching from one look to
+  // another then never leaves the first one's values behind.
+  StateGroup {
+    id: lookStates
+    states: [
+      // Mala: one quiet column of text.
+      State {
+        when: root.drawnLook === "mala"
+        PropertyChanges {
+          root.lookRows: "MalaRow.qml"   // no icons, numbers in the margin
+          root.alwaysNumbered: true      // Alt+1…9 opens one
+          root.selectionTint: false      // the bead instead
+          root.shortFooter: true
+          root.hairlineFrame: true
+          root.matchInk: true            // full ink against dimmed text
+          root.searchGlyph: false
+          root.queryScale: 1.25
+          root.counts: false
+          root.quietMeta: true
+          root.tabStyle: "word"
+          root.tabCase: "lower"
+          root.headerLower: true
+          root.headerOpacity: 0.4
+          root.headerWeight: Font.Normal
+          root.headerSpacing: 2
+          root.headerIndent: root.rowReservedBorderLeft + Style.space(30)
+          root.categoryIcons: false
+          root.categoryDim: 0.55
+          root.tileBaseWidth: 160         // names only, a grid of words
+          root.tileBaseHeight: 44
+        }
+      },
+      // Wayfinder: the results as a transit map.
+      State {
+        when: root.drawnLook === "wayfinder"
+        PropertyChanges {
+          root.lookRows: "WayfinderRow.qml"  // stops, map references
+          root.alwaysNumbered: true          // the references are Alt+n
+          root.selectionTint: false          // the row is filled instead
+          root.shortFooter: true
+          root.hairlineFrame: true           // with crop marks
+          root.matchUnderline: true
+          root.tabStyle: "station"           // stops on a line
+          root.filterTabStyle: "word"
+          root.headerSpacing: 2
+          root.headerIndent: Style.space(30) // after the interchange hexagon
+          root.tileBaseWidth: 124            // stops on a line
+          root.tileBaseHeight: 116
+        }
+      },
+      // Axis: no card, two hairlines across the screen (AxisView.qml).
+      State {
+        when: root.drawnLook === "axis"
+        PropertyChanges {
+          root.lookView: "AxisView.qml"
+          root.tileBaseWidth: 132
+          root.tileBaseHeight: 112
+          root.shortcutCase: "upper"     // spaced capitals, as its labels
+          root.shortcutSpacing: 2
+          root.shortcutAbove: true
+        }
+      },
+      // Konstrukt: every result also a Suprematist shape (KonstruktView.qml).
+      State {
+        when: root.drawnLook === "konstrukt"
+        PropertyChanges {
+          root.lookView: "KonstruktView.qml"
+          root.tileBaseWidth: 156
+          root.tileBaseHeight: 46
+          root.shortcutCase: "lower"     // its readouts: lowercase, spaced, accent
+          root.shortcutSpacing: 2
+          root.shortcutAccent: true
+        }
+      },
+    ]
+  }
+
+  // Alt is down (the rows are numbered while it is), Ctrl alone is down
+  // (the tabs show their Ctrl+1…9 numbers while it is), the "?" key sheet is
+  // open, and the All tab's per-section totals before the cap (tab counts).
+  property bool altHeld: false
+  property bool ctrlHeld: false
+  property bool cheatOpen: false
+  property var allSectionTotals: ({})
+
+  // The result row that has the cursor, for the selection marker; cleared
+  // when that row goes away.
+  property Item cursorRow: null
+
+  // Rows are numbered while Alt is held, or always in a look that says so.
+  readonly property bool numbersRows: root.altHeld || root.alwaysNumbered
+  // The first row on screen, so the numbers follow the scroll. Only looked
+  // up while rows are numbered: nothing else reads it.
+  property int firstVisibleRow: 0
+  onNumbersRowsChanged: if (numbersRows) updateFirstVisibleRow()
+  function updateFirstVisibleRow() {
+    if (!root.numbersRows) return
+    var y = resultList.contentY
+    var found = -1
+    // A section header can sit at the top edge; step past it.
+    for (var dy = 1; dy < root.sectionHeaderHeight + root.baseRowHeight && found < 0; dy += 4)
+      found = resultList.indexAt(Style.space(40), y + dy)
+    root.firstVisibleRow = Math.max(0, found)
+  }
+
+  // Alt+1…9 numbers one level at a time: in System's two panes the
+  // categories first, Alt+n opens one and the numbers move to its items;
+  // a submenu opened that way is numbered in turn.
+  readonly property bool categoryNumbers: root.systemTwoPane && root.systemPane === "left"
+  readonly property bool numbersOnRows: !root.categoryNumbers
+
+  // Alt+1…9 opens the row shown with that number.
+  function jumpToNumber(event) {
+    if (!root.tabsActive || !(event.modifiers & Qt.AltModifier)) return false
+    if (event.key < Qt.Key_1 || event.key > Qt.Key_9 || root.gridActive || aiCtl.isAiMode) return false
+    if (root.categoryNumbers) {
+      var category = event.key - Qt.Key_1
+      if (category >= root.systemCategories.length) return true
+      root.selectSystemCategory(category)
+      root.activateSystemCategory()
+      return true
+    }
+    var index = KeySheet.rowForNumber(root.firstVisibleRow, displayModel.count, event.key - Qt.Key_0)
+    if (index < 0) return true
+    root.cursorActive = true
+    root.selectedIndex = index
+    root.activateIndex(index, false)
+    return true
+  }
+
+  // What the current tab can do (KeySheet.tabKeys), the one list every
+  // footer is cut from: the card's keycaps, the short text footer and the
+  // full-screen views' footers.
+  function tabKeys() {
+    var app = root.activeTab === "apps" ? root.selectedAppRow() : null
+    return KeySheet.tabKeys({
+      tab: root.activeTab,
+      cheatOpen: root.cheatOpen,
+      altHeld: root.altHeld,
+      twoPane: root.systemTwoPane,
+      matches: root.systemTwoPane && !!root.filterText.trim() && root.systemMatches.length > 1,
+      pinned: !!app && Pinned.isPinned(root.pinnedApps, app.appId),
+      canReorder: !!app && app.section === root.pinnedSection && root.pinnedCount > 1,
+      appsView: root.appsView,
+      allAppsView: root.allAppsView,
+      hasRoots: fileCtl.hasRoots
+    })
+  }
+
+  // The footer: [key, what it does] pairs, drawn as keycaps: the tab's core
+  // keys. Alt held shows what Alt does instead. Empty: fall back to the text
+  // footer.
+  function footerKeys() {
+    // Where the card went (Alt+arrows) shows as text for a moment instead.
+    if (settingsStore.error || root.positionHint || answerEngine.killActive || root.commandMode || root.shortFooter
+        || root.formEditing || root.answerForm) return []
+    return KeySheet.coreKeys(root.tabKeys())
+  }
+
+  // For the full-screen views, which draw the same controls in their own
+  // style: the file search, the result count, and whether the Files bar shows.
+  readonly property var fileSearch: fileCtl
+  readonly property var clipboardSearch: clipboardCtl
+  // Wayfinder's selection marker, train and stop ring share one duration.
+  readonly property int wayfinderMoveMs: 140
+  readonly property bool clipboardBarShown: root.tabsActive && !aiCtl.isAiMode && !root.commandMode
+    && root.activeTab === "clipboard"
+  readonly property int resultCount: displayModel.count
+  readonly property bool fileBarShown: root.tabsActive && !aiCtl.isAiMode && !root.commandMode
+    && (root.activeTab === "files" || root.activeTab === "folders")
+  // What an empty result list says instead ("No matches for …"), or "" while
+  // there are rows. The card and the full-screen views draw the same words.
+  readonly property string emptyText: displayModel.count > 0 || root.mode === "input" || aiCtl.isAiMode || root.systemTwoPane ? ""
+    : root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
+    : fileCtl.fileSearching ? "Searching…"
+    : root.activeTab === "clipboard" && root.tabsActive && clipboardCtl.emptyText() ? clipboardCtl.emptyText()
+    : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
+  function refocus() { Qt.callLater(function() { keyCatcher.forceActiveFocus() }) }
+
+  // "+4 in Files ⇥": what All's five-row cap left out of a section, and the
+  // way there. Empty when nothing was left out. Every look draws it.
+  function sectionMore(section) {
+    var total = Tabs.headerTotal(section)
+    var hidden = total - Math.min(total, root.allSectionLimit)
+    return hidden > 0 && root.activeTab === "all" ? "+" + hidden + " in " + Tabs.headerTitle(section) + "  ⇥" : ""
+  }
+
+  // Tab chip counts: what All's sections found, shown while All searches.
+  readonly property var foundCounts: {
+    if (!root.counts || root.activeTab !== "all" || !root.filterText.trim() || aiCtl.isAiMode) return ({})
+    // Only tabs that found something: "0" and All's own total add width
+    // without telling you where to go.
+    var out = ({})
+    for (var id in root.allSectionTotals) if (root.allSectionTotals[id] > 0) out[id] = root.allSectionTotals[id]
+    return out
+  }
+  // What the chips show: replaced only when a count changed. A new object
+  // on every keystroke and rebuild re-ran each chip's count, its width and
+  // the bar's fit check, though the counts were mostly the same.
+  property var tabCounts: ({})
+  onFoundCountsChanged: if (!Tabs.sameCounts(root.foundCounts, root.tabCounts)) root.tabCounts = root.foundCounts
+
   // The key hints under the results, for what the current tab can do.
   function footerHints() {
+    if (root.shortFooter) return root.shortFooterHints()
+    return root.fullFooterHints()
+  }
+
+  // A short footer: the tab's core keys as text. The rest are in the
+  // full-screen views' footers and on the "?" sheet.
+  function shortFooterHints() {
+    if (answerEngine.killActive || root.commandMode || root.formEditing || root.answerForm) return root.fullFooterHints()
+    return KeySheet.footerText(root.tabKeys(), false, root.alwaysNumbered)
+  }
+
+  // A full-screen view's footer: every key of the tab, as text.
+  function viewFooterHints() {
+    if (answerEngine.killActive || root.commandMode || root.formEditing || root.answerForm) return root.fullFooterHints()
+    return KeySheet.footerText(root.tabKeys(), true, false)
+  }
+
+  function fullFooterHints() {
     if (root.formEditing) return "Tab next field · type to edit · ↑↓ step · Enter copy · Esc text"
     if (root.answerForm) return "Tab edit values · Enter copy · Esc clear"
     if (answerEngine.killActive)
@@ -593,13 +936,14 @@ Item {
     if (root.activeTab === "windows")
       return "Enter go to window · type to filter by title, app or workspace · Tab next tab · Esc close"
     if (root.activeTab === "clipboard")
-      return "Enter paste · Ctrl+C copy · Ctrl+O open · Ctrl+F type · Tab next tab · Esc close"
+      return "Enter paste · Ctrl+C copy · Ctrl+O open · Ctrl+F type · Tab next tab · Ctrl+? all keys · Esc close"
     if (root.activeTab === "files" || root.activeTab === "folders")
       return "Enter open · Alt+Enter folder · Ctrl+C copy path · Ctrl+T terminal\nCtrl+F type · "
         + (fileCtl.hasRoots ? "Ctrl+R where · " : "") + "Ctrl+S sort · Ctrl+L limit · Tab next tab · Esc close"
     if (root.activeTab === "system")
       return root.systemTwoPane
-        ? "↑↓ browse · →/Enter open · ← back · type to search · Tab next tab · Esc close"
+        ? "↑↓ browse · →/Enter open · ← back · type to search" + (root.systemMatches.length > 1 && root.filterText.trim() ? " · Ctrl+↑↓ next match" : "")
+          + " · Tab next tab · Esc close"
         : "Enter open · ←/Backspace back · Tab next tab · Esc close"
     return (root.allTiles.length > 0 ? "↑↓←→ move" : "↑↓ move") + " · Enter open · Ctrl+G apps "
       + (root.allAppsView === "grid" ? "list" : "grid") + " · Tab next tab · ai <question> ask AI · Esc close"
@@ -629,8 +973,13 @@ Item {
   readonly property real rowReservedBorderLeft: Border.left(selectedBorderSpec)
   readonly property real rowReservedBorderRight: Border.right(selectedBorderSpec)
   readonly property int cornerRadius: Style.cornerRadius
+  // Rows and the selection use about two thirds of the card's radius.
+  readonly property int rowRadius: Math.round(root.cornerRadius * 0.65)
   property int contentMargin: Style.spacing.panelPadding
-  property int headerHeight: Math.max(Math.round(Style.space(34) * root.menuFontScale), root.scaledFont(Style.font.title) + Style.spacing.controlPaddingY * 2)
+  property int headerHeight: Math.max(Math.round(Style.space(34) * root.menuFontScale), root.scaledFont(Style.font.title) + Style.spacing.controlPaddingY * 2,
+    Math.round(root.queryFontSize * 1.6))
+  // The query's size: the heading font, scaled by the look.
+  readonly property int queryFontSize: Math.round(root.scaledFont(Style.font.heading) * root.queryScale)
   property int contentSpacing: Style.spacing.md
   property int baseRowHeight: Math.max(root.menuRowFloor, root.scaledFont(Style.font.body) + Style.spacing.rowPaddingX * 2)
   property int detailRowHeight: Math.max(root.menuDetailRowFloor, root.scaledFont(Style.font.body) + root.scaledFont(Style.font.caption) + Style.spacing.rowPaddingX * 2)
@@ -649,7 +998,7 @@ Item {
   // A fitted body still takes the full height for the grid and AI answers,
   // whose size is not a row count.
   readonly property int desiredRowsHeight: root.compact ? 0
-    : (root.launcherFixedHeight || root.gridActive || aiCtl.isAiMode || root.systemTwoPane
+    : (root.launcherFixedHeight || root.cheatOpen || root.gridActive || aiCtl.isAiMode || root.systemTwoPane
         ? root.launcherBodyHeight
         : Math.min(root.launcherBodyHeight, Math.max(root.baseRowHeight * 3,
             rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider))))
@@ -659,7 +1008,6 @@ Item {
   readonly property int launcherChromeHeight: Math.ceil(cardInsets) + headerHeight
     + (tabBar.visible ? contentSpacing + tabBar.height : 0)
     + (fileBar.visible ? contentSpacing + fileBar.height : 0)
-    + (clipboardBar.visible ? contentSpacing + clipboardBar.height : 0)
     + (desiredRowsHeight > 0 ? contentSpacing : 0)
     + (footer.visible ? contentSpacing + Math.ceil(footer.implicitHeight) : 0)
   MenuGeometry {
@@ -783,15 +1131,24 @@ Item {
     return totals[full - 1] + root.rowSpacing + peek
   }
 
+  // The rows on show, as syncDisplayModel last put them in displayModel. Read
+  // by rowListHeight instead of the model: reading a row through
+  // displayModel.get() makes the card's height depend on that row, so every
+  // row set in place re-ran this walk over all rows, a dozen times a
+  // keystroke. Its arguments say when to measure again: layoutSerial moves
+  // after every rebuild.
+  readonly property var shownRows: ({ rows: [] })
+
   function rowListHeight(_serial, _count, _filter, _divider) {
-    if (displayModel.count === 0) return root.baseRowHeight
+    var rows = root.shownRows.rows
+    if (rows.length === 0) return root.baseRowHeight
 
     var totals = []
     var total = 0
     var previousSection = ""
 
-    for (var i = 0; i < displayModel.count; i++) {
-      var row = displayModel.get(i)
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i]
       if (i > 0) total += root.rowSpacing
       if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
       total += root.allTiles[i] ? root.allTileRowHeight(i) : root.rowHeightForDetail(row.detail, row.kind, row.imagePath)
@@ -1857,7 +2214,7 @@ Item {
       var detail = parts.join("\t")
       if (query && label.toLowerCase().indexOf(query) < 0
           && detail.toLowerCase().indexOf(query) < 0) continue
-      rows.push(MenuModel.sanitizeRow({
+      rows.push(root.markRow(MenuModel.sanitizeRow({
         itemId: "dmenu." + i,
         disabled: false,
         kind: "dmenu",
@@ -1877,7 +2234,7 @@ Item {
         score: i,
         section: "",
         trailText: ""
-      }))
+      })))
     }
     root.syncDisplayModel(rows)
 
@@ -2029,6 +2386,7 @@ Item {
     if (!query) return []
 
     var sections = []
+    var totals = ({})
     var order = Tabs.orderSections(root.allSectionOrder)
     for (var i = 0; i < order.length; i++) {
       var id = order[i].id
@@ -2041,7 +2399,9 @@ Item {
       // As tiles, Apps fills up to AllTiles.ROWS strips instead.
       var limit = id === "apps" && root.allAppsView === "grid" ? AllTiles.ROWS * root.allTileColumns : 0
       sections.push({ title: order[i].title, rows: sectionRows, limit: limit })
+      totals[id] = sectionRows.length
     }
+    if (!Tabs.sameCounts(totals, root.allSectionTotals)) root.allSectionTotals = totals
     var rows = root.plainAnswerRows(query).concat(Tabs.composeSections(sections, root.allSectionLimit))
 
     if (rows.length === 0) {
@@ -2057,6 +2417,7 @@ Item {
   // row's value.
   property var displayRoles: ({})
   function syncDisplayModel(rows) {
+    root.shownRows.rows = rows
     MenuModel.syncRows(displayModel, rows, root.displayRoles)
   }
 
@@ -2101,6 +2462,7 @@ Item {
     if (!root.rowsLoaded) {
       root.refreshAnswerForm([])
       root.allTiles = tiles
+      root.shownRows.rows = []
       displayModel.clear()
       if (start) root.recordRebuild(start)
       return
@@ -2137,7 +2499,7 @@ Item {
       var pinned = query ? [] : root.pinnedRows()
       pinnedCount = pinned.length
       if (pinnedCount > 0 && root.appsView === "grid") {
-        var pad = Pinned.gridPadding(pinnedCount, appGrid.columns)
+        var pad = Pinned.gridPadding(pinnedCount, root.gridColumns)
         for (var p = 0; p < pad; p++) pinned.push(Pinned.padRow(p, root.pinnedSection))
       }
       rows = pinned.concat(rows)
@@ -2159,7 +2521,7 @@ Item {
 
     // Sanitized here rather than in each builder: this is the one place
     // every row passes through on its way to the ListView.
-    for (var k = 0; k < rows.length; k++) MenuModel.sanitizeRow(rows[k])
+    for (var k = 0; k < rows.length; k++) rows[k] = root.markRow(MenuModel.sanitizeRow(rows[k]))
     // Before the sync, so a delegate made for a tile row already sees it.
     root.allTiles = tiles
     root.pinnedCount = pinnedCount
@@ -3415,7 +3777,9 @@ Item {
 
     Rectangle {
       anchors.fill: parent
-      color: root.scrim
+      // A full-screen view has no card to read against: the desktop is
+      // covered by the theme background instead of dimmed.
+      color: root.overlayActive ? Qt.rgba(root.background.r, root.background.g, root.background.b, 1) : root.scrim
     }
 
     MouseArea {
@@ -3430,12 +3794,34 @@ Item {
       radius: root.cornerRadius
       x: panel.effectiveCardLeft
       y: panel.effectiveCardTop
+      // Under a full-screen view the card is not drawn but stays alive: it
+      // keeps the keyboard, so every key works the same in every look.
+      opacity: root.overlayActive ? 0 : 1
       // Curve and length from style.json (root.moveAnim).
       Behavior on x { enabled: root.launcherMoving; NumberAnimation { duration: root.launcherMoveMs; easing.type: root.launcherMoveEasing } }
       Behavior on y { enabled: root.launcherMoving; NumberAnimation { duration: root.launcherMoveMs; easing.type: root.launcherMoveEasing } }
       color: root.background
-      borderSpec: root.borderSpec
+      borderSpec: root.hairlineFrame ? Border.flat(Util.alpha(root.foreground, 0.14), 1) : root.borderSpec
       padding: root.contentMargin
+
+      // Wayfinder: crop marks at the corners, as on a printed map sheet.
+      Repeater {
+        model: root.drawnLook === "wayfinder" ? 4 : 0
+        Item {
+          id: cropMark
+          required property int index
+          readonly property bool atRight: index === 1 || index === 3
+          readonly property bool atBottom: index >= 2
+          readonly property int arm: Style.space(12)
+          readonly property int gap: Style.space(5)
+          x: atRight ? card.width + gap - arm : -gap
+          y: atBottom ? card.height + gap - arm : -gap
+          width: arm
+          height: arm
+          Rectangle { width: cropMark.arm; height: 2; y: cropMark.atBottom ? cropMark.arm - 2 : 0; color: Color.accent }
+          Rectangle { width: 2; height: cropMark.arm; x: cropMark.atRight ? cropMark.arm - 2 : 0; color: Color.accent }
+        }
+      }
 
       MouseArea { anchors.fill: parent; onClicked: {} }
 
@@ -3446,7 +3832,28 @@ Item {
         focus: true
 
         Keys.priority: Keys.BeforeItem
+        // Focus gone (a dialog, the window losing the keyboard): the releases
+        // never come, so nothing stays held.
+        onActiveFocusChanged: if (!activeFocus) { root.altHeld = false; root.ctrlHeld = false }
+        Keys.onReleased: function(event) {
+          if (event.key === Qt.Key_Alt || event.key === Qt.Key_AltGr) root.altHeld = false
+          if (event.key === Qt.Key_Control) root.ctrlHeld = false
+        }
+
         Keys.onPressed: function(event) {
+          // Ctrl alone shows the tabs' Ctrl+1…9 numbers; any other key (the
+          // rest of a Ctrl chord too) hides them and goes on as usual.
+          if (KeySheet.ctrlAlone(event.key, event.modifiers)) {
+            root.ctrlHeld = root.tabsActive && !root.deleteConfirmOpen
+            return
+          }
+          // A Ctrl chord (Ctrl+3) keeps the numbers while Ctrl stays down;
+          // anything with another modifier, or without Ctrl, hides them.
+          root.ctrlHeld = root.ctrlHeld && event.modifiers === Qt.ControlModifier
+          if (event.key === Qt.Key_Alt || event.key === Qt.Key_AltGr) {
+            root.altHeld = root.tabsActive
+            return
+          }
           if (root.deleteConfirmOpen) {
             // Swallow the rest too, or it would type into the search line behind the dialog.
             deleteConfirm.handleKey(event)
@@ -3454,7 +3861,32 @@ Item {
             return
           }
 
+          // Ctrl+? shows every key; any key closes it again.
+          if (root.cheatOpen) {
+            if (!KeySheet.closesSheet(event.key)) return
+            root.cheatOpen = false
+            event.accepted = true
+            return
+          }
+          // Ctrl+? (Ctrl+Shift+/): plain "?" stays a character in the query.
+          if ((event.modifiers & Qt.ControlModifier) && root.tabsActive && !aiCtl.isAiMode
+              && (event.key === Qt.Key_Question || (event.key === Qt.Key_Slash && (event.modifiers & Qt.ShiftModifier)))) {
+            root.cheatOpen = true
+            event.accepted = true
+            return
+          }
+
           if (root.moveLauncher(event)) {
+            event.accepted = true
+            return
+          }
+
+          if (root.switchLook(event)) {
+            event.accepted = true
+            return
+          }
+
+          if (root.jumpToNumber(event)) {
             event.accepted = true
             return
           }
@@ -3606,7 +4038,7 @@ Item {
             event.accepted = true
           } else if (root.gridActive && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
                      || event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
-            var cols = appGrid.columns
+            var cols = root.gridColumns
             root.gridMove(event.key === Qt.Key_Left ? -1 : event.key === Qt.Key_Right ? 1
                           : event.key === Qt.Key_Up ? -cols : cols)
             event.accepted = true
@@ -3686,6 +4118,12 @@ Item {
           spacing: root.contentSpacing
 
           Rectangle {
+            // Under a full-screen view the card is not drawn, and its query
+            // row and results area are hidden too, so they are not laid out
+            // and synced on every keystroke for nothing. Only these two:
+            // the tabs and footer feed the card's size (by their visible),
+            // and the card must come back (the ? sheet, AI) where it was.
+            visible: !root.overlayActive
             width: parent.width
             height: root.headerHeight
             radius: root.cornerRadius
@@ -3694,7 +4132,7 @@ Item {
             Text {
               id: viewToggle
               textFormat: Text.PlainText
-              visible: root.tabsActive && (root.activeTab === "apps" || (root.activeTab === "all" && !root.compact && !root.commandMode))
+              visible: root.tabsActive && !root.cheatOpen && (root.activeTab === "apps" || (root.activeTab === "all" && !root.compact && !root.commandMode))
               text: (root.activeTab === "all" ? root.allAppsView : root.appsView) === "grid" ? "󰕰" : "󰈚"
               color: root.foreground
               opacity: viewToggleMouse.containsMouse ? 0.9 : 0.5
@@ -3720,7 +4158,7 @@ Item {
             Text {
               id: searchGlyph
               textFormat: Text.PlainText
-              visible: root.tabsActive
+              visible: root.tabsActive && root.searchGlyph
               text: "󰍉"
               color: root.foreground
               opacity: 0.6
@@ -3777,9 +4215,9 @@ Item {
             Text {
               id: searchText
               textFormat: Text.PlainText
-              anchors.left: root.tabsActive ? searchGlyph.right : parent.left
+              anchors.left: searchGlyph.visible ? searchGlyph.right : parent.left
               // Empty: the placeholder starts after the cursor block.
-              anchors.leftMargin: root.tabsActive ? Style.space(10) : 0
+              anchors.leftMargin: searchGlyph.visible ? Style.space(10) : 0
               anchors.right: viewToggle.visible ? viewToggle.left : parent.right
               anchors.rightMargin: viewToggle.visible ? Style.space(8) : 0
               anchors.verticalCenter: parent.verticalCenter
@@ -3790,7 +4228,8 @@ Item {
               // Kept for its layout while a form draws the line instead.
               opacity: root.answerForm ? 0 : root.filterText ? 1 : 0.58
               font.family: root.fontFamily
-              font.pixelSize: root.scaledFont(Style.font.heading)
+              font.pixelSize: root.queryFontSize
+              font.weight: root.queryScale > 1 ? Font.Light : Font.Normal
               elide: Text.ElideRight
             }
 
@@ -3874,6 +4313,7 @@ Item {
             // command does not search.
             visible: root.tabsActive && !root.commandMode
             height: visible ? implicitHeight : 0
+            numbered: root.ctrlHeld
             tabs: aiCtl.isAiMode ? aiCtl.aiAgentTabs : root.orderedTabs
             activeTab: aiCtl.isAiMode ? aiCtl.aiAgent : root.activeTab
             fontFamily: root.fontFamily
@@ -3881,6 +4321,10 @@ Item {
             accent: Color.accent
             fontSize: root.scaledFont(Style.font.body)
             anim: root.tabAnim
+            tabStyle: root.tabStyle
+            tabCase: root.tabCase
+            background: root.background
+            counts: root.tabCounts
             onTabClicked: function(id) {
               if (aiCtl.isAiMode) aiCtl.setAiAgent(id)
               else root.setTab(id)
@@ -3888,89 +4332,26 @@ Item {
             }
           }
 
-          Item {
+          FileBar {
             id: fileBar
-            visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && (root.activeTab === "files" || root.activeTab === "folders")
+            menu: root
             width: parent.width
-            height: visible ? fileFilterChips.implicitHeight
-              + (scopeChips.visible ? Style.space(6) + scopeChips.implicitHeight : 0) : 0
-
-            TabBar {
-              id: fileFilterChips
-              anchors.left: parent.left
-              width: parent.width - fileSortLabel.implicitWidth - Style.space(12)
-              tabs: FileSearch.filtersFor(root.activeTab).map(function(f) { return { id: f.id, label: f.label, icon: "" } })
-              activeTab: fileCtl.fileFilterFor(root.activeTab).id
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              accent: Color.accent
-              fontSize: root.scaledFont(Style.font.caption)
-              anim: root.tabAnim
-              onTabClicked: function(id) {
-                fileCtl.setFileFilter(id)
-                Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-              }
-            }
-
-            // Where to look: everywhere, $HOME only, or one search root
-            // (Ctrl+R). Only there when a root is.
-            TabBar {
-              id: scopeChips
-              visible: fileCtl.hasRoots
-              anchors.left: parent.left
-              anchors.top: fileFilterChips.bottom
-              anchors.topMargin: Style.space(6)
-              width: parent.width
-              tabs: fileCtl.scopeChoices
-              activeTab: fileCtl.currentScope()
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              accent: Color.accent
-              fontSize: root.scaledFont(Style.font.caption)
-              onTabClicked: function(id) {
-                fileCtl.setRootScope(id)
-                Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-              }
-            }
-
-            Text {
-              id: fileSortLabel
-              textFormat: Text.PlainText
-              anchors.right: parent.right
-              anchors.top: parent.top
-              text: (fileCtl.fileSearching ? "searching… · " : "")
-                + FileSearch.sortMode(fileCtl.fileSortMode).icon + " " + FileSearch.sortMode(fileCtl.fileSortMode).label
-                + " · " + displayModel.count + "/" + fileCtl.fileDisplayLimit
-              color: root.foreground
-              opacity: 0.5
-              font.family: root.fontFamily
-              font.pixelSize: root.scaledFont(Style.font.caption)
-            }
-          }
-
-          // The Clipboard type filter (Ctrl+F), chips like the Files filter.
-          TabBar {
-            id: clipboardBar
-            visible: root.tabsActive && !aiCtl.isAiMode && !root.commandMode && root.activeTab === "clipboard"
-            width: parent.width
-            height: visible ? implicitHeight : 0
-            tabs: Clipboard.FILTERS.map(function(f) { return { id: f.id, label: f.label, icon: "" } })
-            activeTab: clipboardCtl.filter.id
-            fontFamily: root.fontFamily
-            foreground: root.foreground
-            accent: Color.accent
-            fontSize: root.scaledFont(Style.font.caption)
-            anim: root.tabAnim
-            onTabClicked: function(id) {
-              clipboardCtl.setFilter(id)
-              Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-            }
           }
 
           Item {
             width: parent.width
             height: root.visibleRowsHeight
-            visible: height > 0
+            visible: height > 0 && !root.overlayActive
+
+            // Ctrl+?: every key, in groups, in the look's type
+            // (KeySheetPanel). Loaded only while open, so the results area
+            // resizing never lays it out.
+            Loader {
+              active: root.cheatOpen && !root.overlayActive
+              z: 30
+              anchors.fill: parent
+              sourceComponent: KeySheetPanel { menu: root }
+            }
 
             AiPanel {
               id: aiPanel
@@ -4048,7 +4429,7 @@ Item {
               anchors.right: parent.right
               textFormat: Text.PlainText
               text: (root.activeMenu === "root" ? "" : MenuModel.sanitizeText(root.pathFor(root.activeMenu)).toUpperCase())
-                + (root.systemMatches.length > 0
+                + (root.systemMatches.length > 0 && !root.quietMeta
                    ? "   ·   MATCH " + (root.systemMatchIndex + 1) + "/" + root.systemMatches.length
                      + (root.systemMatches.length > 1 ? "  CTRL+↑↓" : "")
                    : "")
@@ -4069,10 +4450,187 @@ Item {
               anchors.leftMargin: root.systemTwoPane ? Style.space(8) : 0
               anchors.right: parent.right
               visible: !root.gridActive && !aiCtl.isAiMode
-              model: displayModel
+              // Under a full-screen view the card's rows are not drawn: build
+              // none, or every keystroke would build each row twice.
+              model: root.overlayActive ? null : displayModel
               clip: true
               spacing: root.rowSpacing
               boundsBehavior: Flickable.StopAtBounds
+
+              onContentYChanged: if (root.numbersRows) Qt.callLater(root.updateFirstVisibleRow)
+              onCountChanged: if (root.numbersRows) Qt.callLater(root.updateFirstVisibleRow)
+
+              // The selection: a tint with an accent edge that glides between
+              // rows, unless the look marks it its own way (selectionTint).
+              // Rows themselves stay unfilled. In the rows' own coordinates: a
+              // ListView's children stay in the viewport, so without `parent`
+              // the mark sat contentY off its row once the list scrolled.
+              Item {
+                id: selMarker
+                parent: resultList.contentItem
+                // The row with the cursor reports itself (ResultRow.hasCursor),
+                // also when the list has only just made it.
+                readonly property Item stop: root.cursorRow
+                property bool glide: false
+                visible: stop !== null && stop.hasCursor === true
+                z: -1
+                x: 0
+                width: resultList.width
+                y: stop ? stop.y : 0
+                height: stop ? stop.height : 0
+                Behavior on y { enabled: selMarker.glide; NumberAnimation { duration: Style.duration(root.wayfinderMoveMs); easing.type: Easing.OutCubic } }
+                Behavior on height { enabled: selMarker.glide; NumberAnimation { duration: Style.duration(root.wayfinderMoveMs); easing.type: Easing.OutCubic } }
+
+                Connections {
+                  target: root
+                  function onSelectedIndexChanged() {
+                    selMarker.glide = selMarker.visible
+                    markerGlideEnd.restart()
+                  }
+                }
+                Timer { id: markerGlideEnd; interval: 180; onTriggered: selMarker.glide = false }
+
+                Rectangle {
+                  visible: root.selectionTint
+                  anchors.fill: parent
+                  radius: root.rowRadius
+                  color: root.selectionFill
+                }
+
+                Rectangle {
+                  visible: root.selectionTint
+                  x: 0
+                  width: Math.max(3, Style.space(3))
+                  y: Style.space(9)
+                  height: Math.max(0, parent.height - Style.space(18))
+                  radius: width / 2
+                  color: root.selectionEdge
+                }
+
+                // Mala: one quiet column of text, no icons, boxes or counters.
+                // An accent bead in the margin marks the selection.
+                Text {
+                  visible: root.drawnLook === "mala"
+                  textFormat: Text.PlainText
+                  text: "●"
+                  color: Color.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: root.scaledFont(Style.font.bodySmall)
+                  width: Style.space(22)
+                  horizontalAlignment: Text.AlignHCenter
+                  y: selMarker.stop ? Math.round(selMarker.stop.labelCenterY - height / 2) : 0
+                }
+              }
+
+              // Wayfinder: the results as a transit map. The trunk line down
+              // the left gutter, and the route in accent from the top to the
+              // selected stop. Behind the rows, and in the rows' own
+              // coordinates: a ListView's children stay in the viewport (its
+              // default property is `data`, not the Flickable's content), so
+              // without `parent` the route would ignore the scroll and run on
+              // past the selection.
+              Rectangle {
+                parent: resultList.contentItem
+                visible: root.drawnLook === "wayfinder" && resultList.count > 0
+                z: -1
+                x: Math.round(Style.space(26) / 2) - 1
+                y: resultList.originY
+                width: Math.max(1, Style.space(2))
+                height: resultList.contentHeight
+                color: Util.alpha(root.foreground, 0.2)
+              }
+
+              // The route is the lit track: from the top to the train's back
+              // end (`tail`). The train runs from `tail` to `head`; at rest
+              // both sit on the selected stop and the train is hidden behind
+              // its ring.
+              Rectangle {
+                id: route
+                parent: resultList.contentItem
+                readonly property Item stop: root.drawnLook === "wayfinder" && root.cursorActive && resultList.count > 0
+                  && resultList.contentHeight > 0 ? resultList.itemAtIndex(root.selectedIndex) : null
+                // The selected stop's centre, in the list's content coordinates.
+                readonly property real target: stop ? stop.y + stop.labelCenterY : resultList.originY
+                property real head: resultList.originY
+                property real tail: resultList.originY
+                property Item lastStop: null
+                property double lastMove: 0
+                visible: stop !== null
+                z: -1
+                x: Math.round(Style.space(26) / 2) - 1
+                y: resultList.originY
+                width: Math.max(2, Style.space(3))
+                height: Math.max(0, Math.min(head, tail) - resultList.originY)
+                color: Color.accent
+
+                // The head is the selection: it lands on the new stop in the
+                // same frame as the selected ring and row, on every move, so
+                // the line and the selection never disagree. The motion is the
+                // tail: the train opens from the stop it left to the new one
+                // and closes up into the new ring (InOutCubic: it holds, then
+                // snaps in). Going down, the track is drawn in behind it; going
+                // up, it is erased at once. Moves under 150 ms apart (a held
+                // key) close in 160 ms, OutCubic, with the tail kept within a
+                // row of the selection, so nothing queues.
+                onTargetChanged: route.travel()
+                function travel() {
+                  const to = route.target
+                  if (!route.stop) {
+                    // Between delegates (the new row is not built yet) the
+                    // train holds; with the cursor off the route clears.
+                    if (root.cursorActive && resultList.count > 0) return
+                    tailAnim.stop()
+                    route.lastStop = null
+                    route.head = to
+                    route.tail = to
+                    return
+                  }
+                  const moved = route.stop !== route.lastStop
+                  const running = tailAnim.running
+                  route.lastStop = route.stop
+                  tailAnim.stop()
+                  route.head = to
+                  // The same stop moved (layout, filtering): follow it at once.
+                  if (!root.opened || (!moved && !running)) {
+                    route.tail = to
+                    return
+                  }
+                  const now = Date.now()
+                  const rapid = !moved || now - route.lastMove < 150
+                  if (moved) route.lastMove = now
+                  if (rapid) {
+                    // Restarted every ~20 ms by a held key, the tail's
+                    // animation barely advances; keep it within a row.
+                    const row = Style.space(44)
+                    if (to > route.tail) route.tail = Math.max(route.tail, to - row)
+                    else route.tail = Math.min(route.tail, to + row)
+                  }
+                  // One timing for the marker, the train and the ring, so the
+                  // three land together instead of in turns.
+                  tailAnim.duration = Style.duration(root.wayfinderMoveMs)
+                  tailAnim.easing.type = Easing.OutCubic
+                  tailAnim.to = to
+                  tailAnim.start()
+                }
+                NumberAnimation { id: tailAnim; target: route; property: "tail" }
+              }
+
+              // The train: a wider capsule from tail to head, only while it
+              // runs. The stops' rings sit over it, so it passes under them
+              // like a map line under its stations, and it closes up inside
+              // the new ring.
+              Rectangle {
+                parent: resultList.contentItem
+                readonly property real span: Math.abs(route.head - route.tail)
+                visible: route.visible && span > 1
+                z: -1
+                width: Math.max(4, Style.space(6))
+                x: Math.round(Style.space(26) / 2 - width / 2)
+                y: Math.min(route.head, route.tail) - width / 2
+                height: span + width
+                radius: width / 2
+                color: Color.accent
+              }
 
               section.property: "section"
               section.criteria: ViewSection.FullString
@@ -4084,20 +4642,66 @@ Item {
                 height: section === "drilldown" ? root.dividerHeight : (isHeader ? root.sectionHeaderHeight : 0)
                 visible: section === "drilldown" || isHeader
 
+                // Wayfinder: an interchange hexagon on the trunk line.
                 Text {
+                  visible: parent.isHeader && root.drawnLook === "wayfinder"
+                  textFormat: Text.PlainText
+                  text: "\u{F02D9}"
+                  color: root.foreground
+                  opacity: 0.7
+                  font.family: root.fontFamily
+                  font.pixelSize: root.scaledFont(Style.font.heading)
+                  width: Style.space(26)
+                  horizontalAlignment: Text.AlignHCenter
+                  anchors.left: parent.left
+                  anchors.verticalCenter: headerTitle.verticalCenter
+                }
+
+                Text {
+                  id: headerTitle
                   visible: parent.isHeader
                   textFormat: Text.PlainText
-                  text: Tabs.headerTitle(parent.section).toUpperCase()
+                  readonly property string title: Tabs.headerTitle(parent.section)
+                  readonly property int total: root.counts ? Tabs.headerTotal(parent.section) : 0
+                  text: (root.headerLower ? title.toLowerCase() : title.toUpperCase()) + (total > 0 ? "  " + total : "")
+                  color: root.foreground
+                  opacity: root.headerOpacity
+                  font.family: root.fontFamily
+                  font.pixelSize: root.scaledFont(Style.font.caption)
+                  font.weight: root.headerWeight
+                  font.letterSpacing: root.headerSpacing
+                  anchors.left: parent.left
+                  anchors.leftMargin: root.headerIndent
+                  anchors.bottom: parent.bottom
+                  anchors.bottomMargin: Style.space(4)
+                }
+
+
+                // "+4 in Files ⇥": what the five-row cap left out, and the way there.
+                Text {
+                  id: headerMore
+                  visible: parent.isHeader && text !== ""
+                  textFormat: Text.PlainText
+                  readonly property string more: parent.isHeader ? root.sectionMore(parent.section) : ""
+                  text: root.headerLower ? more.toLowerCase() : more
                   color: root.foreground
                   opacity: 0.45
                   font.family: root.fontFamily
                   font.pixelSize: root.scaledFont(Style.font.caption)
-                  font.weight: Font.DemiBold
-                  font.letterSpacing: 1
-                  anchors.left: parent.left
-                  anchors.leftMargin: root.rowReservedBorderLeft + Style.space(10)
-                  anchors.bottom: parent.bottom
-                  anchors.bottomMargin: Style.space(4)
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: headerTitle.verticalCenter
+                }
+
+                Rectangle {
+                  visible: parent.isHeader && root.counts
+                  anchors.left: headerTitle.right
+                  anchors.leftMargin: Style.space(10)
+                  anchors.right: headerMore.visible ? headerMore.left : parent.right
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: headerTitle.verticalCenter
+                  height: Style.spacing.hairline
+                  color: Util.alpha(root.foreground, 0.15)
                 }
 
                 Rectangle {
@@ -4112,7 +4716,13 @@ Item {
                 }
               }
 
-              delegate: ResultRow { menu: root }
+              // A look with rows of its own names their file (lookRows);
+              // classic rows carry nothing of the other looks. Such a row
+              // reaches the menu through the list (lookMenu).
+              readonly property var lookMenu: root
+              readonly property Component lookRowComponent: root.lookRows ? Qt.createComponent(Qt.resolvedUrl(root.lookRows)) : null
+              delegate: lookRowComponent && lookRowComponent.status === Component.Ready ? lookRowComponent : resultRowDelegate
+              Component { id: resultRowDelegate; ResultRow { menu: root } }
             }
 
             // Scroll scrims. The clipped row already marks the fold at rest;
@@ -4156,7 +4766,7 @@ Item {
               anchors.centerIn: parent
               width: Math.min(Style.space(320), parent.width - Style.space(16))
               spacing: Style.space(8)
-              visible: displayModel.count === 0 && root.mode !== "input" && !aiCtl.isAiMode && !root.systemTwoPane
+              visible: root.emptyText !== ""
 
               Text {
                 textFormat: Text.PlainText
@@ -4171,10 +4781,7 @@ Item {
 
               Text {
                 textFormat: Text.PlainText
-                text: root.commandMode ? "No answer for “" + root.answerQuery + "” · Backspace to / for examples"
-                  : fileCtl.fileSearching ? "Searching…"
-                  : root.activeTab === "clipboard" && root.tabsActive && clipboardCtl.emptyText() ? clipboardCtl.emptyText()
-                  : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
+                text: root.emptyText
                 color: root.foreground
                 opacity: 0.7
                 font.family: root.fontFamily
@@ -4187,20 +4794,87 @@ Item {
             }
           }
 
-          Text {
+          Item {
             id: footer
+            // Compared as text: footerKeys() makes a new list each time the
+            // query changes, and a new list would rebuild every keycap.
+            readonly property string keysText: JSON.stringify(root.footerKeys())
+            readonly property var keys: JSON.parse(keysText)
             visible: !root.dmenuActive && (settingsStore.error !== "" || (root.tabsActive && !root.compact && !aiCtl.isAiMode))
             width: parent.width
-            textFormat: Text.PlainText
-            text: settingsStore.error || root.positionHint || root.footerHints()
-            color: root.foreground
-            opacity: 0.4
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            font.family: root.fontFamily
-            font.pixelSize: root.scaledFont(Style.font.caption)
+            implicitHeight: footerKeyRow.visible ? footerKeyRow.implicitHeight + Style.space(8) : footerText.implicitHeight
+
+            // A hairline, then keycaps.
+            Rectangle {
+              visible: footerKeyRow.visible
+              width: parent.width
+              height: Style.spacing.hairline
+              color: Util.alpha(root.foreground, 0.12)
+            }
+
+            Row {
+              id: footerKeyRow
+              visible: footer.keys.length > 0
+              anchors.horizontalCenter: parent.horizontalCenter
+              anchors.bottom: parent.bottom
+              spacing: Style.space(14)
+
+              Repeater {
+                model: footer.keys
+                Row {
+                  required property var modelData
+                  spacing: Style.space(5)
+                  KeyCap {
+                    text: modelData[0]
+                    fontSize: root.scaledFont(Style.font.caption)
+                    fontFamily: root.fontFamily
+                    ink: root.foreground
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                  Text {
+                    textFormat: Text.PlainText
+                    text: modelData[1]
+                    color: root.foreground
+                    opacity: 0.62
+                    font.family: root.fontFamily
+                    font.pixelSize: root.scaledFont(Style.font.caption)
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+              }
+            }
+
+            // Errors, and what keycaps would not say: kill rows, commands.
+            Text {
+              id: footerText
+              visible: !footerKeyRow.visible
+              width: parent.width
+              textFormat: Text.PlainText
+              text: settingsStore.error || root.positionHint || root.footerHints()
+              color: root.foreground
+              opacity: 0.62
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.Wrap
+              font.family: root.fontFamily
+              font.pixelSize: root.scaledFont(Style.font.caption)
+            }
           }
         }
+      }
+    }
+
+    // The look's full-screen view (lookView), over the card.
+    Loader {
+      id: lookViewLoader
+      anchors.fill: parent
+      visible: root.overlayActive
+      function load() {
+        if (root.lookView) setSource(Qt.resolvedUrl(root.lookView), { menu: root, model: displayModel })
+        else source = ""
+      }
+      Connections {
+        target: root
+        function onLookViewChanged() { lookViewLoader.load() }
       }
     }
   }

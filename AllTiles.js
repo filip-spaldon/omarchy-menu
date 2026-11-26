@@ -22,13 +22,21 @@ var ROWS = 2
 // block (the Apps tab's pinned strip): the whole run is one strip, wrapping
 // onto as many lines of tiles as it needs, all drawn by its first row. Its
 // entries also carry `line` (the tile's line), `lines` and `columns`.
+//
+// Sections match without their result count ("hdr:Apps|8" is "hdr:Apps"):
+// headers carry the total for the counters, the tiles go by the section.
+function bareSection(section) {
+  return String(section || "").replace(/\|\d+$/, "")
+}
+
 function layout(rows, section, columns, block) {
   var list = rows || []
+  var bare = bareSection(section)
   var cols = Math.max(1, Math.floor(Number(columns)) || 1)
   var first = -1
   var last = -1
   for (var i = 0; i < list.length; i++) {
-    var tile = !!list[i] && list[i].kind === "app" && list[i].section === section
+    var tile = !!list[i] && list[i].kind === "app" && bareSection(list[i].section) === bare
     if (tile && first < 0) first = i
     if (first >= 0) {
       if (!tile) break
@@ -112,6 +120,7 @@ function side(tiles, index, delta) {
 if (typeof module !== "undefined") {
   module.exports = {
     ROWS: ROWS,
+    bareSection: bareSection,
     layout: layout,
     stripHeight: stripHeight,
     drawnHeight: drawnHeight,

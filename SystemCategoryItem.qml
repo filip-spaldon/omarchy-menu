@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "SystemShortcuts.js" as SystemShortcuts
 
 // One category in the System tab's left pane. Highlighted when it is the
 // category being browsed, filled when the keyboard is in the left pane.
@@ -16,37 +17,79 @@ BorderSurface {
 
   width: ListView.view.width
   height: category.menu.baseRowHeight
-  radius: category.menu.cornerRadius
-  color: category.focusedHere ? category.menu.selectedBackground
-    : (category.picked ? Util.alpha(category.menu.foreground, 0.08) : "transparent")
-  borderSpec: category.focusedHere ? category.menu.selectedBorderSpec : Border.none()
+  radius: category.menu.rowRadius
+  // The browsed category: marked like a result row (Menu.selectionFill/
+  // Edge), unless the look marks the selection its own way (selectionTint).
+  readonly property bool tint: category.menu.selectionTint
+  color: !category.tint ? "transparent"
+    : category.focusedHere ? category.menu.selectionFill : (category.picked ? Util.alpha(category.menu.foreground, 0.07) : "transparent")
+  borderSpec: Border.none()
+
+  Rectangle {
+    visible: category.tint && category.focusedHere
+    width: Math.max(3, Style.space(3))
+    y: Style.space(8)
+    height: parent.height - Style.space(16)
+    radius: width / 2
+    color: category.menu.selectionEdge
+  }
+
+  // Mala's bead on the browsed category.
+  Text {
+    visible: category.menu.drawnLook === "mala" && category.focusedHere
+    textFormat: Text.PlainText
+    text: "●"
+    color: Color.accent
+    font.family: category.menu.fontFamily
+    font.pixelSize: category.menu.scaledFont(Style.font.bodySmall)
+    anchors.left: parent.left
+    anchors.verticalCenter: parent.verticalCenter
+  }
+
+  // Alt held in the left pane: the category's Alt+n number.
+  Loader {
+    active: category.menu.altHeld && category.menu.categoryNumbers && category.index < 9
+    z: 3
+    x: categoryIcon.x - Math.round(width * 0.3)
+    y: Math.round(categoryIcon.y - height * 0.3)
+    sourceComponent: NumberCap {
+      number: String(category.index + 1)
+      fontSize: category.menu.scaledFont(Style.font.body)
+      fontFamily: category.menu.fontFamily
+      bare: category.menu.numbersBare
+      ink: category.menu.foreground
+      paper: category.menu.background
+    }
+  }
 
   Text {
     id: categoryIcon
     textFormat: Text.PlainText
+    visible: category.menu.categoryIcons
     text: category.modelData.icon
-    color: category.focusedHere ? category.menu.selectedText : (category.picked ? Color.accent : category.menu.foreground)
+    color: category.picked ? Color.accent : category.menu.foreground
     font.family: category.modelData.iconFont || category.menu.fontFamily
     font.pixelSize: category.menu.scaledFont(Style.font.iconLarge)
-    width: category.menu.iconSlotWidth
+    width: visible ? category.menu.iconSlotWidth : 0
     horizontalAlignment: Text.AlignHCenter
     anchors.left: parent.left
-    anchors.leftMargin: Style.space(6)
+    anchors.leftMargin: category.tint ? Style.space(6) : Style.space(16)
     anchors.verticalCenter: parent.verticalCenter
   }
 
   Text {
     textFormat: Text.PlainText
     text: category.modelData.label
-    color: category.focusedHere ? category.menu.selectedText : category.menu.foreground
-    opacity: category.picked ? 1 : 0.8
+    color: category.menu.foreground
+    opacity: category.picked ? 1 : category.menu.categoryDim
     font.family: category.menu.fontFamily
     font.pixelSize: category.menu.scaledFont(Style.font.heading)
     font.weight: category.picked ? Font.DemiBold : Font.Normal
     elide: Text.ElideRight
     anchors.left: categoryIcon.right
     anchors.leftMargin: Style.space(6)
-    anchors.right: categoryChevron.left
+    anchors.right: categoryHint.visible ? categoryHint.left : categoryChevron.left
+    anchors.rightMargin: categoryHint.visible ? Style.space(6) : 0
     anchors.verticalCenter: parent.verticalCenter
   }
 
@@ -61,6 +104,41 @@ BorderSurface {
     anchors.right: parent.right
     anchors.rightMargin: Style.space(10)
     anchors.verticalCenter: parent.verticalCenter
+  }
+
+  // The category's own shortcut (Super+Esc on System), like the rows'.
+  readonly property string hint: category.menu.systemShortcutHint(category.modelData.itemId,
+    category.modelData.kind, category.modelData.action || "")
+  Loader {
+    id: categoryHint
+    visible: category.hint.length > 0
+    active: visible
+    anchors.right: categoryChevron.left
+    anchors.rightMargin: Style.space(6)
+    anchors.verticalCenter: parent.verticalCenter
+    sourceComponent: category.menu.shortcutCaps ? capHint : textHint
+    Component {
+      id: capHint
+      KeyCap {
+        text: SystemShortcuts.capLabel(category.hint)
+        fontSize: category.menu.scaledFont(Style.font.caption)
+        fontFamily: category.menu.fontFamily
+        ink: category.menu.foreground
+      }
+    }
+    Component {
+      id: textHint
+      Text {
+        textFormat: Text.PlainText
+        text: category.menu.shortcutCase === "upper" ? category.hint.toUpperCase()
+          : category.hint.toLowerCase()
+        color: category.menu.shortcutAccent ? Color.accent : category.menu.foreground
+        opacity: category.menu.shortcutAccent ? 0.8 : 0.4
+        font.family: category.menu.fontFamily
+        font.pixelSize: category.menu.scaledFont(Style.font.caption)
+        font.letterSpacing: category.menu.shortcutSpacing
+      }
+    }
   }
 
   MouseArea {

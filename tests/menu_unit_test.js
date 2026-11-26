@@ -16,6 +16,8 @@ const MenuModel = require(path.join(root, "MenuModel.js"))
 const Settings = require(path.join(root, "Settings.js"))
 const Roots = require(path.join(root, "Roots.js"))
 const Windows = require(path.join(root, "Windows.js"))
+const KeySheet = require(path.join(root, "KeySheet.js"))
+const Looks = require(path.join(root, "Looks.js"))
 const Clipboard = require(path.join(root, "Clipboard.js"))
 const SystemShortcuts = require(path.join(root, "SystemShortcuts.js"))
 
@@ -96,6 +98,25 @@ const sections = Tabs.composeSections([
 eq(sections.map(r => r.itemId), ["a1", "a2", "s1"], "sections are capped and empty ones vanish")
 eq(sections.map(r => Tabs.headerTitle(r.section)), ["Apps", "Apps", "System"], "every row carries its header")
 assert(sections.every(r => Tabs.isHeaderSection(r.section)), "headers never collide with the drilldown divider")
+eq(Tabs.headerTotal(sections[0].section), 3, "the header carries the section's total before the cap")
+eq(Tabs.headerTotal(sections[0].section), Tabs.headerTotal(sections[1].section), "a section's rows share its header")
+eq(Tabs.headerTitle("hdr:Files|12"), "Files", "the count is not part of the title")
+eq(Tabs.headerTotal("hdr:Files|12"), 12, "the header carries the section's total")
+eq(Tabs.sameCounts({ apps: 1, files: 34 }, { files: 34, apps: 1 }), true, "the same tab counts in any order")
+eq(Tabs.sameCounts({ apps: 1 }, { apps: 2 }), false, "a count changed")
+eq(Tabs.sameCounts({ apps: 1 }, { apps: 1, files: 3 }), false, "a tab lost its count")
+eq(Tabs.sameCounts({}, null), true, "no counts either way")
+{
+  // Typing cost: the chips' counts are replaced only when one changed (a new
+  // object re-ran every chip's count, width and the bar's fit check).
+  const menuSource = require("fs").readFileSync(path.join(root, "Menu.qml"), "utf8")
+  eq(/onFoundCountsChanged: if \(!Tabs\.sameCounts\(root\.foundCounts, root\.tabCounts\)\) root\.tabCounts = root\.foundCounts/.test(menuSource), true,
+     "tab counts change only with a count")
+  eq(/if \(!Tabs\.sameCounts\(totals, root\.allSectionTotals\)\) root\.allSectionTotals = totals/.test(menuSource), true,
+     "All's section totals change only with a total")
+}
+eq(Tabs.headerTitle("hdr:A|B"), "A|B", "a bar in a title without a count stays")
+eq(Tabs.headerTotal("drilldown"), 0, "the drilldown divider has no total")
 const original = { itemId: "x", section: "" }
 Tabs.composeSections([{ title: "T", rows: [original] }], 5)
 eq(original.section, "", "composeSections does not stamp the caller's row objects")
@@ -130,6 +151,12 @@ eq(Tabs.sectionHeader("bogus"), "", "sectionHeader of an unknown id is empty")
   eq(AllTiles.layout([{ kind: "app", section: "" }, { kind: "file", section: H }], H, 3), [],
      "no app under the Apps header: no tiles")
   eq(AllTiles.layout(null, H, 3), [], "no rows: no tiles")
+  {
+    // What All composes: the header carries the section's total ("Apps|5").
+    const composed = Tabs.composeSections([{ title: "Apps", rows: [app("a"), app("b"), app("c")] }], 5)
+    eq(AllTiles.layout(composed, H, 2).map(x => x && x.col), [0, 1, 0],
+       "apps under a counted Apps header are tiles too")
+  }
 
   eq(AllTiles.stripHeight(t[1], 1, 100, 4), 92, "a lead gives back the spacing after its empty rows")
   eq(AllTiles.stripHeight(t[4], 4, 100, 4), 96, "a shorter strip gives back less")
@@ -371,7 +398,12 @@ eq(FileSearch.nextDisplayLimit(200), 15, "display limits wrap")
       setProperty(i, role, value) { this.log.push("setProperty " + i); this.items[i][role] = value },
       insert(i, row) { this.log.push("insert " + i); this.items.splice(i, 0, Object.assign({}, row)) },
       remove(i, n) { this.log.push("remove " + i + " " + (n || 1)); this.items.splice(i, n || 1) },
-      append(row) { this.log.push("append"); this.items.push(Object.assign({}, row)) },
+      // Like ListModel.append, one row or an array of rows in one insertion.
+      append(row) {
+        const list = Array.isArray(row) ? row : [row]
+        this.log.push("append " + list.length)
+        list.forEach(x => this.items.push(Object.assign({}, x)))
+      },
       clear() { this.log.push("clear"); this.items = [] }
     }
     return m
@@ -383,12 +415,12 @@ eq(FileSearch.nextDisplayLimit(200), 15, "display limits wrap")
   const roles = {}
   MenuModel.syncRows(model, [r("a"), r("b")], roles)
   eq(ids(model), ["a", "b"], "sync fills an empty model")
-  eq(model.log, ["append", "append"], "an empty model is filled by appending")
+  eq(model.log, ["append 2"], "an empty model is filled in one insertion")
 
   model.log = []
   MenuModel.syncRows(model, [r("a"), r("b"), r("c"), r("d")], roles)
   eq(ids(model), ["a", "b", "c", "d"], "sync grows the list")
-  eq(model.log, ["append", "append"], "unchanged rows are left alone when the list grows")
+  eq(model.log, ["append 2"], "unchanged rows are left alone and new ones go in as one insertion")
 
   model.log = []
   MenuModel.syncRows(model, [r("a"), r("b")], roles)
@@ -419,6 +451,17 @@ eq(FileSearch.nextDisplayLimit(200), 15, "display limits wrap")
 
   MenuModel.syncRows(model, [], roles)
   eq(model.count, 0, "an empty result empties the list")
+
+  // Typing cost: the card's height walks the rows it is given, not the
+  // model (a model read makes the height depend on every row set in place).
+  const fs = require("fs")
+  const menuSource = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  const body = (src, name) => { const i = src.indexOf("function " + name + "("); return i < 0 ? "" : src.slice(i, src.indexOf("\n  function ", i + 1)) }
+  const sync = body(menuSource, "syncDisplayModel")
+  const height = body(menuSource, "rowListHeight")
+  eq(/root\.shownRows\.rows = rows/.test(sync), true, "syncDisplayModel keeps the rows on show for the card's height")
+  eq(/displayModel\.get\(/.test(height), false, "the card's height does not read the model row by row")
+  eq(/root\.shownRows\.rows/.test(height), true, "the card's height reads the rows on show")
 }
 
 // --------------------------------------------------------- untrusted text --
@@ -1370,8 +1413,14 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   assert(/activeTab === "clipboard" && root\.tabsActive && event\.modifiers === Qt\.ControlModifier\s*&& event\.key === Qt\.Key_F/
          .test(menuSource), "Ctrl+F cycles the clipboard filter")
   assert(/clipboardCtl\.filterIndex = 0/.test(menuSource), "the filter resets on open")
-  assert(/clipboardCtl\.setFilter\(id\)/.test(menuSource), "a chip picks the filter")
-  assert(/Ctrl\+F type/.test(menuSource.match(/activeTab === "clipboard"\)\s*return "[^"]*"/)[0]), "footer mentions Ctrl+F")
+  const fileBarSource = fs.readFileSync(path.join(root, "FileBar.qml"), "utf8")
+  assert(/bar\.clip\.setFilter\(id\)/.test(fileBarSource), "a chip picks the filter")
+  assert(/clipboardSearch: clipboardCtl/.test(menuSource), "every look's FileBar reaches the clipboard filter")
+  assert(/Key_Question/.test(menuSource) && !/event\.text === "\?" && !root\.filterText/.test(menuSource),
+         "the key sheet is on Ctrl+?, not a plain ?")
+  // The full footer (the looks also have a short one, which says ^F).
+  const fullFooter = menuSource.slice(menuSource.indexOf("function fullFooterHints"))
+  assert(/Ctrl\+F type/.test(fullFooter.match(/activeTab === "clipboard"\)\s*return "[^"]*"/)[0]), "footer mentions Ctrl+F")
   assert(/clipboardRows\(clip\.entries, query, clip\.previewable, clip\.filter\.id\)/.test(controller), "rows use the filter")
   assert(controller.indexOf("Clipboard.activeWindowCommand()") >= 0
          && /clip\.previewable, clip\.pasteMode\)/.test(controller)
@@ -1405,6 +1454,13 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
   eq(SystemShortcuts.hintFor(hints([lock]), "system.lock", "action", "custom-lock"), "", "replaced actions do not inherit hints")
   eq(SystemShortcuts.hintFor(hints([lock]), "constructor", "action", "omarchy-system-lock"), "", "lookups use own stock entries only")
   eq(SystemShortcuts.bindingChord({ modmask: 0, key: "<img>" }), "", "untrusted markup is not a key")
+  eq(SystemShortcuts.capLabel("Super+Ctrl+L"), "super+ctrl+l", "a hint reads as its chord, in lowercase")
+  eq(SystemShortcuts.capLabel("Print"), "print", "a named key too")
+  eq(SystemShortcuts.capLabel(""), "", "no chord, no cap")
+  eq(SystemShortcuts.hintFor(SystemShortcuts.parseBindings(JSON.stringify([
+    { modmask: 64, key: "ESCAPE", description: "System (Omni menu)", dispatcher: "__lua", locked: false },
+    { modmask: 64, key: "ESCAPE", description: "Display off when locked", dispatcher: "__lua", locked: true }])),
+    "system", "menu", ""), "Super+Esc", "a lock-screen bind does not hide the desktop's")
 }
 
 // ---------------------------------------------------- percent and work time --
@@ -1572,5 +1628,202 @@ eq(Windows.focusCommand(""), null, "an empty address is refused")
 }
 
 console.log("")
+// Query match in the label, Alt+1…9, the "?" sheet
+eq(MenuModel.matchSpans("omarchy-wordmark.svg", "omarch"), [[0, 6]], "a prefix match")
+eq(MenuModel.matchSpans("Docker DB", "db dock"), [[0, 4], [7, 9]], "each word, in order")
+eq(MenuModel.matchSpans("Omarchy", "x"), [], "no match")
+eq(MenuModel.matchSpans("a b", "a b"), [], "one-letter words are dropped from multi-word queries")
+eq(MenuModel.matchSpans("Firefox", "fire fox"), [[0, 7]], "touching spans merge")
+eq(MenuModel.highlight("a<b>c", "b", "[", "]"), "a&lt;[b]&gt;c", "highlight escapes around the match")
+eq(MenuModel.highlight("<img src=x>", "img", "[", "]"), "&lt;[img] src=x&gt;", "markup in a label stays text")
+eq(MenuModel.highlight("Fonts", "zz", "[", "]"), "", "no match gives an empty string")
+eq(MenuModel.highlight("Firefox", " FIRE ", "[", "]"), "[Fire]fox", "one word: matched case-insensitively, label keeps its case")
+eq(MenuModel.highlight("campfire.png", "fire", "[", "]"), "camp[fire].png", "one word in the middle")
+{
+  // The one-word shortcut gives what the general path (matchSpans) gives.
+  const general = (label, query) => {
+    const spans = MenuModel.matchSpans(label, query)
+    if (spans.length === 0) return ""
+    let out = "", pos = 0
+    for (const [a, b] of spans) {
+      out += MenuModel.escapeHtml(label.slice(pos, a)) + "[" + MenuModel.escapeHtml(label.slice(a, b)) + "]"
+      pos = b
+    }
+    return out + MenuModel.escapeHtml(label.slice(pos))
+  }
+  const labels = ["Firefox", "firefox-nightly", "Docker DB", "a<b>fire", "Tom & Jerry", "x", "", "FIRE fire", "Ünïcode fïre"]
+  const queries = ["f", "fire", "FiRe", "db dock", "fire fox", "  fire  ", "&", "<b>", "zz", "ï", "e"]
+  let same = true
+  for (const l of labels) for (const q of queries)
+    if (MenuModel.highlight(l, q, "[", "]") !== general(l, q)) { same = false; console.log("  differs:", l, "|", q) }
+  assert(same, "highlight's one-word shortcut agrees with matchSpans on every label and query")
+}
+eq(KeySheet.rowForNumber(3, 20, 1), 3, "Alt+1 is the first visible row")
+eq(KeySheet.rowForNumber(0, 4, 5), -1, "a number past the list does nothing")
+eq(KeySheet.rowForNumber(0, 20, 0), -1, "Alt+0 is not a row")
+eq(KeySheet.closesSheet(0x01000020), false, "Shift alone leaves the key sheet open")
+eq(KeySheet.closesSheet(0x01000021), false, "Ctrl alone leaves the key sheet open")
+eq(KeySheet.closesSheet(0x01000023), false, "Alt alone leaves the key sheet open")
+eq(KeySheet.closesSheet(0x01000053), false, "Super alone leaves the key sheet open")
+eq(KeySheet.closesSheet(0x01000000), true, "Esc closes the key sheet")
+eq(KeySheet.closesSheet(0x41), true, "a letter closes the key sheet")
+assert(KeySheet.CHEATSHEET.every(g => g.title && g.keys.length > 0 && g.keys.every(k => k.length === 2)), "every key sheet group has keys and descriptions")
+{
+  // One sheet, every look: the card's panel and both views read CHEATSHEET.
+  const lines = KeySheet.sheetLines()
+  eq(lines.filter(l => l.title).length, KeySheet.CHEATSHEET.length, "a title line per group")
+  eq(lines.filter(l => l.key).length, KeySheet.CHEATSHEET.reduce((n, g) => n + g.keys.length, 0), "a line per key")
+  eq(lines[0], { title: KeySheet.CHEATSHEET[0].title }, "the sheet starts with the first group's title")
+  eq(lines[1], { key: KeySheet.CHEATSHEET[0].keys[0][0], does: KeySheet.CHEATSHEET[0].keys[0][1] }, "then its first key")
+  assert(KeySheet.CHEATSHEET.some(g => g.keys.some(k => k[0] === "^?")), "the sheet lists its own key")
+  const fs = require("fs")
+  for (const f of ["KeySheetPanel.qml", "AxisView.qml", "KonstruktView.qml"])
+    assert(/KeySheet\.(CHEATSHEET|sheetLines\(\))/.test(fs.readFileSync(path.join(root, f), "utf8")), f + " draws the sheet from KeySheet")
+  const menu = fs.readFileSync(path.join(root, "Menu.qml"), "utf8")
+  assert(!/overlayActive:[^\n]*\n[^\n]*cheatOpen/.test(menu), "the full-screen views stay up for the key sheet")
+  assert(/active: root\.cheatOpen && !root\.overlayActive/.test(menu), "the card's sheet only where no view draws one")
+  for (const f of ["AxisView.qml", "KonstruktView.qml"]) {
+    const v = fs.readFileSync(path.join(root, f), "utf8")
+    assert(/menu\.cheatOpen/.test(v), f + " draws the key sheet")
+    assert(/text: \w+\.menu\.viewFooterHints\(\)/.test(v) && !/esc let go|"↑↓ move   ↵ open/.test(v), f + " footer comes from the tab's keys")
+    assert(/numbered: \w+\.menu\.ctrlHeld/.test(v), f + " tabs show their Ctrl numbers")
+  }
+
+  // The footers, cut from one list per tab.
+  const base = { tab: "all", cheatOpen: false, altHeld: false, twoPane: false, matches: false, pinned: false,
+                 canReorder: false, appsView: "list", allAppsView: "list", hasRoots: false }
+  const keys = s => KeySheet.tabKeys(Object.assign({}, base, s))
+  const caps = s => KeySheet.coreKeys(keys(s)).map(k => k[0])
+  const tabs = ["all", "apps", "clipboard", "windows", "files", "folders", "system"]
+  for (const tab of tabs) {
+    assert(caps({ tab }).includes("^?"), tab + ": the keycaps offer every key")
+    assert(caps({ tab }).length <= 6, tab + ": the keycaps fit the card")
+    assert(/\^\? all keys   esc close$/.test(KeySheet.footerText(keys({ tab }), false, false)), tab + ": the short footer offers every key")
+  }
+  eq(caps({ tab: "clipboard" }), ["↵", "^C", "^O", "^F", "^?"], "clipboard: paste, copy, open, type")
+  assert(KeySheet.footerText(keys({ tab: "clipboard" }), false, false).includes("^O open"), "the short clipboard footer has ^O")
+  eq(caps({ tab: "apps", pinned: true, appsView: "grid" }), ["↵", "shift ↵", "^P", "^G", "^?"], "apps keycaps")
+  eq(keys({ tab: "apps", pinned: true, appsView: "grid" }).slice(2, 4).map(k => k[1]), ["unpin", "list"], "apps: what ^P and ^G do now")
+  const appsFull = KeySheet.footerText(keys({ tab: "apps", canReorder: true }), true, false)
+  assert(appsFull.includes("del uninstall") && appsFull.includes("^shift ←→ move the pin"), "the views' apps footer has Del and the pin move")
+  assert(!KeySheet.footerText(keys({ tab: "apps" }), true, false).includes("move the pin"), "no pin move off the pins")
+  eq(caps({ tab: "files" }), ["↵", "^F", "^S", "^L", "^?"], "files keycaps without roots")
+  eq(caps({ tab: "folders", hasRoots: true }), ["↵", "^F", "^R", "^S", "^L", "^?"], "^R only with search roots")
+  const filesFull = KeySheet.footerText(keys({ tab: "files" }), true, false)
+  for (const k of ["alt ↵ folder", "^C path", "^T terminal"]) assert(filesFull.includes(k), "the views' files footer has " + k)
+  eq(caps({ tab: "system", twoPane: true }), ["↑↓", "→", "←", "^?"], "System's two panes")
+  eq(caps({ tab: "system", twoPane: true, matches: true }), ["↑↓", "→", "←", "^↑↓", "^?"], "^↑↓ while a search has matches")
+  eq(caps({ tab: "windows" }), ["↵", "⇥", "^?"], "windows")
+  eq(caps({ cheatOpen: true }), ["any key"], "the sheet open: any key closes it")
+  eq(KeySheet.footerText(keys({ cheatOpen: true }), true, false), "any key close", "no esc hint beside any key")
+  eq(caps({ altHeld: true })[0], "alt 1–9", "Alt held: what Alt does")
+  assert(KeySheet.footerText(keys({}), false, true).startsWith("↑↓ move   ↵ open   alt 1–9 jump"), "numbered rows add Alt+1…9 after Enter")
+  assert(/function footerKeys\(\)[\s\S]*?KeySheet\.coreKeys\(root\.tabKeys\(\)\)/.test(menu), "the keycaps come from tabKeys")
+  assert(/function shortFooterHints\(\)[\s\S]*?KeySheet\.footerText\(root\.tabKeys\(\), false/.test(menu), "the short footer comes from tabKeys")
+
+  // Ctrl held: the tabs' numbers, as Ctrl+1…9 picks them.
+  eq([0, 1, 8, 9, -1].map(KeySheet.tabNumber), ["1", "2", "9", "", ""], "tab numbers 1-9 by place")
+  eq(KeySheet.ctrlAlone(0x01000021, 0x04000000), true, "Ctrl alone")
+  eq(KeySheet.ctrlAlone(0x01000021, 0x04000000 | 0x02000000), false, "Ctrl with Shift down is a chord")
+  eq(KeySheet.ctrlAlone(0x31, 0x04000000), false, "Ctrl+1 is a shortcut, not Ctrl held")
+  assert(/root\.ctrlHeld = root\.ctrlHeld && event\.modifiers === Qt\.ControlModifier/.test(menu),
+         "a Ctrl chord keeps the numbers, any other key clears them")
+  assert(/event\.key === Qt\.Key_Control\) root\.ctrlHeld = false/.test(menu), "releasing Ctrl clears it")
+  assert(/onOpenedChanged: \{[\s\S]{0,80}root\.ctrlHeld = false/.test(menu), "closing clears it")
+  assert(/numbered: root\.ctrlHeld/.test(menu), "the card's tabs show their numbers")
+  assert(/KeySheet\.tabNumber\(chip\.index\)/.test(fs.readFileSync(path.join(root, "TabBar.qml"), "utf8")), "TabBar numbers its chips")
+}
+
+// Looks: the switch
+eq(Looks.styleLook({}), "classic", "no look is classic")
+eq(Looks.styleLook({ look: "vaporwave" }), "classic", "an unknown look falls back to classic")
+eq(Looks.styleLook({ look: ["classic"] }), "classic", "a look that is not a name falls back to classic")
+eq(Looks.styleLook(null), "classic", "no style at all is classic")
+eq(Looks.cycleLook("gone", 1), Looks.LOOKS[1 % Looks.LOOKS.length].name, "an unknown look cycles from classic")
+eq(Looks.cycleLook(Looks.LOOKS[Looks.LOOKS.length - 1].name, 1), "classic", "the last look wraps to the first")
+eq(Looks.lookLabel("classic"), "Classic", "the popup label")
+eq(Settings.STYLE_DEFAULTS.look, Looks.DEFAULT_LOOK, "a new style.json names the default look")
+assert(Looks.LOOKS.every(l => /^[a-z]+$/.test(l.name) && l.label), "every look has a name and a label")
+eq(new Set(Looks.LOOKS.map(l => l.name)).size, Looks.LOOKS.length, "look names are unique")
+{
+  // Every look but classic sets what it changes in a State (Menu.qml).
+  const qml = require("fs").readFileSync(path.join(root, "Menu.qml"), "utf8")
+  for (const l of Looks.LOOKS.slice(1))
+    assert(qml.indexOf('when: root.drawnLook === "' + l.name + '"') >= 0, l.name + " sets what it changes in Menu.qml")
+}
+{
+  const ops = Settings.patch("look", "classic")
+  eq(ops.length, 1, "switching the look writes one key")
+  eq(ops[0].path, ["look"], "and only the look")
+}
+
+// Looks: under a full-screen view the card's query row and results area are
+// hidden (not laid out for nothing), but not the tabs or footer, whose
+// visible feeds the card's size.
+{
+  const menuSource = require("fs").readFileSync(path.join(root, "Menu.qml"), "utf8")
+  eq((menuSource.match(/visible: !root\.overlayActive\n            width: parent\.width\n            height: root\.headerHeight/g) || []).length, 1, "the query row is hidden under a view")
+  eq(/height: root\.visibleRowsHeight\n            visible: height > 0 && !root\.overlayActive/.test(menuSource), true, "the results area is hidden under a view")
+  eq(/id: cardContent\n(?:.*\n){0,3}\s*visible:/.test(menuSource), false, "the card's content stays visible (its tabs and footer size the card)")
+}
+
+// Looks: Mala
+eq(Looks.styleLook({ look: "mala" }), "mala", "Mala is a look")
+eq(Looks.lookLabel("mala"), "Mala", "Mala's popup label")
+assert(require("fs").existsSync(path.join(root, "MalaRow.qml")), "Mala's rows")
+
+// Looks: Wayfinder
+eq(Looks.styleLook({ look: "wayfinder" }), "wayfinder", "Wayfinder is a look")
+eq(Looks.lookLabel("wayfinder"), "Wayfinder", "Wayfinder's popup label")
+assert(require("fs").existsSync(path.join(root, "WayfinderRow.qml")), "Wayfinder's rows")
+
+// Looks: Axis
+eq(Looks.styleLook({ look: "axis" }), "axis", "Axis is a look")
+eq(Looks.lookLabel("axis"), "Axis", "Axis's popup label")
+assert(require("fs").existsSync(path.join(root, "AxisView.qml")), "Axis's view")
+
+// Looks: Konstrukt
+{
+  const Konstrukt = require(path.join(root, "Konstrukt.js"))
+  eq(Looks.styleLook({ look: "konstrukt" }), "konstrukt", "Konstrukt is a look")
+  eq(Looks.lookLabel("konstrukt"), "Konstrukt", "Konstrukt's popup label")
+  eq(Konstrukt.shapeFor("folder"), "triangle", "folders are triangles")
+  eq(Konstrukt.shapeFor("action"), "cross", "System entries are crosses")
+  eq(Konstrukt.shapeFor("clipboard"), "ring", "clipboard entries are rings, not System crosses")
+  const noon = new Date(2026, 8, 27, 12, 0).getTime()
+  eq(Konstrukt.ageDays("Today 12:38", noon), 0, "today is age 0")
+  eq(Konstrukt.ageDays("Yesterday 20:09", noon), 1, "yesterday is a day old")
+  eq(Konstrukt.ageDays("08/09 18:49", noon), 19, "a date this year")
+  eq(Konstrukt.ageDays("08/12/25 18:49", noon), 293, "a date from another year carries it")
+  eq(Konstrukt.ageDays("", noon), 0, "no date is age 0")
+  eq(Math.round(Konstrukt.tiltFor(365)), 45, "a year old tilts 45 degrees")
+  eq(Konstrukt.tiltFor(0), 0, "new stands upright")
+  const p = Konstrukt.spiral(0, 10)
+  eq([p.x, p.y], [0, 0], "the best result sits in the middle")
+  eq(Konstrukt.placement({ anchorX: "center", anchorY: "top" }), { swap: 0, fy: 0.5, fit: 1 }, "the default position keeps Konstrukt as it always was")
+  eq(Konstrukt.placement({ anchorX: "left", anchorY: "top" }).swap, 0, "left keeps the list on the left")
+  eq(Konstrukt.placement({ anchorX: "right", anchorY: "top" }).swap, 1, "right puts the list on the right")
+  const low = Konstrukt.placement({ anchorX: "center", anchorY: "bottom" })
+  eq(low.fy > Konstrukt.placement({ anchorY: "middle" }).fy && low.fy > 0.5, true, "lower positions move the spiral down")
+  eq(Math.round(low.fit * 100), 64, "and shrink it to stay inside the field")
+  eq(Konstrukt.placement(undefined), { swap: 0, fy: 0.5, fit: 1 }, "no position is the default")
+  eq(Konstrukt.sameMap({ 1: 10, 3: 40 }, { 3: 40, 1: 10 }), true, "the same row middles")
+  eq(Konstrukt.sameMap({ 1: 10 }, { 1: 11 }), false, "a row moved")
+  eq(Konstrukt.sameMap({ 1: 10 }, { 1: 10, 2: 20 }), false, "a row left the list")
+  eq(Konstrukt.sameMap({ 1: 10, 2: 20 }, { 1: 10 }), false, "a row came onto the list")
+  eq(Konstrukt.sameMap({}, {}), true, "no rows either time")
+
+  // Typing cost: each shape slot holds its own fields, set by rebuild(), so a
+  // keystroke re-runs only the bindings of what changed; none of the 36
+  // slots binds to the shared array, and only the selected shape lays out
+  // its caption.
+  const view = require("fs").readFileSync(path.join(root, "KonstruktView.qml"), "utf8")
+  const pool = view.slice(view.indexOf("id: pool"), view.indexOf("// System's grid of categories."))
+  assert(pool.length > 0 && !/kon\.slots\[/.test(pool.replace(/Component\.onCompleted:.*\n/, "")), "no slot binds to kon.slots")
+  assert(!/kon\.rowY\[/.test(pool.replace(/function place\(\)[\s\S]*?\n      \}/, "")), "connectors read rowY only in place()")
+  assert(/text: slot\.selected \?/.test(pool), "the caption is laid out only on the selected shape")
+  assert(/if \(Konstrukt\.sameMap\(out, kon\.rowY\)\) return/.test(view), "unchanged row middles leave the connectors alone")
+}
+
 console.log(pass + " passed, " + fail + " failed")
 if (fail > 0) process.exit(1)

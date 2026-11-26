@@ -1,0 +1,77 @@
+// Konstrukt's data mapping: every result is also a flat shape, and every
+// property of the shape is data. Pure data in, data out, so it runs under
+// node; only KonstruktView.qml (one view, not a row) imports it.
+
+// the shape for a row's kind.
+function shapeFor(kind) {
+  if (kind === "app") return "circle"
+  if (kind === "file") return "square"
+  if (kind === "folder") return "triangle"
+  if (kind === "window") return "bar"
+  if (kind === "clipboard") return "ring"
+  return "cross"
+}
+
+// how old a file row is, in days, from its date text ("Today
+// 12:38", "Yesterday 20:09", "08/09 18:49", "08/09/2024"). Rows carry only
+// the text, and this keeps the model as it is. Unknown: 0.
+function ageDays(trail, now) {
+  var t = String(trail || "").trim()
+  if (!t || /^today/i.test(t)) return 0
+  if (/^yesterday/i.test(t)) return 1
+  var m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/.exec(t)
+  if (!m) return 0
+  var today = new Date(now)
+  var year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : today.getFullYear()
+  var when = new Date(year, Number(m[2]) - 1, Number(m[1]))
+  if (!m[3] && when > today) when.setFullYear(year - 1)
+  return Math.max(0, Math.floor((today - when) / 86400000))
+}
+
+// tilt from age on a log scale, 0 degrees now to 45 at a year.
+function tiltFor(days) {
+  return Math.min(45, 45 * Math.log(1 + Math.max(0, days)) / Math.log(366))
+}
+
+// where the n-th ranked shape sits on a sunflower spiral, as an
+// offset from the centre in units of `step`.
+function spiral(n, step) {
+  var r = step * Math.sqrt(n)
+  var a = n * 2.39996
+  return { x: r * Math.cos(a), y: r * Math.sin(a) }
+}
+
+// Where Alt+arrows put the layout, from the launcher position. Konstrukt
+// already fills the screen, so it reads the position its own way: right puts
+// the list on the right and the field on the left (left and centre keep the
+// list on the left), and lower rows move the spiral's centre down the field,
+// shrinking it just enough to stay inside. The default (centre, top) is the
+// layout as it always was. swap: 0 or 1; fy: the spiral's centre as a share
+// of the field's height; fit: the spiral's scale.
+function placement(pos) {
+  var p = pos || {}
+  var fy = ({ top: 0.5, middle: 0.59, bottom: 0.68 })[p.anchorY] || 0.5
+  return { swap: p.anchorX === "right" ? 1 : 0, fy: fy, fit: Math.min(1, Math.min(fy, 1 - fy) * 2) }
+}
+
+// whether two flat maps hold the same keys and values (the rows' middles,
+// measured again on every scroll step and row laid out).
+function sameMap(a, b) {
+  var n = 0
+  for (var key in a) {
+    if (a[key] !== b[key]) return false
+    n++
+  }
+  return n === Object.keys(b || {}).length
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    shapeFor: shapeFor,
+    ageDays: ageDays,
+    tiltFor: tiltFor,
+    spiral: spiral,
+    placement: placement,
+    sameMap: sameMap
+  }
+}

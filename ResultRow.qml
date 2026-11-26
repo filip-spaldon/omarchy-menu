@@ -4,6 +4,7 @@ import qs.Commons
 import qs.Ui
 import "Windows.js" as Windows
 import "Clipboard.js" as Clipboard
+import "SystemShortcuts.js" as SystemShortcuts
 import "AllTiles.js" as AllTiles
 
 // One row of the result list: icon or app icon, label, detail line,
@@ -63,13 +64,35 @@ BorderSurface {
   readonly property string shortcutHint: !row.tiled && !row.disabled
     ? row.menu.systemShortcutHint(row.itemId, row.kind, row.action) : ""
 
+  // The row's place among those on screen, 1-9: holding Alt shows it, and
+  // Alt+n opens the row.
+  readonly property int ordinal: row.index - row.menu.firstVisibleRow + 1
+  readonly property bool numbered: row.menu.altHeld && row.menu.numbersOnRows && row.kind !== "example"
+    && row.ordinal >= 1 && row.ordinal <= 9
+  // Where the label's middle sits, for the number and the actions.
+  readonly property real labelCenterY: contentColumn.y + labelLine.y + labelText.y + labelText.height / 2
+  // The selected row's actions and their keys, where the date was.
+  readonly property var actions: !row.hasCursor ? []
+    : (row.kind === "file" || row.kind === "folder" ? [["↵", "open"], ["alt ↵", "folder"], ["^C", "path"]]
+    : row.kind === "app" ? [["↵", "open"], ["shift ↵", "new window"]]
+    : row.kind === "window" ? [["↵", "go to"]] : [])
+  // The label with the query's match in the accent colour, or "" to keep
+  // plain text (Menu.qml, markRow).
+  required property string marked
+
+  // The selection marker follows the row with the cursor (Menu.qml).
+  onHasCursorChanged: if (row.hasCursor) row.menu.cursorRow = row
+  Component.onCompleted: if (row.hasCursor) row.menu.cursorRow = row
+
   // Command examples are a read-only hint.
   opacity: row.disabled ? 0.4 : (row.kind === "example" ? 0.7 : 1)
   width: ListView.view.width
   height: row.tiled ? row.menu.allTileRowHeight(row.index) : row.menu.rowHeightForDetail(row.detail, row.kind, row.imagePath)
-  radius: row.menu.cornerRadius
-  color: row.hasCursor ? row.menu.selectedBackground : "transparent"
-  borderSpec: row.hasCursor ? row.menu.selectedBorderSpec : Border.none()
+  radius: row.menu.rowRadius
+  // The selection is drawn by the list (Menu.qml, selMarker), gliding
+  // between rows; the rows themselves stay unfilled.
+  color: "transparent"
+  borderSpec: Border.none()
 
   Rectangle {
     visible: false
@@ -82,6 +105,27 @@ BorderSurface {
     anchors.verticalCenter: parent.verticalCenter
   }
 
+  // With Alt held: the row's number, as a keycap, over its icon. Loaded
+  // only then: every row is rebuilt on each keystroke, so what a row does
+  // not show should cost it nothing.
+  Loader {
+    active: row.numbered
+    z: 2
+    // The same number as the tabs' Ctrl+1…9 (NumberCap), on the icon's
+    // top left corner.
+    x: row.menu.rowReservedBorderLeft + Style.space(8) + (row.menu.iconSlotWidth - row.menu.scaledFont(Style.font.iconLarge)) / 2
+      - Math.round(width * 0.3)
+    y: Math.round(row.labelCenterY - row.menu.scaledFont(Style.font.iconLarge) / 2 - height * 0.4)
+    sourceComponent: NumberCap {
+      number: String(row.ordinal)
+      fontSize: row.menu.scaledFont(Style.font.body)
+      fontFamily: row.menu.fontFamily
+      bare: row.menu.numbersBare
+      ink: row.menu.foreground
+      paper: row.menu.background
+    }
+  }
+
   Text {
     id: iconText
     textFormat: Text.PlainText
@@ -89,7 +133,7 @@ BorderSurface {
     // Keeps its place (the label lines up after it) under a colour swatch.
     opacity: row.showsSwatch ? 0 : 1
     text: row.icon
-    color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+    color: row.menu.foreground
     font.family: row.iconFont.length > 0 ? row.iconFont : row.menu.fontFamily
     font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.icon : Style.font.iconLarge)
     width: row.menu.iconSlotWidth
@@ -189,7 +233,7 @@ BorderSurface {
     visible: !row.tiled
     anchors.left: row.showsThumb ? thumbBox.right : row.hasIcon ? iconText.right : parent.left
     anchors.leftMargin: row.showsThumb ? Style.space(10) : row.hasIcon ? Style.space(6) : row.menu.rowReservedBorderLeft + Style.space(18)
-    anchors.right: trailLabel.visible ? trailLabel.left : trail.left
+    anchors.right: actionRow.visible ? actionRow.left : (trailLabel.visible ? trailLabel.left : trail.left)
     anchors.rightMargin: Style.space(6)
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(3)
@@ -199,14 +243,18 @@ BorderSurface {
       width: parent.width
       implicitHeight: Math.max(labelText.implicitHeight, hintText.visible ? hintText.implicitHeight : 0)
       readonly property real gap: Style.space(8)
+      // Classic shows the hint as footer keycaps (KeyCap); the other looks
+      // as text in their own type.
+      readonly property bool caps: row.menu.shortcutCaps && row.shortcutHint.length > 0
+      readonly property real hintWidth: labelLine.caps ? hintCap.width : hintText.width
 
       Text {
         id: labelText
-        textFormat: Text.PlainText
-        width: hintText.visible ? Math.max(0, parent.width - hintText.width - labelLine.gap) : parent.width
+        textFormat: row.marked ? Text.StyledText : Text.PlainText
+        width: hintText.visible ? Math.max(0, parent.width - labelLine.hintWidth - labelLine.gap) : parent.width
         anchors.verticalCenter: parent.verticalCenter
-        text: row.label
-        color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+        text: row.marked || row.label
+        color: row.hasCursor ? row.menu.selectionText : row.menu.foreground
         font.family: row.menu.fontFamily
         font.pixelSize: row.menu.scaledFont(row.kind === "example" ? Style.font.body : Style.font.heading)
         font.weight: Font.Medium
@@ -216,15 +264,34 @@ BorderSurface {
       Text {
         id: hintText
         textFormat: Text.PlainText
-        visible: text.length > 0 && implicitWidth + labelLine.gap <= parent.width * 0.45
+        visible: text.length > 0 && labelLine.hintWidth + labelLine.gap <= parent.width * 0.6
+        opacity: labelLine.caps ? 0 : (row.menu.shortcutAccent ? 0.8 : 0.4)
         width: implicitWidth
         anchors.right: parent.right
-        anchors.baseline: labelText.baseline
-        text: row.shortcutHint
-        color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
-        opacity: 0.4
+        // Axis draws its line through the label's middle: the hint sits
+        // above it there instead of across it.
+        anchors.baseline: row.menu.shortcutAbove ? undefined : labelText.baseline
+        anchors.bottom: row.menu.shortcutAbove ? labelText.verticalCenter : undefined
+        anchors.bottomMargin: row.menu.shortcutAbove ? Style.space(3) : 0
+        // In the look's type (Menu.shortcutCase / Spacing / Accent): Axis's
+        // spaced capitals, Konstrukt's spaced lowercase readout.
+        text: row.menu.shortcutCase === "upper" ? row.shortcutHint.toUpperCase()
+          : row.menu.shortcutCase === "lower" ? row.shortcutHint.toLowerCase() : row.shortcutHint
+        color: row.hasCursor ? row.menu.selectionText : (row.menu.shortcutAccent ? Color.accent : row.menu.foreground)
         font.family: row.menu.fontFamily
         font.pixelSize: row.menu.scaledFont(Style.font.caption)
+        font.letterSpacing: row.menu.shortcutSpacing
+      }
+
+      KeyCap {
+        id: hintCap
+        visible: labelLine.caps && hintText.visible
+        anchors.right: parent.right
+        anchors.verticalCenter: labelText.verticalCenter
+        text: SystemShortcuts.capLabel(row.shortcutHint)
+        fontSize: row.menu.scaledFont(Style.font.caption)
+        fontFamily: row.menu.fontFamily
+        ink: row.hasCursor ? row.menu.selectionText : row.menu.foreground
       }
     }
 
@@ -241,12 +308,62 @@ BorderSurface {
     }
   }
 
+  // The selected row's actions, as keycaps; they take the date's place.
+  // Loaded on the selected row only.
+  Loader {
+    id: actionRow
+    active: row.actions.length > 0
+    visible: active
+    anchors.right: trail.left
+    anchors.rightMargin: Style.space(6)
+    y: Math.round(row.labelCenterY - height / 2)
+    sourceComponent: Row {
+      spacing: Style.space(10)
+
+      Repeater {
+        model: row.actions
+        Row {
+          required property var modelData
+          spacing: Style.space(4)
+          Rectangle {
+            width: capText.implicitWidth + Style.space(8)
+            height: capText.implicitHeight + Style.space(2)
+            radius: Style.space(3)
+            color: "transparent"
+            border.width: 1
+            border.color: Util.alpha(row.menu.foreground, 0.32)
+            anchors.verticalCenter: parent.verticalCenter
+            Text {
+              id: capText
+              anchors.centerIn: parent
+              textFormat: Text.PlainText
+              text: modelData[0]
+              color: row.menu.foreground
+              opacity: 0.85
+              font.family: row.menu.fontFamily
+              font.pixelSize: row.menu.scaledFont(Style.font.caption)
+            }
+          }
+          Text {
+            textFormat: Text.PlainText
+            text: modelData[1]
+            color: row.menu.foreground
+            opacity: 0.7
+            font.family: row.menu.fontFamily
+            font.pixelSize: row.menu.scaledFont(Style.font.caption)
+            anchors.verticalCenter: parent.verticalCenter
+          }
+        }
+      }
+    }
+  }
+
   Text {
     id: trailLabel
     textFormat: Text.PlainText
-    visible: row.trailShown.length > 0
+    visible: row.trailShown.length > 0 && !actionRow.visible
     text: row.trailShown
-    color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+    color: row.menu.foreground
     opacity: 0.45
     font.family: row.menu.fontFamily
     font.pixelSize: row.menu.scaledFont(Style.font.bodySmall)
@@ -278,7 +395,7 @@ BorderSurface {
     Text {
       textFormat: Text.PlainText
       text: row.kind === "menu" || row.kind === "link" ? "›" : ""
-      color: row.hasCursor ? row.menu.selectedText : row.menu.foreground
+      color: row.menu.foreground
       opacity: row.kind === "menu" || row.kind === "link" ? 0.36 : 0
       font.family: row.menu.fontFamily
       font.pixelSize: row.menu.scaledFont(Style.font.heading)
@@ -287,56 +404,18 @@ BorderSurface {
     }
   }
 
-  // The pinned strip's tint and outline, as tall as all its lines.
-  Rectangle {
-    visible: row.pinnedStrip && !!row.tileInfo.tiles
-    width: row.width
-    height: row.pinnedStrip ? AllTiles.drawnHeight(row.tileInfo, row.menu.allTileHeight, row.stripPad) : 0
-    radius: row.menu.cornerRadius
-    color: row.menu.pinnedBackground
-    border.width: Math.max(1, Style.space(1))
-    border.color: row.menu.pinnedBorder
-
-    PinBadge {
-      z: 1
-      sizeScale: row.menu.menuFontScale
-      fontFamily: row.menu.fontFamily
-      ring: row.menu.background
-      anchors.top: parent.top
-      anchors.right: parent.right
-      anchors.margins: Style.space(6)
-    }
-  }
-
   // The strip: up to `columns` tiles across the row's width, the whole tile
   // height tall (the row itself is shorter on purpose; see
-  // AllTiles.stripHeight). Only a lead carries tiles.
-  Repeater {
-    model: row.tiled && row.tileInfo.tiles ? row.tileInfo.tiles : []
-
-    delegate: Item {
-      id: cell
-      required property var modelData
-      readonly property real cellWidth: (row.width - 2 * row.stripPad) / Math.max(1, row.menu.allTileColumns)
-
-      x: row.stripPad + cell.modelData.col * cell.cellWidth
-      y: row.stripPad + cell.modelData.line * row.menu.allTileHeight
-      width: cell.cellWidth
-      height: row.menu.allTileHeight
-
-      AppTile {
-        menu: row.menu
-        tileIndex: cell.modelData.index
-        tileLabel: cell.modelData.row.label
-        tileIcon: cell.modelData.row.appIcon
-        tileKind: cell.modelData.row.kind
-        tileAppId: cell.modelData.row.appId
-        inPinnedStrip: row.pinnedStrip
-        width: parent.width - Style.space(6)
-        height: parent.height - Style.space(6)
-        anchors.centerIn: parent
-      }
-    }
+  // AllTiles.stripHeight). Only a lead carries tiles. The pinned strip
+  // brings its tint and outline (TileStrip.qml).
+  TileStrip {
+    visible: row.tiled
+    menu: row.menu
+    info: row.tiled ? row.tileInfo : null
+    pad: row.stripPad
+    inPinnedStrip: row.pinnedStrip
+    width: row.width
+    height: row.pinnedStrip ? AllTiles.drawnHeight(row.tileInfo, row.menu.allTileHeight, row.stripPad) : row.menu.allTileHeight
   }
 
   MouseArea {
